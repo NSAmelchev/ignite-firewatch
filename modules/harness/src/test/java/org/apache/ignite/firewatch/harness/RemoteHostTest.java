@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.regex.Pattern;
 
 import org.junit.jupiter.api.Test;
 
@@ -51,7 +52,7 @@ class RemoteHostTest {
         s.runPrefix = "1f2e-";
         String cmd = new RemoteHost(s, h, "sweep").sweepCommand();
         assertTrue(cmd.endsWith("rm -rf '/opt/firewatch/runs/1f2e-'*"), cmd);
-        assertTrue(cmd.startsWith("pkill -KILL -f 'bench\\.run=1f2e-'"), cmd);
+        assertTrue(cmd.startsWith("pkill -KILL -f 'ignite\\.firewatch\\.run=1f2e-'"), cmd);
     }
 
     /** */
@@ -121,8 +122,24 @@ class RemoteHostTest {
     /** */
     @Test void pkillDoesNotMatchTheShellThatRunsIt() {
         String c = RemoteHost.stopCommand("TERM", "job1-A1-node-0( |$)");
-        assertEquals("pkill -TERM -f 'bench\\.run=job1-A1-node-0( |$)'", c);
-        assertFalse(c.contains("ignite.firewatch.run="), "the literal text must not fit its own pattern");
+        assertEquals("pkill -TERM -f 'ignite\\.firewatch\\.run=job1-A1-node-0( |$)'", c);
+        assertFalse(picks(c, c), "the literal text must not fit its own pattern");
+    }
+
+    /** */
+    @Test void pkillPicksTheJvmsOfTheRun() {
+        JvmProcess.Spec s = new JvmProcess.Spec();
+        s.runId = "job1-A1";
+        s.label = "node-0";
+        String line = String.join(" ", Jvm.systemProps(JvmProcess.marker(s))) + " -cp harness.jar";
+        assertTrue(picks(RemoteHost.stopCommand("TERM", "job1-A1-node-0( |$)"), line), line);
+        assertTrue(picks(RemoteHost.stopCommand("KILL", "job1-"), line), "the cleanup of the run");
+        assertFalse(picks(RemoteHost.stopCommand("TERM", "job1-A1-node-1( |$)"), line), "another node stays");
+    }
+
+    /** Whether the pkill of {@code cmd}, which takes the quoted word as a regex, picks the process of {@code line}. */
+    private static boolean picks(String cmd, String line) {
+        return Pattern.compile(cmd.substring(cmd.indexOf('\'') + 1, cmd.lastIndexOf('\''))).matcher(line).find();
     }
 
     /** */

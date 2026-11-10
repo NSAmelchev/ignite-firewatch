@@ -257,10 +257,11 @@ final class RemoteHost implements Host {
     }
 
     /**
-     * The backslash keeps the shell that runs pkill, whose own command line holds this pattern, from matching itself.
+     * Matches {@code -D}{@link Jvm#RUN_MARKER}{@code =}: the backslashes keep the shell that runs pkill, whose own
+     * command line holds this pattern, from matching itself.
      */
     static String stopCommand(String signal, String pattern) {
-        return "pkill -" + signal + " -f " + quote("bench\\.run=" + pattern);
+        return "pkill -" + signal + " -f " + quote(Jvm.RUN_MARKER.replace(".", "\\.") + "=" + pattern);
     }
 
     /** */
