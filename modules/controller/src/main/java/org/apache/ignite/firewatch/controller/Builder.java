@@ -248,7 +248,7 @@ public final class Builder {
             : cfg.fakeLibsDir.resolveSibling(cfg.fakeLibsDir.getFileName() + "-sql");
 
         if (!Files.isDirectory(src))
-            throw new IOException("FAKE_BUILD: " + src + " does not exist (run harness/dev-libs.sh)");
+            throw new IOException("FAKE_BUILD: " + src + " does not exist (run modules/harness/dev-libs.sh)");
 
         try (Stream<Path> s = Files.list(src)) {
             for (Path p : (Iterable<Path>)s::iterator) {

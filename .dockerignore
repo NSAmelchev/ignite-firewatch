@@ -1,3 +1,5 @@
+# rsync of docker/deploy.sh reads this file too: "target" is every target for rsync, the root one for Docker
+target
 **/target
 data
 cache
