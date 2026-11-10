@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.apache.ignite.firewatch</groupId>
+        <artifactId>ignite-firewatch</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>ignite-firewatch-assembly</artifactId>
+    <packaging>pom</packaging>
+    <name>Firewatch distribution</name>
+    <description>The application as a zip: bin, config and libs, to run from any directory</description>
+
+    <!-- the modules whose jars the distribution takes: listed here, they are built before it -->
+    <dependencies>
+        <dependency>
+            <groupId>org.apache.ignite.firewatch</groupId>
+            <artifactId>ignite-firewatch-controller</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.ignite.firewatch</groupId>
+            <artifactId>ignite-firewatch-harness</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>3.7.1</version>
+                <executions>
+                    <execution>
+                        <id>bin</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <!-- target/ignite-firewatch-<version>-bin.zip and the same unpacked next to it -->
+                            <finalName>ignite-firewatch-${project.version}</finalName>
+                            <outputDirectory>${maven.multiModuleProjectDirectory}/target</outputDirectory>
+                            <descriptors>
+                                <descriptor>src/main/assembly/bin.xml</descriptor>
+                            </descriptors>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

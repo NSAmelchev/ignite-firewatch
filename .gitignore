@@ -1,0 +1,16 @@
+target/
+*.log
+*.jfr
+.idea/
+*.iml
+.DS_Store
+# local runs of the controller (the stand keeps them in Docker volumes)
+data/
+cache/
+# values of your stand (see docker/deploy.sh)
+docker/deploy.env
+docker/ssh/
+# the wish list of whoever runs the stand
+docs/BACKLOG.md
+# local tool state
+.claude/

@@ -1,0 +1,12 @@
+**/target
+data
+cache
+docs
+.git
+.github
+.claude
+*.log
+*.jfr
+.DS_Store
+docker/deploy.env
+docker/ssh

@@ -1,0 +1,50 @@
+# Firewatch stack: one container (controller + harness + Maven + git), built from the repository root.
+# Volumes are external so that `docker compose down -v` can never delete results: deploy.sh creates both
+# volumes if they do not exist.
+name: ignite-firewatch
+services:
+  ignite-firewatch:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: ignite-firewatch:latest
+    container_name: ignite-firewatch
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${IGNITE_FIREWATCH_UI_PORT:-8090}:8080"
+    volumes:
+      - ignite-firewatch-data:/data
+      - ignite-firewatch-cache:/cache
+      # the settings of the controller, see config/ignite-firewatch.properties
+      - ../config:/app/config:ro
+      # A remote stand: the private key as `key` and `known_hosts`, files on the machine of the container.
+      - "${IGNITE_FIREWATCH_SSH_DIR:-./ssh}:/ssh:ro"
+    environment:
+      IGNITE_FIREWATCH_SSH_KEY: /ssh/key
+      IGNITE_FIREWATCH_SSH_KNOWN_HOSTS: /ssh/known_hosts
+      # Local time of the container: log timestamps use it.
+      TZ: "${IGNITE_FIREWATCH_TZ:-UTC}"
+    # Sized for 5 GiB without swap: Maven (-Xmx1536m, ~1.9 GB peak) or one benchmark (~1.6 GB) plus the
+    # controller must fit; the hard limit keeps a runaway build from taking the host down.
+    mem_limit: 4500m
+    memswap_limit: 4500m
+    pids_limit: 2048
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  ignite-firewatch-data:
+    external: true
+  ignite-firewatch-cache:
+    external: true
