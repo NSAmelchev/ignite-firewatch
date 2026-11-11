@@ -6,7 +6,7 @@
 |---|---|
 | `modules/harness` | runs one phase: starts the Ignite server JVMs and a loader, writes `result.json`; the scenarios |
 | `modules/controller` | queue, git mirror, builds, ABBA statistics, bisection, REST API, web UI |
-| `modules/assembly` | the distribution: `bin/`, `config/`, `libs/controller.jar` and `libs/harness.jar` in a zip |
+| `modules/assembly` | the distribution: `bin/`, `config/`, `libs/controller.jar`, `libs/harness.jar` and Maven in `maven/`, in a zip |
 | `config/ignite-firewatch.properties` | settings of the controller |
 | `bin/firewatch.sh` | runs the controller without Docker |
 | `docker/` | image, compose file and `deploy.sh` |

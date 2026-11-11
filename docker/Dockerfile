@@ -20,11 +20,12 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /src/modules/controller/target/controller.jar /src/modules/harness/target/harness.jar ./
-# The paths and the port inside the container; everything else comes from /app/config/ignite-firewatch.properties.
+# The paths, the port and the Maven of the image; everything else comes from /app/config/ignite-firewatch.properties.
 # The controller finds harness.jar next to its own jar.
 ENV IGNITE_FIREWATCH_DATA_DIR=/data \
     IGNITE_FIREWATCH_CACHE_DIR=/cache \
-    IGNITE_FIREWATCH_PORT=8080
+    IGNITE_FIREWATCH_PORT=8080 \
+    IGNITE_FIREWATCH_MVN=mvn
 VOLUME ["/data", "/cache"]
 EXPOSE 8080
 # Small, single-threaded-GC JVM for the controller: the memory belongs to Maven and the benchmark JVMs.

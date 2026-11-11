@@ -1,7 +1,10 @@
 package org.apache.ignite.firewatch.harness;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -95,6 +98,7 @@ public final class StandCheck {
 
     /** This machine. A foreign JVM is worth a warning here: it may be the developer's own. */
     static StandCheck local(Path dir) throws IOException {
+        new CommandLog(System.out).note(null, "this machine: the probe runs inside Check, no ssh");
         StandCheck c = new StandCheck();
         HostReport r = new HostReport();
         r.address = "this machine";
@@ -107,18 +111,25 @@ public final class StandCheck {
         return c;
     }
 
-    /** */
+    /** Every command goes to the output as it runs: see {@link CommandLog}. */
     static StandCheck remote(StandConfig stand, Path harnessJar, String runId) {
+        return remote(stand, harnessJar, runId, new CommandLog(System.out));
+    }
+
+    /** */
+    static StandCheck remote(StandConfig stand, Path harnessJar, String runId, CommandLog log) {
         StandCheck c = new StandCheck();
         List<RemoteHost> reachable = new ArrayList<>();
         Map<RemoteHost, HostReport> reports = new LinkedHashMap<>();
+        sshSetup(stand, log);
 
         for (StandConfig.Host h : stand.hosts) {
             HostReport r = new HostReport();
             r.address = h.address;
             r.role = h.role;
             c.hosts.add(r);
-            RemoteHost host = new RemoteHost(stand, h, runId);
+            RemoteHost host = new RemoteHost(stand, h, runId).log(log);
+            knownHost(stand, h, log);
 
             try {
                 host.installProbe(harnessJar);
@@ -137,6 +148,71 @@ public final class StandCheck {
         c.finish();
 
         return c;
+    }
+
+    /** What ssh is going to use: the files are given to the application, and a wrong one is what fails most. */
+    private static void sshSetup(StandConfig stand, CommandLog log) {
+        String home = System.getProperty("user.home");
+        log.note(null, "commands run as " + System.getProperty("user.name")
+            + " on the machine of the application (in Docker: inside its container)");
+        log.note(null, "ssh key: " + (blank(stand.sshKey)
+            ? "not set, ssh offers the keys of " + home + "/.ssh as its config says" : describe(stand.sshKey)));
+        log.note(null, "known_hosts: " + (blank(stand.sshKnownHosts)
+            ? "not set, ssh reads " + home + "/.ssh/known_hosts; a host missing there is refused"
+            : describe(stand.sshKnownHosts) + "; only this file counts"));
+
+        try {
+            RemoteHost.run(List.of("ssh", "-V"), true, Duration.ofSeconds(10), log, null);
+        }
+        catch (IOException ignored) {
+            // the log has it
+        }
+    }
+
+    /** Whether known_hosts has the host as ssh looks it up: "Host key verification failed" is the lack of it. */
+    private static void knownHost(StandConfig stand, StandConfig.Host h, CommandLog log) {
+        String file = blank(stand.sshKnownHosts) ? System.getProperty("user.home") + "/.ssh/known_hosts"
+            : stand.sshKnownHosts;
+
+        if (!Files.isReadable(Path.of(file)))
+            return;
+
+        String name = h.port == 22 ? h.address : "[" + h.address + "]:" + h.port;
+
+        try {
+            String found = RemoteHost.run(List.of("ssh-keygen", "-F", name, "-f", file), true, Duration.ofSeconds(10),
+                log, h.address);
+
+            if (found.isBlank())
+                log.note(h.address, file + " has no key of " + name + ": ssh refuses the host until it has one");
+        }
+        catch (IOException ignored) {
+            // the log has it
+        }
+    }
+
+    /** A file given to ssh: whether it is there for the user of the application. */
+    static String describe(String path) {
+        Path p = Path.of(path);
+
+        if (!Files.exists(p))
+            return path + " is missing";
+
+        if (!Files.isReadable(p))
+            return path + " is not readable by this user";
+
+        try {
+            return path + ", " + PosixFilePermissions.toString(Files.getPosixFilePermissions(p)) + ", "
+                + Files.size(p) + " bytes";
+        }
+        catch (IOException | UnsupportedOperationException e) {
+            return path + ", readable";
+        }
+    }
+
+    /** */
+    private static boolean blank(String s) {
+        return s == null || s.isBlank();
     }
 
     /** What one host shows by itself; {@code foreign} is how bad another JVM is on this stand. */

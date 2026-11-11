@@ -2024,6 +2024,29 @@ const CHECK_MARKS = { ok: '✓', warn: '!', fail: '✗' };
 const checkReport = (r) => (!r ? '' : `<div class="check-verdict ${r.ok ? 'good' : 'bad'}">${r.ok ? 'Passed' : 'Failed: fix what is marked ✗ and run it again'}</div>
   ${r.hosts.map((h) => `<div class="check-host"><b>${esc(h.address)}</b> <span class="muted">${esc(h.role)}</span>
     <table class="check"><tbody>${h.items.map((i) => `<tr class="check-${esc(i.level)}"><td>${CHECK_MARKS[i.level]}</td><td>${esc(i.name)}</td><td>${esc(i.text)}</td></tr>`).join('')}</tbody></table></div>`).join('')}`);
+// The log of Check: "[host ]$ command", "→ exit 0 in 0.3 s", "| output", "· note" (see CommandLog of the harness)
+const CHECK_LOG_LINE = /^(\S+ )?([$→|·]) (.*)$/;
+const checkLogLine = (l) => {
+  const m = CHECK_LOG_LINE.exec(l);
+  if (!m) return `<div class="cl-out">${esc(l)}</div>`;
+  const host = m[1] ? `<span class="cl-host">${esc(m[1].trim())}</span> ` : '';
+  if (m[2] === '|') return `<div class="cl-out">${esc(m[3])}</div>`;
+  const cls = { $: 'cl-cmd', '·': 'cl-note', '→': /^exit 0 /.test(m[3]) ? 'cl-end' : 'cl-end cl-bad' }[m[2]];
+  return `<div class="${cls}">${host}${esc(m[2])} ${esc(m[3])}</div>`;
+};
+const checkLog = (l, open) => (!l || !l.lines.length ? '' : `<details class="check-log" ${open ? 'open' : ''}>
+  <summary>${l.running ? 'Check is running…' : 'Log of Check'} <span class="muted">· ${plural(l.lines.filter((x) => (CHECK_LOG_LINE.exec(x) || [])[2] === '$').length, 'command')}, run where the application runs (in Docker: inside its container)</span></summary>
+  <div class="check-log-lines mono">${l.lines.map(checkLogLine).join('')}</div></details>`);
+// what the running or the last Check printed; a closed log stays closed while it grows
+async function showCheckLog(form, open) {
+  const box = $('[data-check-log]', form);
+  const was = $('details', box);
+  const l = await api.get('/api/stand/check/log');
+  box.innerHTML = checkLog(l, was && open === undefined ? was.open : open !== false);
+  const lines = $('.check-log-lines', box);
+  if (lines && l.running) lines.scrollTop = lines.scrollHeight;
+}
+const CHECK_LOG_BLOCK = (check) => `<div data-check-log>${check ? '<button type="button" class="small" data-check-log-show>Log of the last Check</button>' : ''}</div>`;
 const sizesText = (s) => (s.nodeMemoryMb ? `${fmt.num(s.nodeMemoryMb)} MB a node, region ${s.fillPct} % full, threads ×${s.threadsFactor}`
   : s.threadsFactor !== 1 ? `the sizes of the scenarios, threads ×${s.threadsFactor}` : 'the sizes of the scenarios');
 const recommendation = (r) => (!r ? '' : `${r.recommended && r.recommended.nodeMemoryMb
@@ -2067,20 +2090,29 @@ function bindStandFields(form, edited = () => {}, checked = () => {}) {
       Object.entries(r).forEach(([k, v]) => { $(`[name="${k}"]`, form).value = v; });
       edited();
     }
+    if (e.target.closest('[data-check-log-show]')) guarded(() => showCheckLog(form, true));
     const run = e.target.closest('[data-stand-check]');
     if (run) {
       run.disabled = true;
       run.textContent = 'Checking…';
+      $('[data-check-report]', form).innerHTML = '';
+      $('[data-check-log]', form).innerHTML = '';
+      let passed = false;
+      // the log as it grows; a failed tick is retried by the next one
+      const timer = setInterval(() => showCheckLog(form).catch(() => {}), 1000);
       guarded(async () => {
         try {
           const r = await api.post('/api/stand/check', standOf(form));
+          passed = r.ok;
           $('[data-check-report]', form).innerHTML = checkReport(r);
           $('[data-sizes-recommended]', form).innerHTML = recommendation(r);
           checked(r);
         }
         finally {
+          clearInterval(timer);
           run.disabled = false;
           run.textContent = 'Check';
+          await showCheckLog(form, !passed).catch(() => {});
         }
       });
     }
@@ -2109,7 +2141,7 @@ views.setup = {
       <form id="setup">
         <div class="card"><h2 style="margin-top:0">Where to run</h2>${standFields(stand)}
           ${CHECK_BLOCK}<div class="muted small-text">Check tries the hosts: ssh, JDK, disk, memory, the way between them, other JVMs, clocks, swap, THP and the CPU governor. A remote stand has to pass it.</div>
-          <div data-check-report>${checkReport(stand.check)}</div></div>
+          <div data-check-report>${checkReport(stand.check)}</div>${CHECK_LOG_BLOCK(stand.check)}</div>
         <div class="card"><h2 style="margin-top:0">Scenario sizes</h2>${sizesFields(stand.sizes, stand.check)}</div>
         <div class="card"><h2 style="margin-top:0">What to measure</h2>
           <label>Git URL</label>
@@ -2250,7 +2282,7 @@ views.settings = {
       <section data-tab="stand" ${tab === 'stand' ? '' : 'hidden'}><div class="card">
         ${stand.frozen ? `${standSummary(stand)}<div class="muted small-text" style="margin-top:8px">Fixed by the first finished run: results of different stands must not mix. Another stand is another instance with its own data directory.</div>`
           : `<form id="stand">${standFields(this.standDraft ? { ...stand, ...this.standDraft } : stand)}
-              ${CHECK_BLOCK}<div data-check-report>${checkReport(stand.check)}</div>
+              ${CHECK_BLOCK}<div data-check-report>${checkReport(stand.check)}</div>${CHECK_LOG_BLOCK(stand.check)}
               <h2>Scenario sizes</h2>${sizesFields((this.standDraft || stand).sizes, stand.check)}
               <div class="load-block"><div class="actions"><button type="button" class="small" id="measure-load">Measure load</button></div>
                 <div class="muted small-text">Runs the main scenario with ×1, ×2 and ×4 threads, about a minute each, until the throughput stops growing. These runs stay out of the history and do not fix the stand.</div>

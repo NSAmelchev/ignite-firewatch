@@ -13,7 +13,12 @@
     <artifactId>ignite-firewatch-assembly</artifactId>
     <packaging>pom</packaging>
     <name>Firewatch distribution</name>
-    <description>The application as a zip: bin, config and libs, to run from any directory</description>
+    <description>The application as a zip: bin, config, libs and Maven, to run from any directory</description>
+
+    <properties>
+        <!-- The Maven the distribution brings for building Ignite: the one the wrapper of Ignite master takes. -->
+        <maven.dist.version>3.9.16</maven.dist.version>
+    </properties>
 
     <!-- the modules whose jars the distribution takes: listed here, they are built before it -->
     <dependencies>
@@ -31,6 +36,33 @@
 
     <build>
         <plugins>
+            <!-- Maven itself, unpacked for the assembly: a stand without internet access needs no download of it. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.8.1</version>
+                <executions>
+                    <execution>
+                        <id>maven</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>unpack</goal>
+                        </goals>
+                        <configuration>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>org.apache.maven</groupId>
+                                    <artifactId>apache-maven</artifactId>
+                                    <version>${maven.dist.version}</version>
+                                    <classifier>bin</classifier>
+                                    <type>tar.gz</type>
+                                </artifactItem>
+                            </artifactItems>
+                            <outputDirectory>${project.build.directory}/maven</outputDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-assembly-plugin</artifactId>

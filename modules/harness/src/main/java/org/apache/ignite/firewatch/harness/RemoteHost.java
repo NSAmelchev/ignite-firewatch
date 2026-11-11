@@ -33,6 +33,10 @@ final class RemoteHost implements Host {
     /** Builds kept on a host; the core and SQL builds of a few recent commits. */
     private static final int KEEP_BUILDS = 20;
 
+    /** ssh found no host to talk to: it says so plainly, and -v would only wait as long once more. */
+    private static final List<String> NO_CONNECTION = List.of("Connection refused", "timed out", "No route to host",
+        "Could not resolve hostname", "Network is unreachable");
+
     /** */
     private final StandConfig stand;
 
@@ -45,11 +49,26 @@ final class RemoteHost implements Host {
     /** */
     private Map<String, Object> facts;
 
+    /** Where the commands go as they run; null keeps them quiet, as a phase does. */
+    private CommandLog log;
+
     /** */
     RemoteHost(StandConfig stand, StandConfig.Host h, String runId) {
         this.stand = stand;
         this.h = h;
         this.runId = runId;
+    }
+
+    /**
+     * Prints every command of this host and how it ended.
+     *
+     * @param log Command log.
+     * @return {@code this}.
+     */
+    RemoteHost log(CommandLog log) {
+        this.log = log;
+
+        return this;
     }
 
     /** The separate network for the traffic between nodes, when the host has one; ssh always uses the main address. */
@@ -154,23 +173,41 @@ final class RemoteHost implements Host {
 
     /** Holds the ports open for {@code seconds}, the time the others have to try them. */
     Process listen(String ports, int seconds) throws IOException {
-        Process p = new ProcessBuilder(ssh(probe("listen", ports, String.valueOf(seconds))))
-            .redirectErrorStream(true).start();
+        List<String> cmd = ssh(probe("listen", ports, String.valueOf(seconds)));
+        long started = log == null ? 0 : log.start(h.address, cmd);
+        Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
         p.getOutputStream().close();
         BufferedReader out = new BufferedReader(new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8));
         StringBuilder said = new StringBuilder();
         String line;
 
         while ((line = out.readLine()) != null) {
-            if (line.contains(HostProbe.READY))
-                return p;
+            if (line.contains(HostProbe.READY)) {
+                if (log != null)
+                    log.note(h.address, "listening, until the others have tried the ports");
 
-            said.append(line).append(' ');
+                return p;
+            }
+
+            said.append(line).append('\n');
+        }
+
+        Integer rc = null;
+
+        try {
+            if (p.waitFor(5, TimeUnit.SECONDS))
+                rc = p.exitValue();
+        }
+        catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
 
         p.destroyForcibly();
 
-        throw new IOException(said.toString().trim());
+        if (log != null)
+            log.end(h.address, started, rc, said.toString());
+
+        throw new IOException(said.toString().trim().replace('\n', ' '));
     }
 
     /** */
@@ -309,7 +346,7 @@ final class RemoteHost implements Host {
     }
 
     /** */
-    private static String run(List<String> command) throws IOException {
+    private String run(List<String> command) throws IOException {
         return run(command, false);
     }
 
@@ -317,14 +354,75 @@ final class RemoteHost implements Host {
      * The output of the command. {@code anyExit}: for pkill, which exits with 1 when there was nothing to signal; ssh
      * itself exits with 255.
      */
-    private static String run(List<String> command, boolean anyExit) throws IOException {
-        return run(command, anyExit, COMMAND_TIMEOUT);
+    private String run(List<String> command, boolean anyExit) throws IOException {
+        try {
+            return run(command, anyExit, COMMAND_TIMEOUT, log, h.address);
+        }
+        catch (ExitException e) {
+            if (log != null && worthExplaining(command, e))
+                explain(command);
+
+            throw e;
+        }
+    }
+
+    /**
+     * Whether ssh failed by itself (exit 255) while there was a host to talk to: a key, known_hosts or the config.
+     *
+     * @param command Command that failed.
+     * @param e How it failed.
+     * @return {@code True} if ssh -v can tell more.
+     */
+    static boolean worthExplaining(List<String> command, ExitException e) {
+        return e.code == 255 && "ssh".equals(command.get(0)) && NO_CONNECTION.stream().noneMatch(e.getMessage()::contains);
+    }
+
+    /** The same ssh with -v: which files it read, which keys it offered and why the host turned it away. */
+    void explain(List<String> command) {
+        List<String> verbose = new ArrayList<>(command);
+        verbose.add(1, "-v");
+        log.note(h.address, "ssh failed by itself (exit 255), once more with -v:");
+
+        try {
+            run(verbose, true, Duration.ofMinutes(1), log, h.address);
+        }
+        catch (IOException ignored) {
+            // the log has it
+        }
     }
 
     /** The output goes through a file: reading a pipe would wait for the command and leave the timeout out of reach. */
     static String run(List<String> command, boolean anyExit, Duration timeout) throws IOException {
-        Path log = Files.createTempFile("firewatch-host", ".log");
-        Process p = new ProcessBuilder(command).redirectErrorStream(true).redirectOutput(log.toFile()).start();
+        return run(command, anyExit, timeout, null, null);
+    }
+
+    /**
+     * Runs the command; {@code log} gets it and how it ended, under {@code host}.
+     *
+     * @param command Command.
+     * @param anyExit Whether any exit code but 255 is fine.
+     * @param timeout Time the command has.
+     * @param log Command log, or {@code null}.
+     * @param host Host the command is about, for the log.
+     * @return Output of the command.
+     */
+    static String run(List<String> command, boolean anyExit, Duration timeout, CommandLog log, String host)
+        throws IOException {
+        long started = log == null ? 0 : log.start(host, command);
+        Path file = Files.createTempFile("firewatch-host", ".log");
+        Process p;
+
+        try {
+            p = new ProcessBuilder(command).redirectErrorStream(true).redirectOutput(file.toFile()).start();
+        }
+        catch (IOException e) {
+            Files.deleteIfExists(file);
+
+            if (log != null)
+                log.end(host, started, null, e.getMessage());
+
+            throw e;
+        }
 
         try {
             p.getOutputStream().close();
@@ -332,14 +430,20 @@ final class RemoteHost implements Host {
             if (!p.waitFor(timeout.toSeconds(), TimeUnit.SECONDS)) {
                 p.destroyForcibly();
 
+                if (log != null)
+                    log.end(host, started, null, Files.readString(file, StandardCharsets.UTF_8));
+
                 throw new IOException(command.get(0) + " did not finish within " + timeout.toSeconds() + " s");
             }
 
-            String output = Files.readString(log, StandardCharsets.UTF_8).trim();
+            String output = Files.readString(file, StandardCharsets.UTF_8).trim();
             int rc = p.exitValue();
 
+            if (log != null)
+                log.end(host, started, rc, output);
+
             if (rc == 255 || (rc != 0 && !anyExit))
-                throw new IOException(command.get(0) + " exited with code " + rc + ": " + output);
+                throw new ExitException(command.get(0) + " exited with code " + rc + ": " + output, rc);
 
             return output;
         }
@@ -350,7 +454,22 @@ final class RemoteHost implements Host {
             throw new IOException("interrupted", e);
         }
         finally {
-            Files.deleteIfExists(log);
+            Files.deleteIfExists(file);
+        }
+    }
+
+    /** A command that ended with a code it should not have. */
+    static final class ExitException extends IOException {
+        /** */
+        private static final long serialVersionUID = 0L;
+
+        /** */
+        final int code;
+
+        /** */
+        ExitException(String msg, int code) {
+            super(msg);
+            this.code = code;
         }
     }
 }

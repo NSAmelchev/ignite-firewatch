@@ -478,6 +478,16 @@ table.hosts select { min-width: 92px; }
 .check-host { margin-bottom: 8px; }
 table.check td { padding: 2px 8px 2px 0; border-bottom: 0; }
 table.check td:first-child { width: 14px; font-weight: 600; }
+.check-log { margin: 8px 0; }
+.check-log summary { cursor: pointer; font-size: 12px; }
+.check-log-lines { max-height: 420px; overflow: auto; margin-top: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--card); line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.check-log-lines .cl-cmd { font-weight: 600; margin-top: 6px; }
+.check-log-lines .cl-cmd:first-child { margin-top: 0; }
+.check-log-lines .cl-out { color: var(--muted); padding-left: 2ch; }
+.check-log-lines .cl-end { color: var(--muted); }
+.check-log-lines .cl-bad { color: var(--bad); }
+.check-log-lines .cl-host { color: var(--accent); font-weight: 400; }
 table.check td:nth-child(2) { width: 80px; color: var(--muted); }
 .check-tight { margin-top: 6px; color: var(--warn); }
 tr.check-ok td:first-child { color: var(--ok); }

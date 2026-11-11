@@ -1,7 +1,9 @@
 package org.apache.ignite.firewatch.controller;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -24,6 +26,15 @@ public final class StandService {
 
     /** */
     private static final Duration SWEEP_TIMEOUT = Duration.ofMinutes(2);
+
+    /** What the running or the last Check printed, in the data directory: every command it ran and what it said. */
+    static final String CHECK_LOG = "check.log";
+
+    /** Starts the lines of the harness about the commands of Check. */
+    private static final String CHECK_LINE = "[check] ";
+
+    /** A Check prints far less: this only keeps a runaway from filling the page. */
+    private static final int CHECK_LOG_MAX_BYTES = 512 * 1024;
 
     /** What a host keeps for itself besides the JVMs of a phase. */
     private static final int OS_RESERVE_MB = 1024;
@@ -51,6 +62,9 @@ public final class StandService {
 
     /** A job, Check and Clean hosts take the ports and the JVMs of the hosts from each other: one at a time. */
     private final Semaphore hold = new Semaphore(1);
+
+    /** */
+    private volatile boolean checking;
 
     /**
      * Creates the stand service.
@@ -135,13 +149,40 @@ public final class StandService {
             cmd.addAll(List.of("--dir", cfg.dataDir.toAbsolutePath().toString()));
 
         Files.createDirectories(cfg.dataDir);
-        Proc.Result r = Proc.run(cmd, null, cfg.harnessEnv, CHECK_TIMEOUT);
-        Files.deleteIfExists(file);
-        String answer = r.out.strip();
+        Path log = cfg.dataDir.resolve(CHECK_LOG);
+        Files.deleteIfExists(log);
+        Integer rc = null;
+        String out;
+        checking = true;
+
+        try {
+            Proc.Handle p = Proc.start(cmd, null, cfg.harnessEnv, log);
+
+            try {
+                rc = p.waitFor(CHECK_TIMEOUT, null);
+            }
+            catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+
+            if (rc == null)
+                p.killTree(Duration.ofSeconds(5));
+
+            out = Files.readString(log, StandardCharsets.UTF_8);
+        }
+        finally {
+            checking = false;
+            Files.deleteIfExists(file);
+        }
+
+        String answer = out.strip();
         answer = answer.substring(answer.lastIndexOf('\n') + 1);
 
-        if (!r.ok() || !answer.startsWith("{"))
-            throw new IllegalStateException("Check could not run: " + r.tail(3));
+        if (rc == null)
+            throw new IllegalStateException("Check did not finish within " + CHECK_TIMEOUT.toMinutes() + " min");
+
+        if (rc != 0 || !answer.startsWith("{"))
+            throw new IllegalStateException("Check could not run: " + Proc.tail(out, 3));
 
         ObjectNode report = (ObjectNode)Json.tree(answer);
         Stand.Sizes recommended = recommend(s, report, maxServers());
@@ -163,6 +204,27 @@ public final class StandService {
         }
 
         return report;
+    }
+
+    /**
+     * Gets what the running or the last Check printed: the commands it ran on the hosts and what they said.
+     *
+     * @return Whether a Check runs now, and the lines of its log.
+     */
+    public Map<String, Object> checkLog() throws IOException {
+        List<String> lines = new ArrayList<>();
+
+        try {
+            for (String l : Proc.tailLines(cfg.dataDir.resolve(CHECK_LOG), CHECK_LOG_MAX_BYTES)) {
+                if (!l.startsWith("{")) // the report, the last line
+                    lines.add(l.startsWith(CHECK_LINE) ? l.substring(CHECK_LINE.length()) : l);
+            }
+        }
+        catch (NoSuchFileException ignored) {
+            // no Check yet, or a new one is about to start
+        }
+
+        return Map.of("running", checking, "lines", lines);
     }
 
     /** */

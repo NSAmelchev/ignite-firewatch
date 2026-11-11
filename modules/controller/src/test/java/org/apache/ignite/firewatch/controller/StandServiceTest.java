@@ -204,6 +204,21 @@ class StandServiceTest {
         try (Db db = Db.open(tmp.resolve("t.db"))) {
             StandService s = new StandService(config("no json here"), db, threeServers());
             assertThrows(IllegalStateException.class, () -> s.check(remote()));
+            assertEquals(List.of("banner", "no json here"), s.checkLog().get("lines"), "what it said stays readable");
+        }
+    }
+
+    /** */
+    @Test void theLogOfCheckHasTheCommandsButNotTheReport() throws Exception {
+        try (Db db = Db.open(tmp.resolve("t.db"))) {
+            Config c = config(report(true));
+            StandService s = new StandService(c, db, threeServers());
+            assertEquals(List.of(), s.checkLog().get("lines"), "no Check yet");
+            Files.writeString(Path.of(c.harnessCommand.get(1)), "#!/bin/bash\necho '[check] a $ ssh a true'\n"
+                + "echo '[check] a → exit 0 in 0.1 s'\necho '" + report(true) + "'\n");
+            assertTrue(s.check(remote()).path("ok").asBoolean());
+            assertEquals(List.of("a $ ssh a true", "a → exit 0 in 0.1 s"), s.checkLog().get("lines"));
+            assertEquals(false, s.checkLog().get("running"));
         }
     }
 

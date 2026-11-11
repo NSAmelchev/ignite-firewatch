@@ -47,7 +47,7 @@ public final class Config {
     public String javaExe = Path.of(System.getProperty("java.home"), "bin", "java").toString();
 
     /** */
-    public String mvnExe = "mvn";
+    public String mvnExe = defaultMvn();
 
     /** */
     public int mavenHeapMb = 1536;
@@ -150,6 +150,26 @@ public final class Config {
         }
 
         return Path.of("modules/harness/target/harness.jar");
+    }
+
+    /**
+     * The Maven of the distribution, {@code maven/bin/mvn} beside {@code libs/}; elsewhere the one on the PATH.
+     *
+     * @return Maven command.
+     */
+    static String defaultMvn() {
+        try {
+            Path own = Path.of(Config.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+            Path mvn = own.toAbsolutePath().getParent().resolveSibling("maven").resolve("bin").resolve("mvn");
+
+            if (Files.isRegularFile(own) && Files.isExecutable(mvn))
+                return mvn.normalize().toString();
+        }
+        catch (Exception ignored) {
+            // no code source: the PATH
+        }
+
+        return "mvn";
     }
 
     /** A system property, else an environment variable: what overrides the properties file. */

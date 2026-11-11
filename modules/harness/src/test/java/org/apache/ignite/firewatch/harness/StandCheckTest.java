@@ -1,13 +1,18 @@
 package org.apache.ignite.firewatch.harness;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -128,5 +133,32 @@ class StandCheckTest {
         assertTrue(((Number)r.facts.get("memMb")).longValue() > 0);
         assertEquals(String.valueOf(r.facts.get("cpus")), r.fingerprint.get("cpus"));
         assertFalse(r.items.isEmpty());
+    }
+
+    /** */
+    @Test void checkSaysWhatSshIsGoingToUseAndWhatKnownHostsLacks() throws Exception {
+        Assumptions.assumeTrue(RemoteHostTest.sshInstalled(), "ssh is required");
+        Path known = Files.writeString(tmp.resolve("known_hosts"), "");
+        StandConfig s = new StandConfig();
+        s.sshKey = tmp.resolve("no-such-key").toString();
+        s.sshKnownHosts = known.toString();
+        StandConfig.Host h = new StandConfig.Host();
+        h.address = "127.0.0.1";
+        h.port = 1; // nothing listens there
+        h.user = "bench";
+        h.role = StandConfig.SERVERS;
+        h.javaHome = "/usr/lib/jvm/java-17";
+        h.workDir = "/opt/firewatch";
+        s.hosts = List.of(h);
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        StandCheck c = StandCheck.remote(s, Path.of("harness.jar"), "check",
+            new CommandLog(new PrintStream(buf, true, UTF_8)));
+        assertFalse(c.ok);
+        String out = buf.toString(UTF_8);
+        assertTrue(out.contains("[check] · ssh key: " + s.sshKey + " is missing\n"), out);
+        assertTrue(out.contains("[check] · known_hosts: " + known + ", rw"), out);
+        assertTrue(out.contains("[check] 127.0.0.1 $ ssh-keygen -F '[127.0.0.1]:1' -f " + known), out);
+        assertTrue(out.contains("[check] 127.0.0.1 · " + known + " has no key of [127.0.0.1]:1"), out);
+        assertTrue(out.contains("[check] 127.0.0.1 → exit 255"), out);
     }
 }

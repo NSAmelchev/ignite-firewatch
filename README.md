@@ -18,12 +18,15 @@ docker volume create ignite-firewatch-data && docker volume create ignite-firewa
 docker compose -f docker/docker-compose.yml up -d --build
 ```
 
-Without Docker, on a machine with JDK 17, Maven and git:
+Without Docker: build the distribution with JDK 17 and Maven, run it anywhere with JDK 17 and git (it brings Maven):
 
 ```bash
 mvn -DskipTests package     # target/ignite-firewatch-<version>-bin.zip: unpack it anywhere
 bin/firewatch.sh start      # in the unpacked directory; also stop, restart, status, logs
 ```
+
+Without internet access the stand still needs the dependencies of Ignite (a mirror in `~/.m2/settings.xml`) and a git
+repository it can fetch (`repo.url`).
 
 Open http://localhost:8090 and follow the setup wizard. Settings (port, directories, memory, timeouts) are in
 [config/ignite-firewatch.properties](config/ignite-firewatch.properties). To deploy to another host over ssh:

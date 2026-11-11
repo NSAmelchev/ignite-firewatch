@@ -1,13 +1,17 @@
 package org.apache.ignite.firewatch.harness;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.regex.Pattern;
 
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -69,6 +73,75 @@ class RemoteHostTest {
             () -> RemoteHost.run(List.of("sleep", "30"), false, Duration.ofSeconds(1)));
         assertTrue(e.getMessage().contains("did not finish"), e.getMessage());
         assertTrue(Duration.ofNanos(System.nanoTime() - t0).toSeconds() < 10);
+    }
+
+    /** */
+    @Test void aLoggedCommandShowsItsWordsHowItEndedAndWhatItSaid() {
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        CommandLog log = new CommandLog(new PrintStream(buf, true, UTF_8));
+        RemoteHost.ExitException e = assertThrows(RemoteHost.ExitException.class, () -> RemoteHost.run(
+            List.of("bash", "-c", "echo said it; exit 3"), false, Duration.ofSeconds(20), log, "h1"));
+        assertEquals(3, e.code);
+        String out = buf.toString(UTF_8);
+        assertTrue(out.contains("[check] h1 $ bash -c 'echo said it; exit 3'\n"), out);
+        assertTrue(out.contains("[check] h1 → exit 3 in "), out);
+        assertTrue(out.contains("[check] h1 | said it\n"), out);
+    }
+
+    /** */
+    @Test void aCommandIsLoggedAsAShellTakesIt() {
+        assertEquals("ssh -p 22 -o BatchMode=yes u@10.0.0.1 'echo $HOME' 'it'\\''s'",
+            CommandLog.shell(List.of("ssh", "-p", "22", "-o", "BatchMode=yes", "u@10.0.0.1", "echo $HOME", "it's")));
+    }
+
+    /** */
+    @Test void onlySshThatFailedByItselfWithAHostToTalkToIsExplained() {
+        List<String> ssh = List.of("ssh", "-n", "u@h", "true");
+        assertTrue(RemoteHost.worthExplaining(ssh, exit(255, "Host key verification failed.")));
+        assertTrue(RemoteHost.worthExplaining(ssh, exit(255, "u@h: Permission denied (publickey).")));
+        assertFalse(RemoteHost.worthExplaining(ssh, exit(255, "ssh: connect to host h port 22: Connection refused")),
+            "it says it all, -v would wait as long once more");
+        assertFalse(RemoteHost.worthExplaining(ssh, exit(255, "ssh: connect to host h port 22: Operation timed out")));
+        assertFalse(RemoteHost.worthExplaining(ssh, exit(3, "pkill is missing")), "the remote command failed, not ssh");
+        assertFalse(RemoteHost.worthExplaining(List.of("rsync", "-a"), exit(255, "Host key verification failed.")));
+    }
+
+    /** */
+    private static RemoteHost.ExitException exit(int code, String output) {
+        return new RemoteHost.ExitException("ssh exited with code " + code + ": " + output, code);
+    }
+
+    /** */
+    @Test void sshIsExplainedWithV() {
+        Assumptions.assumeTrue(sshInstalled(), "ssh is required");
+        StandConfig.Host h = host("127.0.0.1", StandConfig.SERVERS);
+        h.port = 1; // nothing listens there
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        RemoteHost r = new RemoteHost(stand(h), h, "t").log(new CommandLog(new PrintStream(buf, true, UTF_8)));
+        assertThrows(IOException.class, () -> r.installProbe(Path.of("harness.jar")));
+        r.explain(r.ssh("true"));
+        String out = buf.toString(UTF_8);
+        assertTrue(out.contains("[check] 127.0.0.1 $ ssh -o BatchMode=yes"), out);
+        assertTrue(out.contains("[check] 127.0.0.1 → exit 255"), out);
+        assertFalse(out.contains("ssh -v -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 "
+            + "-o ServerAliveCountMax=4 -p 1 -n bench@127.0.0.1 'mkdir"), "a refused connection is not repeated");
+        assertTrue(out.contains("[check] 127.0.0.1 $ ssh -v -o BatchMode=yes"), out);
+        assertTrue(out.contains("| debug1:"), out);
+    }
+
+    /** */
+    static boolean sshInstalled() {
+        try {
+            return new ProcessBuilder("ssh", "-V").redirectErrorStream(true).start().waitFor() == 0;
+        }
+        catch (IOException e) {
+            return false;
+        }
+        catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+
+            return false;
+        }
     }
 
     /** */

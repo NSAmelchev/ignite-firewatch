@@ -159,6 +159,7 @@ public final class Api {
             return stands.view();
         });
         r.post("/api/stand/check", req -> stands.check(Json.read(req.json().toString(), Stand.class)));
+        r.get("/api/stand/check/log", req -> stands.checkLog());
         r.post("/api/stand/measure", req -> {
             if (Stand.frozen(db))
                 throw new IllegalStateException("the stand has finished runs: its load is fixed");

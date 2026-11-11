@@ -1,6 +1,6 @@
 #!/bin/bash
-# Runs Firewatch as a background process of this machine, without a container. Needs JDK 17, Maven and git.
-# Works in the distribution (libs/ next to bin/) and in the repository, where it builds the jars when they are missing.
+# Runs Firewatch as a background process of this machine, without a container. Needs JDK 17 and git: the distribution
+# (libs/ next to bin/) brings Maven in maven/; in the repository it takes mvn from the PATH and builds missing jars.
 #
 #   bin/firewatch.sh start|stop|restart|status|logs
 #
@@ -27,9 +27,11 @@ PORT=${PORT:-8090}
 if [ -f libs/controller.jar ]; then
     JAR=libs/controller.jar
     BUILT=libs/harness.jar
+    OWN_MVN=$ROOT/maven/bin/mvn
 else
     JAR=modules/controller/target/controller.jar
     BUILT=modules/harness/target/harness.jar
+    OWN_MVN=
 fi
 HARNESS_JAR=${IGNITE_FIREWATCH_HARNESS_JAR:-$(setting harness.jar)}
 HARNESS_JAR=${HARNESS_JAR:-$BUILT}
@@ -39,7 +41,8 @@ HOST=${HOST:-127.0.0.1}
 JAVA=${IGNITE_FIREWATCH_JAVA:-$(setting java)}
 JAVA=${JAVA:-${JAVA_HOME:+$JAVA_HOME/bin/}java}
 MVN=${IGNITE_FIREWATCH_MVN:-$(setting mvn)}
-MVN=${MVN:-mvn}
+[ -n "$OWN_MVN" ] && [ -x "$OWN_MVN" ] || OWN_MVN=mvn
+MVN=${MVN:-$OWN_MVN}
 PID_FILE=$DATA_DIR/firewatch.pid
 LOG=$DATA_DIR/firewatch.log
 LOG_LIMIT_BYTES=10485760
