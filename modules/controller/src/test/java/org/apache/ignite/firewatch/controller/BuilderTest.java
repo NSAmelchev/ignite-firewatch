@@ -10,6 +10,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -17,6 +18,24 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class BuilderTest {
     /** */
     @TempDir Path tmp;
+
+    /** */
+    @Test void theConfigAddsItsSettingsAndArgumentsToEveryMavenCall() throws Exception {
+        Config c = new Config();
+        assertFalse(Builder.mavenCommon(c).contains("-s"), "the settings.xml of Maven itself by default");
+        Path settings = Files.writeString(tmp.resolve("settings.xml"), "<settings/>");
+        c.mavenSettings = Config.mavenSettings(settings.toString());
+        c.mavenArgs = Config.words("  -o   -Dmaven.repo.local=/other ");
+        List<String> cmd = Builder.mavenCommon(c);
+        assertEquals(List.of(c.mvnExe, "-B", "-ntp", "-s", settings.toAbsolutePath().toString()), cmd.subList(0, 5));
+        assertEquals(List.of("-o", "-Dmaven.repo.local=/other"), cmd.subList(cmd.size() - 2, cmd.size()),
+            "the last ones, so they can override");
+        assertEquals(c.mvnExe + " -s " + settings.toAbsolutePath() + " -o -Dmaven.repo.local=/other", c.mavenText());
+        assertThrows(IllegalStateException.class, () -> Config.mavenSettings(tmp.resolve("missing.xml").toString()),
+            "a wrong path stops the start, not every build");
+        assertNull(Config.mavenSettings(" "));
+        assertEquals(List.of(), Config.words(""));
+    }
 
     /** */
     @Test void keyIsTheShaOrTheShaWithSortedModules() {

@@ -17,9 +17,13 @@
             <outputDirectory>bin</outputDirectory>
             <fileMode>0755</fileMode>
         </fileSet>
+        <!-- only the committed defaults: a local settings.xml with credentials stays out of the zip -->
         <fileSet>
             <directory>${maven.multiModuleProjectDirectory}/config</directory>
             <outputDirectory>config</outputDirectory>
+            <includes>
+                <include>ignite-firewatch.properties</include>
+            </includes>
         </fileSet>
         <!-- Maven for the builds of Ignite: the controller and bin/firewatch.sh take it unless the config names another -->
         <fileSet>

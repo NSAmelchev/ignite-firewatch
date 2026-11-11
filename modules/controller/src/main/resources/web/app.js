@@ -2293,6 +2293,7 @@ views.settings = {
       </div></section>
       <section data-tab="system" ${tab === 'system' ? '' : 'hidden'}>
         <h2 style="margin-top:0">Builds <span class="muted">last ${builds.length} · ${fmt.num(s.artifactsMb)} MB of artifacts${builds.some((b) => b.status === 'failed') ? ' · <span class="error">has failures</span>' : ''}</span></h2>
+        ${health.maven ? `<div class="muted small-text" style="margin-bottom:6px">Maven: <span class="mono">${esc(health.maven)}</span> · maven.settings and maven.args of the config</div>` : ''}
         <table><thead><tr><th>Commit</th><th>Status</th><th class="num">Took</th><th class="num">Size</th><th>Started</th><th>Error</th></tr></thead>
         <tbody>${builds.map((b) => `<tr><td class="mono"><a href="#/commits/${b.sha}">${fmt.sha(b.sha)}</a>${b.fake ? ' <span class="muted">(fake)</span>' : ''}</td><td>${badge(b.status)}</td>
           <td class="num">${b.durationSec != null ? Math.round(b.durationSec) + ' s' : '–'}</td><td class="num">${fmt.bytes(b.sizeBytes)}</td><td>${fmt.ago(b.startedAt)}</td><td class="error">${esc(b.error || '')}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">none</td></tr>'}</tbody></table>

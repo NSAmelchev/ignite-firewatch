@@ -14,3 +14,6 @@ docker/ssh/
 docs/BACKLOG.md
 # local tool state
 .claude/
+# local files next to the config, such as a settings.xml with credentials
+config/*
+!config/ignite-firewatch.properties

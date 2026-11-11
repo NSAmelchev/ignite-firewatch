@@ -531,6 +531,7 @@ public final class Api {
         m.put("uptimeSec", (System.currentTimeMillis() - STARTED) / 1000);
         m.put("fakeBuild", cfg.fakeBuild);
         m.put("harnessJar", cfg.harnessJar.toString());
+        m.put("maven", cfg.mavenText());
         Map<String, Object> worker = new LinkedHashMap<>();
         Job cur = runner.current();
         worker.put("busy", cur != null);

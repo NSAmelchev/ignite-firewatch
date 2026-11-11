@@ -281,9 +281,7 @@ public final class Builder {
             "JAVA_HOME", cfg.javaHome(),
             "MAVEN_OPTS", "-Xmx" + cfg.mavenHeapMb + "m -Djava.io.tmpdir=" + tmp,
             "LC_ALL", "C");
-        List<String> common = List.of(cfg.mvnExe, "-B", "-ntp", "-Dmaven.repo.local=" + cfg.m2Dir().toAbsolutePath(),
-            "-Dmaven.test.skip=true", "-DskipTests", "-Dmaven.javadoc.skip=true", "-Dmaven.source.skip=true",
-            "-Dcheckstyle.skip=true", "-Denforcer.skip=true");
+        List<String> common = mavenCommon(cfg);
         Duration timeout = Duration.ofMinutes(cfg.buildTimeoutMin);
 
         List<String> install = new ArrayList<>(common);
@@ -323,6 +321,26 @@ public final class Builder {
 
         if (!modules.isEmpty())
             buildModules(modules, ver, work, tmp, common, env, log, libs, timeout, cancelled);
+    }
+
+    /**
+     * Gets the start of every mvn call of a build: the options of the application, then those of the configuration,
+     * which can override them.
+     *
+     * @param cfg Configuration.
+     * @return Command without the goals.
+     */
+    static List<String> mavenCommon(Config cfg) {
+        List<String> c = new ArrayList<>(List.of(cfg.mvnExe, "-B", "-ntp"));
+
+        if (cfg.mavenSettings != null)
+            c.addAll(List.of("-s", cfg.mavenSettings.toString()));
+
+        c.addAll(List.of("-Dmaven.repo.local=" + cfg.m2Dir().toAbsolutePath(), "-Dmaven.test.skip=true", "-DskipTests",
+            "-Dmaven.javadoc.skip=true", "-Dmaven.source.skip=true", "-Dcheckstyle.skip=true", "-Denforcer.skip=true"));
+        c.addAll(cfg.mavenArgs);
+
+        return List.copyOf(c);
     }
 
     /**

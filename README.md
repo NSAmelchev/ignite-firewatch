@@ -25,8 +25,8 @@ mvn -DskipTests package     # target/ignite-firewatch-<version>-bin.zip: unpack 
 bin/firewatch.sh start      # in the unpacked directory; also stop, restart, status, logs
 ```
 
-Without internet access the stand still needs the dependencies of Ignite (a mirror in `~/.m2/settings.xml`) and a git
-repository it can fetch (`repo.url`).
+Without internet access the stand still needs the dependencies of Ignite (a mirror in a settings.xml named by
+`maven.settings` of the config) and a git repository it can fetch (`repo.url`).
 
 Open http://localhost:8090 and follow the setup wizard. Settings (port, directories, memory, timeouts) are in
 [config/ignite-firewatch.properties](config/ignite-firewatch.properties). To deploy to another host over ssh:

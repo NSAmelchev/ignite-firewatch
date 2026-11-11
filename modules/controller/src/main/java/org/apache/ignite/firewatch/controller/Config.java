@@ -5,6 +5,7 @@ import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
@@ -51,6 +52,12 @@ public final class Config {
 
     /** */
     public int mavenHeapMb = 1536;
+
+    /** The settings.xml of every build of Ignite ({@code -s}): mirrors, proxies, credentials; null for the default. */
+    public Path mavenSettings;
+
+    /** More arguments of every mvn call of a build, after those of the application. */
+    public List<String> mavenArgs = List.of();
 
     /** */
     public int buildTimeoutMin = 25;
@@ -108,6 +115,8 @@ public final class Config {
         c.javaExe = get("JAVA", c.javaExe);
         c.mvnExe = get("MVN", c.mvnExe);
         c.mavenHeapMb = Integer.parseInt(get("MAVEN_HEAP_MB", String.valueOf(c.mavenHeapMb)));
+        c.mavenSettings = mavenSettings(get("MAVEN_SETTINGS", ""));
+        c.mavenArgs = words(get("MAVEN_ARGS", ""));
         c.buildTimeoutMin = Integer.parseInt(get("BUILD_TIMEOUT_MIN", String.valueOf(c.buildTimeoutMin)));
         c.fetchTimeoutMin = Integer.parseInt(get("FETCH_TIMEOUT_MIN", String.valueOf(c.fetchTimeoutMin)));
         c.harnessHeapMb = Integer.parseInt(get("HARNESS_HEAP_MB", String.valueOf(c.harnessHeapMb)));
@@ -170,6 +179,51 @@ public final class Config {
         }
 
         return "mvn";
+    }
+
+    /**
+     * Gets the settings.xml of the builds. A relative path starts in the working directory of the application: the
+     * builds run in directories of their own.
+     *
+     * @param value Value of {@code maven.settings}.
+     * @return Absolute path, or {@code null} when it is not set.
+     */
+    static Path mavenSettings(String value) {
+        if (value.isBlank())
+            return null;
+
+        Path p = Path.of(value.trim()).toAbsolutePath().normalize();
+
+        if (!Files.isRegularFile(p))
+            throw new IllegalStateException("maven.settings: " + p + " does not exist");
+
+        return p;
+    }
+
+    /**
+     * Splits a value into words.
+     *
+     * @param value Words separated by spaces.
+     * @return Words.
+     */
+    static List<String> words(String value) {
+        return value.isBlank() ? List.of() : List.of(value.trim().split("\\s+"));
+    }
+
+    /**
+     * Describes the Maven of the builds for people.
+     *
+     * @return Command with the options of the configuration.
+     */
+    public String mavenText() {
+        List<String> w = new ArrayList<>(List.of(mvnExe));
+
+        if (mavenSettings != null)
+            w.addAll(List.of("-s", mavenSettings.toString()));
+
+        w.addAll(mavenArgs);
+
+        return String.join(" ", w);
     }
 
     /** A system property, else an environment variable: what overrides the properties file. */
