@@ -43,7 +43,8 @@ IGNITE_FIREWATCH_FAKE_BUILD=1 bin/firewatch.sh start     # UI on :8090, release 
   and builds in `ignite-firewatch-cache`, which can be wiped. Both are external, so `docker compose down -v` keeps
   them. Backup: `docker run --rm -v ignite-firewatch-data:/data -v "$PWD":/out alpine tar czf /out/data.tgz -C / data`.
 - Remote benchmark hosts (Settings → Stand) need an ssh key: put `key` (mode 600) and `known_hosts` into
-  `docker/ssh/`; the container sees them read-only as `/ssh`.
+  `docker/ssh/`; the container sees them read-only as `/ssh`. `ssh.accept.new.hosts = true` lets ssh take the keys of
+  hosts missing from `known_hosts`, which then stays as it is.
 - `docker/deploy.sh` deploys to another host; its values (host, docker context, time zone) go to the git-ignored
   `docker/deploy.env`, see `docker/deploy.env.example`.
 

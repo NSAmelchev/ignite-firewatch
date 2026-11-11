@@ -140,7 +140,7 @@ public final class StandCheck {
                 reports.put(host, r);
             }
             catch (IOException | RuntimeException e) {
-                r.add("ssh", FAIL, e.getMessage());
+                r.add("ssh", FAIL, hostKeyHint(e.getMessage(), stand.sshAcceptNewHosts));
             }
         }
 
@@ -158,8 +158,11 @@ public final class StandCheck {
         log.note(null, "ssh key: " + (blank(stand.sshKey)
             ? "not set, ssh offers the keys of " + home + "/.ssh as its config says" : describe(stand.sshKey)));
         log.note(null, "known_hosts: " + (blank(stand.sshKnownHosts)
-            ? "not set, ssh reads " + home + "/.ssh/known_hosts; a host missing there is refused"
+            ? "not set, ssh reads " + home + "/.ssh/known_hosts"
             : describe(stand.sshKnownHosts) + "; only this file counts"));
+        log.note(null, "a host known_hosts has no key of: " + (stand.sshAcceptNewHosts
+            ? "ssh takes its key on first contact and adds it there (ssh.accept.new.hosts)"
+            : "refused (ssh.accept.new.hosts = true takes its key on first contact)"));
 
         try {
             RemoteHost.run(List.of("ssh", "-V"), true, Duration.ofSeconds(10), log, null);
@@ -174,6 +177,15 @@ public final class StandCheck {
         String file = blank(stand.sshKnownHosts) ? System.getProperty("user.home") + "/.ssh/known_hosts"
             : stand.sshKnownHosts;
 
+        String then = stand.sshAcceptNewHosts ? "ssh takes its key on first contact"
+            : "ssh refuses the host until it has its key";
+
+        if (!Files.exists(Path.of(file))) {
+            log.note(h.address, file + " is missing: " + then);
+
+            return;
+        }
+
         if (!Files.isReadable(Path.of(file)))
             return;
 
@@ -184,11 +196,27 @@ public final class StandCheck {
                 log, h.address);
 
             if (found.isBlank())
-                log.note(h.address, file + " has no key of " + name + ": ssh refuses the host until it has one");
+                log.note(h.address, file + " has no key of " + name + ": " + then);
         }
         catch (IOException ignored) {
             // the log has it
         }
+    }
+
+    /**
+     * What "Host key verification failed" means here: ssh gives no reason of its own.
+     *
+     * @param message Error of a host.
+     * @param acceptNew Whether ssh takes the keys of new hosts.
+     * @return The message, with the reason when it is about the key of the host.
+     */
+    static String hostKeyHint(String message, boolean acceptNew) {
+        if (message == null || !message.contains("Host key verification failed"))
+            return message;
+
+        return message + (acceptNew ? " (the host has another key than known_hosts says)"
+            : " (known_hosts has no key of the host or another one: add it with ssh-keyscan, or set "
+                + "ssh.accept.new.hosts = true to take the keys of new hosts)");
     }
 
     /** A file given to ssh: whether it is there for the user of the application. */

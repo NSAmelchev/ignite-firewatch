@@ -46,6 +46,9 @@ final class StandConfig {
     /** */
     public String sshKnownHosts = "";
 
+    /** ssh takes the key of a host that known_hosts lacks on first contact; a changed key is refused either way. */
+    public boolean sshAcceptNewHosts;
+
     /**
      * What every host looked like when it was checked, by address: runs on a changed host say nothing about the
      * history.

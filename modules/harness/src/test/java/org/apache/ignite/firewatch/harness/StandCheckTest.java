@@ -160,5 +160,37 @@ class StandCheckTest {
         assertTrue(out.contains("[check] 127.0.0.1 $ ssh-keygen -F '[127.0.0.1]:1' -f " + known), out);
         assertTrue(out.contains("[check] 127.0.0.1 · " + known + " has no key of [127.0.0.1]:1"), out);
         assertTrue(out.contains("[check] 127.0.0.1 → exit 255"), out);
+        assertTrue(out.contains("[check] · a host known_hosts has no key of: refused"), out);
+    }
+
+    /** */
+    @Test void checkSaysThatSshTakesTheKeysOfNewHosts() throws Exception {
+        Assumptions.assumeTrue(RemoteHostTest.sshInstalled(), "ssh is required");
+        StandConfig s = new StandConfig();
+        s.sshKnownHosts = tmp.resolve("no-such-known-hosts").toString();
+        s.sshAcceptNewHosts = true;
+        StandConfig.Host h = new StandConfig.Host();
+        h.address = "127.0.0.1";
+        h.port = 1;
+        h.user = "bench";
+        h.role = StandConfig.SERVERS;
+        h.javaHome = "/usr/lib/jvm/java-17";
+        h.workDir = "/opt/firewatch";
+        s.hosts = List.of(h);
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        StandCheck.remote(s, Path.of("harness.jar"), "check", new CommandLog(new PrintStream(buf, true, UTF_8)));
+        String out = buf.toString(UTF_8);
+        assertTrue(out.contains("[check] · a host known_hosts has no key of: ssh takes its key on first contact"), out);
+        assertTrue(out.contains("[check] 127.0.0.1 · " + s.sshKnownHosts + " is missing: ssh takes its key on first "
+            + "contact"), out);
+        assertTrue(out.contains("StrictHostKeyChecking=accept-new"), out);
+    }
+
+    /** */
+    @Test void aFailedHostKeyCheckSaysWhatToDo() {
+        String msg = "ssh exited with code 255: Host key verification failed.";
+        assertTrue(StandCheck.hostKeyHint(msg, false).contains("ssh.accept.new.hosts = true"));
+        assertTrue(StandCheck.hostKeyHint(msg, true).contains("another key than known_hosts says"));
+        assertEquals("Connection refused", StandCheck.hostKeyHint("Connection refused", false));
     }
 }

@@ -320,8 +320,16 @@ final class RemoteHost implements Host {
         if (stand.sshKey != null && !stand.sshKey.isBlank())
             c.addAll(List.of("-i", stand.sshKey, "-o", "IdentitiesOnly=yes"));
 
-        if (stand.sshKnownHosts != null && !stand.sshKnownHosts.isBlank())
-            c.addAll(List.of("-o", "UserKnownHostsFile=" + stand.sshKnownHosts, "-o", "StrictHostKeyChecking=yes"));
+        boolean ownFile = stand.sshKnownHosts != null && !stand.sshKnownHosts.isBlank();
+
+        if (ownFile)
+            c.addAll(List.of("-o", "UserKnownHostsFile=" + stand.sshKnownHosts));
+
+        // ssh keeps the first value of an option: one of them only
+        if (stand.sshAcceptNewHosts)
+            c.addAll(List.of("-o", "StrictHostKeyChecking=accept-new"));
+        else if (ownFile)
+            c.addAll(List.of("-o", "StrictHostKeyChecking=yes"));
 
         return c;
     }

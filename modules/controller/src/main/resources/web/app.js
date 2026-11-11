@@ -2015,7 +2015,8 @@ function standFields(stand) {
         <tbody>${hosts.map((h) => hostRow(h)).join('')}</tbody></table>
       <div class="actions"><button type="button" class="small" data-host-add>Add host</button></div>
       <div class="muted small-text">The same node always lands on the same host. Data address is an optional separate network for the traffic between nodes.
-        The ssh key and known_hosts stay out of the database: they are files given to the application by <code>IGNITE_FIREWATCH_SSH_KEY</code> and <code>IGNITE_FIREWATCH_SSH_KNOWN_HOSTS</code>, now ${esc(stand.sshKey || 'the default of ssh')}.</div>
+        The ssh key and known_hosts stay out of the database: they are files given to the application by <code>IGNITE_FIREWATCH_SSH_KEY</code> and <code>IGNITE_FIREWATCH_SSH_KNOWN_HOSTS</code>, now ${esc(stand.sshKey || 'the default of ssh')}.
+        A host whose key known_hosts lacks is ${stand.sshAcceptNewHosts ? 'taken on first contact, its key added' : 'refused'} (<code>IGNITE_FIREWATCH_SSH_ACCEPT_NEW_HOSTS</code>).</div>
     </div>`;
 }
 // The hosts as Check saw them or as the form has them: a report is good for exactly these

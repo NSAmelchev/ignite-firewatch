@@ -267,12 +267,14 @@ class StandServiceTest {
         try (Db db = Db.open(tmp.resolve("t.db"))) {
             Config c = config("{}");
             c.sshKey = "/keys/id";
+            c.sshAcceptNewHosts = true;
             db.setSetting(Stand.FINGERPRINTS, "{\"a\": {\"cpus\": \"16\"}}");
             Path f = tmp.resolve("x/stand.json");
             new StandService(c, db, threeServers()).write(f, remote());
             var n = Json.tree(Files.readString(f));
             assertEquals(2, n.path("hosts").size());
             assertEquals("/keys/id", n.path("sshKey").asText());
+            assertTrue(n.path("sshAcceptNewHosts").asBoolean());
             assertEquals("16", n.path("fingerprints").path("a").path("cpus").asText());
             assertEquals(c.runPrefix(), n.path("runPrefix").asText());
         }

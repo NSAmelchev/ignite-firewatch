@@ -48,6 +48,7 @@ IGNITE_FIREWATCH_FAKE_BUILD=1 IGNITE_FIREWATCH_PORT=8085 IGNITE_FIREWATCH_DATA_D
 | `IGNITE_FIREWATCH_PHASE_GRACE_SEC` | `120` | запас сверх собственного худшего времени harness, после чего фаза считается зависшей |
 | `IGNITE_FIREWATCH_FAKE_BUILD`, `IGNITE_FIREWATCH_FAKE_LIBS_DIR` | `0`, `modules/harness/target/dev-libs` | режим разработки |
 | `IGNITE_FIREWATCH_SSH_KEY`, `IGNITE_FIREWATCH_SSH_KNOWN_HOSTS` | пусто: что найдёт сам ssh; в контейнере `/ssh/key` и `/ssh/known_hosts` | ключ и `known_hosts` удалённого стенда, в БД не хранятся |
+| `IGNITE_FIREWATCH_SSH_ACCEPT_NEW_HOSTS` | `false` | `true`: ssh принимает ключ хоста, которого нет в `known_hosts`, при первом входе и дописывает его туда (`StrictHostKeyChecking=accept-new`); сменившийся ключ не принимается всё равно |
 
 Настройки, которые меняются из UI (таблица `settings`, засеваются при первом старте):
 `autorun.enabled` (false), `autorun.mode` (`abba-vs-parent` | `single`), `autorun.scenario` (один или несколько

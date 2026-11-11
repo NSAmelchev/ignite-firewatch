@@ -133,7 +133,7 @@ public class PutGetThinT16 extends PutGetInMemory {
             "workDir": "/opt/firewatch", "dataAddress": "10.9.0.1"},
            {"address": "bench-2", "user": "bench", "port": 22, "role": "loaders", "javaHome": "/usr/lib/jvm/java-17",
             "workDir": "/opt/firewatch", "dataAddress": null}],
- "sshKey": "", "sshKnownHosts": "",
+ "sshKey": "", "sshKnownHosts": "", "sshAcceptNewHosts": false,
  "fingerprints": {"bench-1": {"cpu": "…", "cpus": "16", "memGb": "32", "kernel": "Linux 6.8.0", "jdk": "17.0.10+7"}},
  "runPrefix": "598ae77e-"}
 ```
@@ -142,6 +142,8 @@ public class PutGetThinT16 extends PutGetInMemory {
   если он задан, ssh всегда ходит на `address`.
 - Перед фазой `rsync` кладёт `harness.jar` в `<workDir>/harness.jar` и jar'ы сборки в `<workDir>/builds/<ключ сборки>/libs`: они остаются на
   хосте, и повторная фаза ничего не копирует. Каталог фазы — `<workDir>/runs/<run-id>`.
+- ssh не спрашивает ничего (`BatchMode=yes`) и не пускает на хост, ключа которого нет в `known_hosts`; `sshAcceptNewHosts: true` принимает такой
+  ключ при первом входе и дописывает его (`StrictHostKeyChecking=accept-new`), сменившийся ключ не принимается всё равно.
 - ssh держит соединение всю жизнь JVM и приносит её вывод в локальный лог, поэтому `HARNESS_READY`, логи и код выхода работают как локально.
 - У каждой JVM свой маркер `-Dignite.firewatch.run=<run-id>-<label>`: сигналы идут отдельным вызовом ssh с `pkill -f`, и останавливается ровно одна JVM.
 - После остановки `rsync` забирает `node-i.jfr` и `loader.json`, результаты считаются на этой машине, каталог фазы на хосте удаляется, в том

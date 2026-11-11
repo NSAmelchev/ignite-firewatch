@@ -93,6 +93,12 @@ public final class Config {
     public String sshKnownHosts = "";
 
     /**
+     * Whether ssh takes the key of a host that known_hosts lacks on first contact and adds it there
+     * ({@code StrictHostKeyChecking=accept-new}); a changed key is refused either way.
+     */
+    public boolean sshAcceptNewHosts;
+
+    /**
      * Tells this stand from another with the same data directory, which is what two containers have; see
      * {@link Stand#instance}.
      */
@@ -125,6 +131,7 @@ public final class Config {
         c.phaseGraceSec = Integer.parseInt(get("PHASE_GRACE_SEC", String.valueOf(c.phaseGraceSec)));
         c.sshKey = get("SSH_KEY", c.sshKey);
         c.sshKnownHosts = get("SSH_KNOWN_HOSTS", c.sshKnownHosts);
+        c.sshAcceptNewHosts = isTrue(get("SSH_ACCEPT_NEW_HOSTS", "false"));
 
         return c;
     }

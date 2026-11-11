@@ -104,6 +104,7 @@ public final class StandService {
         m.put("frozen", Stand.frozen(db));
         m.put("sshKey", cfg.sshKey);
         m.put("sshKnownHosts", cfg.sshKnownHosts);
+        m.put("sshAcceptNewHosts", cfg.sshAcceptNewHosts);
         m.put("check", Json.tree(db.setting(Stand.CHECK, "null")));
         m.put("load", Json.tree(db.setting(Stand.LOAD, "null")));
 
@@ -298,6 +299,7 @@ public final class StandService {
         m.put("hosts", s.hosts);
         m.put("sshKey", cfg.sshKey);
         m.put("sshKnownHosts", cfg.sshKnownHosts);
+        m.put("sshAcceptNewHosts", cfg.sshAcceptNewHosts);
         m.put("fingerprints", Json.tree(db.setting(Stand.FINGERPRINTS, "{}")));
         m.put("runPrefix", cfg.runPrefix());
         Files.createDirectories(file.toAbsolutePath().getParent());

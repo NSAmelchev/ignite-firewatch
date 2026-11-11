@@ -176,6 +176,25 @@ class RemoteHostTest {
     }
 
     /** */
+    @Test void sshTakesTheKeysOfNewHostsOnlyWhenTold() {
+        StandConfig.Host h = host("a", StandConfig.SERVERS);
+        StandConfig s = stand(h);
+        assertTrue(new RemoteHost(s, h, "r").ssh("true").stream().noneMatch(o -> o.startsWith("StrictHostKeyChecking")),
+            "the default of ssh");
+
+        s.sshAcceptNewHosts = true;
+        List<String> any = new RemoteHost(s, h, "r").ssh("true");
+        assertTrue(any.contains("StrictHostKeyChecking=accept-new"), any.toString());
+
+        s.sshKnownHosts = "/keys/known";
+        List<String> own = new RemoteHost(s, h, "r").ssh("true");
+        assertTrue(own.contains("UserKnownHostsFile=/keys/known"));
+        assertEquals(List.of("StrictHostKeyChecking=accept-new"),
+            own.stream().filter(o -> o.startsWith("StrictHostKeyChecking")).toList(), "ssh keeps the first one");
+        assertTrue(new RemoteHost(s, h, "r").rsync("a", "b").get(3).contains("StrictHostKeyChecking=accept-new"));
+    }
+
+    /** */
     @Test void rsyncGoesThroughTheSameSsh() {
         StandConfig.Host h = host("a", StandConfig.SERVERS);
         h.port = 2222;
