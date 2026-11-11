@@ -39,7 +39,7 @@ IGNITE_FIREWATCH_FAKE_BUILD=1 IGNITE_FIREWATCH_PORT=8085 IGNITE_FIREWATCH_DATA_D
 | `IGNITE_FIREWATCH_HARNESS_JAR` | `modules/harness/target/harness.jar` | harness |
 | `IGNITE_FIREWATCH_BIND_HOST`, `IGNITE_FIREWATCH_PORT` | `0.0.0.0`, `8090` (в контейнере 8080) | HTTP |
 | `IGNITE_FIREWATCH_REPO_URL`, `IGNITE_FIREWATCH_BRANCH` | `https://github.com/apache/ignite.git`, `master` | что зеркалим и за чем следим |
-| `IGNITE_FIREWATCH_JAVA`, `IGNITE_FIREWATCH_MVN` | java текущей JVM; `maven/bin/mvn` дистрибутива, иначе `mvn` | исполняемые файлы для дочерних процессов |
+| `IGNITE_FIREWATCH_JAVA`, `IGNITE_FIREWATCH_MVN` | java текущей JVM, `mvn` | исполняемые файлы для дочерних процессов |
 | `IGNITE_FIREWATCH_MAVEN_HEAP_MB` | `1536` | `-Xmx` Maven при сборке коммита |
 | `IGNITE_FIREWATCH_MAVEN_SETTINGS` | пусто | settings.xml для каждой сборки (`-s`): зеркала, прокси, учётные данные; относительный путь — от каталога приложения |
 | `IGNITE_FIREWATCH_MAVEN_ARGS` | пусто | ещё аргументы каждого вызова mvn через пробел, после своих (например `-o`, `-gs FILE`, `-Dkey=value`) |

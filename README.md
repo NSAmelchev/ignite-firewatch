@@ -18,7 +18,7 @@ docker volume create ignite-firewatch-data && docker volume create ignite-firewa
 docker compose -f docker/docker-compose.yml up -d --build
 ```
 
-Without Docker: build the distribution with JDK 17 and Maven, run it anywhere with JDK 17 and git (it brings Maven):
+Without Docker, on a machine with JDK 17, Maven and git:
 
 ```bash
 mvn -DskipTests package     # target/ignite-firewatch-<version>-bin.zip: unpack it anywhere
