@@ -32,6 +32,17 @@ public final class HostProbe {
     /** */
     private static final int CONNECT_TIMEOUT_MS = 3000;
 
+    /** How long the CPU is watched for what else runs on the host. */
+    static final int SAMPLE_MS = 1000;
+
+    /** The processes named as what keeps the CPU busy: those above this share of the whole machine. */
+    private static final double TOP_MIN_PCT = 1;
+
+    /** Where the kernel says whether the CPU may clock above its base: the file and the value that means it may. */
+    private static final String[][] TURBO = {
+        {"/sys/devices/system/cpu/intel_pstate/no_turbo", "0"},
+        {"/sys/devices/system/cpu/cpufreq/boost", "1"}};
+
     /**
      * Runs the probe command given in the first argument.
      *
@@ -69,9 +80,172 @@ public final class HostProbe {
         m.put("diskFreeMb", new File(dir.toString()).getUsableSpace() / (1024 * 1024));
         m.put("thp", selected(readLine("/sys/kernel/mm/transparent_hugepage/enabled")));
         m.put("governor", readLine("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"));
+        turbo(m);
         m.put("foreignJvms", foreignJvms());
+        cpuLoad(m);
 
         return m;
+    }
+
+    /** {@code turbo}: whether the CPU may clock above its base, {@code turboFile} the file that says it; null when none does. */
+    private static void turbo(Map<String, Object> m) {
+        for (String[] t : TURBO) {
+            String v = readLine(t[0]);
+
+            if (v != null) {
+                m.put("turbo", v.equals(t[1]));
+                m.put("turboFile", t[0]);
+
+                return;
+            }
+        }
+
+        m.put("turbo", null);
+        m.put("turboFile", null);
+    }
+
+    /**
+     * What keeps the CPU busy besides the stand, over {@link #SAMPLE_MS}: {@code cpuBusyPct} of the whole machine,
+     * {@code cpuStealPct} taken by the hypervisor for other machines, {@code topCpu} the busiest processes. Null where
+     * there is no {@code /proc} to ask.
+     */
+    private static void cpuLoad(Map<String, Object> m) {
+        long[] a = cpuTimes(readLine("/proc/stat"));
+        Map<Long, String> p0 = processes();
+
+        if (a == null) {
+            m.put("cpuBusyPct", null);
+            m.put("cpuStealPct", null);
+            m.put("topCpu", List.of());
+
+            return;
+        }
+
+        try {
+            Thread.sleep(SAMPLE_MS);
+        }
+        catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+
+        long[] b = cpuTimes(readLine("/proc/stat"));
+        Map<Long, String> p1 = processes();
+        double[] shares = shares(a, b);
+        m.put("cpuBusyPct", shares[0]);
+        m.put("cpuStealPct", shares[1]);
+        long total = b == null ? 0 : sum(b) - sum(a);
+        long self = ProcessHandle.current().pid();
+        List<double[]> top = new ArrayList<>();
+        Map<Long, String> names = new LinkedHashMap<>();
+
+        for (Map.Entry<Long, String> e : p1.entrySet()) {
+            String before = p0.get(e.getKey());
+
+            if (before == null || e.getKey() == self || total <= 0)
+                continue;
+
+            double pct = (ticks(e.getValue()) - ticks(before)) * 100.0 / total;
+
+            if (pct >= TOP_MIN_PCT) {
+                top.add(new double[] {e.getKey(), pct});
+                names.put(e.getKey(), name(e.getValue()));
+            }
+        }
+
+        top.sort((x, y) -> Double.compare(y[1], x[1]));
+        List<String> out = new ArrayList<>();
+
+        for (double[] t : top.subList(0, Math.min(3, top.size())))
+            out.add(names.get((long)t[0]) + " (" + (long)t[0] + ") " + Math.round(t[1]) + " %");
+
+        m.put("topCpu", out);
+    }
+
+    /**
+     * Reads the first line of {@code /proc/stat}: user nice system idle iowait irq softirq steal, in ticks of all CPUs
+     * together (guest time is inside user and nice already).
+     *
+     * @param line {@code cpu  ...} line, or null.
+     * @return The eight times, or null.
+     */
+    static long[] cpuTimes(String line) {
+        if (line == null || !line.startsWith("cpu "))
+            return null;
+
+        String[] f = line.split("\\n", 2)[0].trim().split("\\s+");
+
+        if (f.length < 9)
+            return null;
+
+        long[] t = new long[8];
+
+        for (int i = 0; i < 8; i++)
+            t[i] = Long.parseLong(f[i + 1]);
+
+        return t;
+    }
+
+    /**
+     * The shares of the time between two readings of {@link #cpuTimes}.
+     *
+     * @param a Earlier times.
+     * @param b Later times.
+     * @return Percent busy with work of this machine, percent stolen; zeros when they cannot tell.
+     */
+    static double[] shares(long[] a, long[] b) {
+        long total = b == null ? 0 : sum(b) - sum(a);
+
+        if (total <= 0)
+            return new double[] {0, 0};
+
+        long idle = (b[3] + b[4]) - (a[3] + a[4]), steal = b[7] - a[7];
+
+        return new double[] {round1((total - idle - steal) * 100.0 / total), round1(steal * 100.0 / total)};
+    }
+
+    /** The stat line of every process, by pid. */
+    private static Map<Long, String> processes() {
+        Map<Long, String> m = new LinkedHashMap<>();
+        File[] dirs = new File("/proc").listFiles((d, n) -> n.chars().allMatch(Character::isDigit));
+
+        if (dirs == null)
+            return m;
+
+        for (File d : dirs) {
+            String stat = readLine(d.getPath() + "/stat");
+
+            if (stat != null)
+                m.put(Long.parseLong(d.getName()), stat);
+        }
+
+        return m;
+    }
+
+    /** Time a process spent on the CPU, user and system, from its stat line; the name may hold spaces and parens. */
+    static long ticks(String stat) {
+        String[] f = stat.substring(stat.lastIndexOf(')') + 2).split(" ");
+
+        return Long.parseLong(f[11]) + Long.parseLong(f[12]);
+    }
+
+    /** Name of a process from its stat line. */
+    static String name(String stat) {
+        return stat.substring(stat.indexOf('(') + 1, stat.lastIndexOf(')'));
+    }
+
+    /** */
+    private static long sum(long[] t) {
+        long s = 0;
+
+        for (long x : t)
+            s += x;
+
+        return s;
+    }
+
+    /** */
+    private static double round1(double v) {
+        return Math.round(v * 10) / 10.0;
     }
 
     /**

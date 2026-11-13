@@ -30,6 +30,9 @@ public final class BuildCheck {
     /** */
     static final String FAIL = "fail";
 
+    /** Where the last report is kept, so a page shows it without asking again. */
+    static final String SETTING = "app.check";
+
     /** Ignite master compiles with {@code --release 17}. */
     static final int MIN_JAVA = 17;
 

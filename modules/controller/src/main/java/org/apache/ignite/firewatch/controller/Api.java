@@ -160,12 +160,16 @@ public final class Api {
         });
         r.post("/api/stand/check", req -> stands.check(Json.read(req.json().toString(), Stand.class)));
         r.get("/api/stand/check/log", req -> stands.checkLog());
-        // only reads: the setup page and Settings run it whenever they open; the form may hold an unsaved repository
+        // the check of the builds only reads, and the last one is kept: the setup page runs it whenever it opens (the form may
+        // hold an unsaved repository), Settings shows the kept one and runs it again on request
+        r.get("/api/app/check", req -> Json.tree(db.setting(BuildCheck.SETTING, "null")));
         r.post("/api/app/check", req -> {
             JsonNode b = req.json();
-
-            return BuildCheck.run(cfg, Req.str(b, "url", db.setting(Settings.REPO_URL, cfg.repoUrl)),
+            BuildCheck c = BuildCheck.run(cfg, Req.str(b, "url", db.setting(Settings.REPO_URL, cfg.repoUrl)),
                 Req.str(b, "branch", db.setting(Settings.REPO_BRANCH, cfg.branch)));
+            db.setSetting(BuildCheck.SETTING, Json.write(c));
+
+            return c;
         });
         r.post("/api/stand/measure", req -> {
             if (Stand.frozen(db))
@@ -392,6 +396,8 @@ public final class Api {
     /** */
     private Map<String, String> maskedSettings() {
         Map<String, String> m = db.settings();
+        // the reports of the checks and the fingerprints have their own endpoints: no page needs them here
+        m.keySet().removeAll(List.of(Stand.CHECK, Stand.LOAD, Stand.FINGERPRINTS, BuildCheck.SETTING));
 
         for (String k : Settings.SECRET) {
             String v = m.get(k);

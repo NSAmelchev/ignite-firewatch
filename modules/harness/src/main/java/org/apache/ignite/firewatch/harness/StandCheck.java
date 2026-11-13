@@ -39,6 +39,12 @@ public final class StandCheck {
     /** */
     static final long CLOCK_WARN_MS = 100;
 
+    /** Time the hypervisor gives other machines: results follow the load of the neighbours. */
+    static final double STEAL_WARN_PCT = 1;
+
+    /** CPU busy with something else while nothing of the stand runs. */
+    static final double BUSY_WARN_PCT = 10;
+
     /** The windows of JFR are cut by the clock of the loader, whose series are per second. */
     static final long CLOCK_FAIL_MS = 1000;
 
@@ -282,6 +288,23 @@ public final class StandCheck {
             governor == null ? "not reported" : governor + ("performance".equals(governor) ? ""
                 : ": the frequency follows the load, results follow it"),
             "`sudo cpupower frequency-set -g performance`");
+        Object turbo = f.get("turbo");
+        r.add("turbo", Boolean.TRUE.equals(turbo) ? WARN : OK, turbo == null ? "not reported"
+                : Boolean.TRUE.equals(turbo) ? "on: the clock follows the temperature and the load of the other cores" : "off",
+            "`echo " + ("/sys/devices/system/cpu/cpufreq/boost".equals(f.get("turboFile")) ? "0" : "1") + " | sudo tee "
+                + f.get("turboFile") + "`");
+        Object steal = f.get("cpuStealPct");
+        double st = steal == null ? 0 : ((Number)steal).doubleValue();
+        r.add("steal", st >= STEAL_WARN_PCT ? WARN : OK, steal == null ? "not reported" : st >= STEAL_WARN_PCT
+                ? st + " % of the CPU time went to other machines on the same hardware: their load shows in the results"
+                : st + " %", "a host of its own, or a VM with dedicated CPUs");
+        Object busy = f.get("cpuBusyPct");
+        double bu = busy == null ? 0 : ((Number)busy).doubleValue();
+        List<?> top = f.get("topCpu") instanceof List ? (List<?>)f.get("topCpu") : List.of();
+        r.add("busy", bu >= BUSY_WARN_PCT ? WARN : OK, busy == null ? "not reported" : bu + " % of the CPU busy"
+                + (bu >= BUSY_WARN_PCT ? " with something else" : "") + (top.isEmpty() ? "" : ": " + String.join(", ",
+                top.stream().map(String::valueOf).toList())),
+            "stop what runs there, or measure when the host is quiet");
         r.fingerprint = fingerprintOf(f);
     }
 

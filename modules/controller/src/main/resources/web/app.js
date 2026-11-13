@@ -2121,12 +2121,14 @@ function checkBadge(r, running, none = 'not checked') {
   if (!r.ok) return `<span class="badge failed">${fails ? plural(fails, 'problem') : 'failed'}</span>`;
   return `<span class="badge ${warns ? 'partial' : 'ok'}">${r.items ? 'ready' : 'passed'}${warns ? `, ${plural(warns, 'warning')}` : ''}</span>`;
 }
+// the badge and when the kept report was made: a check is shown until it runs again, so it says how old it is
+const checkState = (r, running, none) => `${checkBadge(r, running, none)}${r && r.at && !running ? ` <span class="muted small-text">checked ${fmt.date(r.at)}, ${fmt.ago(r.at)}</span>` : ''}`;
 // The head of a block of the setup: its number (a tick once it passed), its name and the state of its check
 const stepHead = (n, title, sub, key, badge = '') => `<div class="step-head">${n ? `<span class="step-num" data-${key}-num>${n}</span>` : ''}<h2>${title}</h2>
   <span class="muted">${sub}</span><span class="step-state" data-${key}-badge>${badge}</span></div>`;
 function paintStep(root, key, n, r, running, none) {
   const badge = $(`[data-${key}-badge]`, root), num = $(`[data-${key}-num]`, root);
-  if (badge) badge.innerHTML = checkBadge(r, running, none);
+  if (badge) badge.innerHTML = checkState(r, running, none);
   if (num) {
     num.className = `step-num${!r || running ? '' : r.ok ? ' ok' : ' bad'}`;
     num.textContent = r && !running && r.ok ? '✓' : String(n);
@@ -2155,12 +2157,16 @@ async function showCheckLog(form, open) {
   if (lines && l.running) lines.scrollTop = lines.scrollHeight;
 }
 // Check of the hosts under their fields: what it found, then the button, what it tries and its log
-const hostsCheck = (check) => `<div data-check-report>${checkReport(check)}</div>
-  <div class="step-foot"><button type="button" class="small" data-stand-check>${check ? 'Check again' : 'Check hosts'}</button>
-    <span class="hint">ssh, JDK, disk, memory, the network between hosts, other JVMs, clocks, swap, THP, CPU governor</span>
+// `busy`: why Check cannot run now (it takes the ports of Ignite, so it waits for an empty queue)
+const hostsCheck = (check, busy) => `<div data-check-report>${checkReport(check)}</div>
+  <div class="step-foot"><button type="button" class="small" data-stand-check ${busy ? `disabled title="${esc(busy)}"` : ''}>${check ? 'Check again' : 'Check hosts'}</button>
+    <span class="hint">${busy ? esc(busy) : 'ssh, JDK, disk, memory, the network between hosts, other JVMs, clocks, swap, THP, CPU governor, turbo, steal time, foreign CPU load'}</span>
     <span class="step-log-box" data-check-log>${check ? '<button type="button" class="small" data-check-log-show>Log of the last Check</button>' : ''}</span></div>`;
 // a stand on this machine needs no Check to start, remote hosts do
-const hostsNone = (form) => ($('[name="stand.mode"]:checked', form).value === 'remote' ? 'not checked' : 'optional');
+const hostsNone = (form) => {
+  const m = $('[name="stand.mode"]:checked', form);
+  return (m ? m.value : form.dataset.mode) === 'remote' ? 'not checked' : 'optional'; // a fixed stand has no fields, only its mode
+};
 const sizesText = (s) => (s.nodeMemoryMb ? `${fmt.num(s.nodeMemoryMb)} MB a node, region ${s.fillPct} % full, threads ×${s.threadsFactor}`
   : s.threadsFactor !== 1 ? `the sizes of the scenarios, threads ×${s.threadsFactor}` : 'the sizes of the scenarios');
 const recommendation = (r) => (!r ? '' : `${r.recommended && r.recommended.nodeMemoryMb
@@ -2187,9 +2193,11 @@ const standOf = (form) => ({
     threadsFactor: Number($('[name="threadsFactor"]', form).value || 1),
   },
 });
-function bindStandFields(form, edited = () => {}, checked = () => {}) {
+// `current` is the stand Check gets: the one the fields hold, or the saved one of a fixed stand
+function bindStandFields(form, edited = () => {}, checked = () => {}, current = () => standOf(form)) {
   form.addEventListener('input', edited);
   form.addEventListener('change', () => {
+    if (!$('[name="stand.mode"]:checked', form)) return;
     const mode = $('[name="stand.mode"]:checked', form).value;
     $('[data-if-remote]', form).hidden = mode !== 'remote';
     $('[data-mode-text]', form).textContent = STAND_MODES.find(([k]) => k === mode)[2];
@@ -2219,10 +2227,11 @@ function bindStandFields(form, edited = () => {}, checked = () => {}) {
       const timer = setInterval(() => showCheckLog(form).catch(() => {}), 1000);
       guarded(async () => {
         try {
-          r = await api.post('/api/stand/check', standOf(form));
+          r = await api.post('/api/stand/check', current());
           passed = r.ok;
           $('[data-check-report]', form).innerHTML = checkReport(r);
-          $('[data-sizes-recommended]', form).innerHTML = recommendation(r);
+          const rec = $('[data-sizes-recommended]', form);
+          if (rec) rec.innerHTML = recommendation(r);
         }
         finally {
           clearInterval(timer);
@@ -2347,7 +2356,11 @@ views.settings = {
   poll: 6000,
   async render() {
     const storage = await api.get('/api/storage').catch(() => null); // a walk over the runs: the page does not poll
-    const [settings, health, scenarios, builds, stand] = await Promise.all([api.get('/api/settings'), api.get('/api/health'), api.get('/api/scenarios'), api.get('/api/builds?limit=20'), api.get('/api/stand')]);
+    const [settings, health, scenarios, builds, stand, appKept] = await Promise.all([api.get('/api/settings'), api.get('/api/health'), api.get('/api/scenarios'),
+      api.get('/api/builds?limit=20'), api.get('/api/stand'), api.get('/api/app/check').catch(() => null)]);
+    this.stand = stand;
+    if (!this.appRunning) this.appCheck = appKept; // the kept report; a running check paints its own
+    const queueBusy = (health.jobs.queued || 0) + (health.jobs.running || 0) ? 'Check waits for an empty queue: it takes the ports of Ignite on the hosts' : '';
     const noises = (await Promise.all(scenarios.map((x) => api.get(`/api/noise?scenario=${encodeURIComponent(x.name)}`).catch(() => null)))).filter(Boolean);
     const rel = await api.get(`/api/release?scenario=${encodeURIComponent(scenarios[0].name)}`).catch(() => ({}));
     const w = health.watcher, s = health.system;
@@ -2380,7 +2393,7 @@ views.settings = {
             Every poll fetches from a path as from a URL: a fresh copy put in its place arrives by itself.</div>
         </form>
       </div>
-      <div class="card">${stepHead(null, 'Builds', 'what builds every commit on this machine', 'app', checkBadge(this.appCheck, this.appRunning))}
+      <div class="card">${stepHead(null, 'Builds', 'what builds every commit on this machine', 'app', checkState(this.appCheck, this.appRunning))}
         <div data-app-check>${appCheck(this.appCheck, this.appRunning, this.appError)}</div></div>
       <form id="tickets" class="card">
         <h2 style="margin-top:0">Ticket links <span class="muted">turn tickets and PR numbers in commit subjects into links</span></h2>
@@ -2445,10 +2458,12 @@ views.settings = {
         <div class="muted small-text">The history of the branch has no limit: Timeline, repeats and noise floors rest on it.</div>
       </div></section>
       <section data-tab="stand" ${tab === 'stand' ? '' : 'hidden'}><div class="card">
-        ${stand.frozen ? `${standSummary(stand)}<div class="muted small-text" style="margin-top:8px">Fixed by the first finished run: results of different stands must not mix. Another stand is another instance with its own data directory.</div>`
+        ${stand.frozen ? `<form id="stand" data-mode="${esc(stand.mode)}">${stepHead(null, 'Hosts', 'fixed by the first finished run', 'hosts',
+                checkState(stand.check, false, 'not checked'))}${standSummary(stand)}${hostsCheck(stand.check, queueBusy)}</form>
+              <div class="muted small-text" style="margin-top:8px">Results of different stands must not mix: the hosts and the sizes stay as they are, Check runs on them as before. Another stand is another instance with its own data directory.</div>`
           : `<form id="stand">${stepHead(null, 'Hosts', 'where the server nodes and the loader run', 'hosts',
-                checkBadge(stand.check, false, (this.standDraft || stand).mode === 'remote' ? 'not checked' : 'optional'))}
-              ${standFields(this.standDraft ? { ...stand, ...this.standDraft } : stand)}${hostsCheck(stand.check)}
+                checkState(stand.check, false, (this.standDraft || stand).mode === 'remote' ? 'not checked' : 'optional'))}
+              ${standFields(this.standDraft ? { ...stand, ...this.standDraft } : stand)}${hostsCheck(stand.check, queueBusy)}
               <h2>Scenario sizes</h2>${sizesFields((this.standDraft || stand).sizes, stand.check)}
               <div class="load-block"><div class="actions"><button type="button" class="small" id="measure-load">Measure load</button></div>
                 <div class="muted small-text">Runs the main scenario with ×1, ×2 and ×4 threads, about a minute each, until the throughput stops growing. These runs stay out of the history and do not fix the stand.</div>
@@ -2470,8 +2485,8 @@ views.settings = {
   },
   bind(root) {
     // the sections switch in place: unsaved input survives it
-    // Builds of the Application tab: checked when the tab first shows and on its button; the answer is painted into the
-    // page as it is now, which a poll may have rendered anew meanwhile
+    // Builds of the Application tab: the kept report, checked again on its button, after the repository is saved and when there
+    // is none yet; the answer is painted into the page as it is now
     const checkApp = () => {
       if (this.appRunning) return;
       this.appRunning = true;
@@ -2479,13 +2494,17 @@ views.settings = {
       const paint = () => {
         const box = $('[data-app-check]'), badge = $('[data-app-badge]');
         if (box) box.innerHTML = appCheck(this.appCheck, this.appRunning, this.appError);
-        if (badge) badge.innerHTML = checkBadge(this.appCheck, this.appRunning);
+        if (badge) badge.innerHTML = checkState(this.appCheck, this.appRunning);
       };
       paint();
       api.post('/api/app/check', {}).then((r) => { this.appCheck = r; }, (e) => { this.appError = `Check of this machine did not run: ${e.message}`; })
         .finally(() => { this.appRunning = false; lastHtml = null; paint(); });
     };
-    const showApp = () => { if ((this.tab || SETTINGS_TABS[0][0]) === 'repository' && !this.appCheck && !this.appError) checkApp(); };
+    const showApp = () => {
+      if ((this.tab || SETTINGS_TABS[0][0]) !== 'repository' || this.appError || (this.appCheck && !this.appRecheck)) return;
+      this.appRecheck = false;
+      checkApp();
+    };
     root.addEventListener('click', (e) => { if (e.target.closest('[data-app-check-run]')) checkApp(); });
     root.querySelectorAll('button[data-settings-tab]').forEach((b) => b.addEventListener('click', () => {
       this.tab = b.dataset.settingsTab;
@@ -2535,7 +2554,7 @@ views.settings = {
           && !(await modal('Follow another repository?', `<div><span class="mono">${esc(d['repo.branch'])}</span> of <span class="mono">${esc(d['repo.url'])}</span>. Runs of the current branch leave Commits and Timeline.</div>`, 'Follow'))) return;
         await api.put('/api/settings', d);
         toast('repository saved');
-        this.appCheck = null; // the builds are checked again against the new repository
+        this.appRecheck = true; // the builds are checked again against the new repository
         this.appError = null;
         refresh();
       });
@@ -2558,7 +2577,11 @@ views.settings = {
       guarded(async () => { await api.put('/api/settings', d); toast('release saved'); refresh(); });
     });
     const standForm = $('#stand', root);
-    if (standForm) {
+    if (standForm && this.stand.frozen) {
+      const { mode, hosts, sizes } = this.stand;
+      bindStandFields(standForm, () => {}, () => { lastHtml = null; }, () => ({ mode, hosts, sizes })); // Check of the saved stand
+    }
+    else if (standForm) {
       bindStandFields(standForm, () => { this.standDraft = standOf(standForm); }); // the page repaints while people type
       standForm.addEventListener('submit', (e) => {
         e.preventDefault();

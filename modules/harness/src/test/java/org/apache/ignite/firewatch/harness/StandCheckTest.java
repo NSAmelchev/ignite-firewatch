@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -84,6 +85,44 @@ class StandCheckTest {
             "a VM has no governor to report");
         assertEquals(StandCheck.WARN, level(with("foreignJvms", List.of("7 java")), "jvms", StandCheck.WARN),
             "this machine may be the developer's");
+    }
+
+    /** */
+    @Test void turboStealAndAForeignLoadWarn() {
+        Map<String, Object> f = goodHost();
+        f.put("turbo", true);
+        f.put("turboFile", "/sys/devices/system/cpu/intel_pstate/no_turbo");
+        f.put("cpuStealPct", 2.5);
+        f.put("cpuBusyPct", 35.0);
+        f.put("topCpu", List.of("java (4242) 28 %", "rsync (77) 4 %"));
+        StandCheck.HostReport r = new StandCheck.HostReport();
+        r.facts = f;
+        StandCheck.judge(r, StandCheck.FAIL);
+        Map<String, StandCheck.Item> by = new HashMap<>();
+        r.items.forEach(i -> by.put(i.name, i));
+        assertEquals(StandCheck.WARN, by.get("turbo").level);
+        assertEquals("`echo 1 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo`", by.get("turbo").fix);
+        assertEquals(StandCheck.WARN, by.get("steal").level);
+        assertEquals(StandCheck.WARN, by.get("busy").level);
+        assertEquals("35.0 % of the CPU busy with something else: java (4242) 28 %, rsync (77) 4 %", by.get("busy").text);
+
+        assertEquals(StandCheck.OK, level(with("cpuBusyPct", 3.0), "busy", StandCheck.FAIL));
+        assertEquals(StandCheck.OK, level(with("turbo", false), "turbo", StandCheck.FAIL));
+        assertEquals(StandCheck.OK, level(goodHost(), "steal", StandCheck.FAIL), "no /proc: not reported");
+    }
+
+    /** What the probe reads of /proc: all CPUs together, the time of a process past its name. */
+    @Test void cpuSharesAndProcessTimesFromProc() {
+        long[] a = HostProbe.cpuTimes("cpu  100 0 50 800 50 0 0 0 0 0\ncpu0 1 2 3");
+        long[] b = HostProbe.cpuTimes("cpu  160 0 70 1080 60 0 0 30 0 0\n");
+        assertArrayEquals(new long[] {100, 0, 50, 800, 50, 0, 0, 0}, a);
+        double[] s = HostProbe.shares(a, b);
+        assertEquals(20.0, s[0], 1e-9, "80 of 400 ticks busy: user and system, not idle, iowait or steal");
+        assertEquals(7.5, s[1], 1e-9);
+        assertNull(HostProbe.cpuTimes(null));
+        String stat = "4242 (Web Content (x)) S 1 4242 4242 0 -1 4194560 100 0 0 0 1500 250 0 0 20 0 30 0 1 2 3";
+        assertEquals(1750, HostProbe.ticks(stat));
+        assertEquals("Web Content (x)", HostProbe.name(stat));
     }
 
     /** */
