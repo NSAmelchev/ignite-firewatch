@@ -2177,12 +2177,127 @@ function standFields(stand) {
 // The hosts as Check saw them or as the form has them: a report is good for exactly these
 const hostsKey = (hosts) => JSON.stringify(hosts.map((h) => ['role', ...HOST_INPUTS.map(([k]) => k)].map((k) => String(h[k] ?? ''))));
 const CHECK_MARKS = { ok: '✓', warn: '!', fail: '✗' };
+// What every check looks at (`what`), what it bears on (`affects`), why a warning or a failure hurts (`bad`, one text or one
+// per level) and how to fix it where the finding has no fix of its own (`fix`); `fp`: the fact is in the fingerprint of the
+// host. Hosts and builds share some names, so each has its own set. The thresholds are those of StandCheck and BuildCheck.
+// `code` in back quotes.
+const CHECK_ABOUT = {
+  host: {
+    ssh: { what: 'Firewatch logs in to the host over ssh, puts its probe there and looks for rsync and pkill.',
+      affects: 'Everything on the host goes over ssh: the jars are copied, the nodes and loaders started, stopped and cleaned up.',
+      bad: 'No phase can run on the host until ssh works.',
+      fix: 'Check the address, port and user of the host, the key of the stand (`IGNITE_FIREWATCH_SSH_KEY`) and known_hosts; the log of Check has the ssh command that failed.' },
+    java: { what: 'The Java the host starts the nodes and loaders with: JDK 17 of the host.', fp: true,
+      affects: 'Ignite needs Java 17 or newer, and the JIT and GC of another JDK give other numbers.',
+      bad: 'An older Java cannot start the nodes.',
+      fix: 'Install a JDK 17 or newer on the host and give its path in JDK 17 of the host.' },
+    disk: { what: 'Free space in the work directory of the host.',
+      affects: 'The jars of every build, the logs and JFR recordings of the phases and the data and WAL of the persistence scenarios go there.',
+      bad: 'Under 5 GB a phase may run out of space halfway and fail.',
+      fix: 'Free space there, or give the host a work directory on a larger disk.' },
+    memory: { what: 'Memory and CPUs of the host.', fp: true,
+      affects: 'The heap and data region of the nodes are sized to fit it; the threads of the load follow the CPUs.',
+      bad: 'Under 2 GB the nodes do not fit.', fix: 'A host with more memory.' },
+    jvms: { what: 'Java processes on the host that are not of this check: other applications, or nodes a killed phase left behind.',
+      affects: 'They take CPU, memory and caches from the nodes, and a node left behind may join the cluster of the next phase.',
+      bad: { warn: 'Only a warning on this machine: it may be the development environment.', fail: 'The hosts of a remote stand have to be its own.' } },
+    swap: { what: 'Whether the host has swap.',
+      affects: 'A page of the heap or the data region that went to swap stops the thread that touches it for milliseconds: latencies and GC pauses that are the disk\'s, not Ignite\'s.',
+      bad: 'A phase short of memory slows down instead of failing, and the slowdown looks like a regression.' },
+    thp: { what: 'The mode of transparent huge pages.',
+      affects: 'With `always` the kernel compacts memory and splits pages behind the JVM\'s back; `madvise` leaves huge pages to those that ask for them.',
+      bad: '`always` adds stalls of the kernel to the latencies of Ignite.' },
+    governor: { what: 'The CPU frequency governor.',
+      affects: 'With anything but `performance` the frequency follows the load: a light phase runs on a slower CPU than a heavy one.',
+      bad: 'The results follow the governor as well as the code: a change of load reads as a Δ.' },
+    turbo: { what: 'Turbo boost of the CPU.', fp: true,
+      affects: 'With turbo the frequency depends on the temperature and on how many cores are busy: a cold CPU runs the same code faster.',
+      bad: 'Phases drift with the heat: A1 and A2 of one ABBA differ, and so do runs at night and by day.' },
+    clocksource: { what: 'The clock source of the kernel: what `System.nanoTime()` reads.', fp: true,
+      affects: 'Every latency is two readings of the clock: `tsc` costs nanoseconds, `hpet` or `acpi_pm` a microsecond or so, which also takes CPU from the load.',
+      bad: 'Latencies come out longer than they are, and throughput lower.' },
+    smt: { what: 'Simultaneous multithreading (Hyper-Threading): two hardware threads on one core.', fp: true,
+      affects: 'Only shown. Two threads on one core share its caches and units, so results depend on which threads land together.' },
+    steal: { what: 'CPU time the hypervisor gave to other virtual machines during the second of the probe.',
+      affects: 'On a shared host the load of the neighbours shows in the results as noise and drift that no commit made.',
+      bad: '1 % or more: the host is a VM whose neighbours take its CPU.' },
+    busy: { what: 'How busy the CPU was with other processes during the second of the probe, and the busiest of them.',
+      affects: 'A foreign load competes with the nodes for cores and caches: slower and noisier phases.',
+      bad: '10 % or more of the CPU went to something else while the stand did nothing.' },
+    link: { what: 'Whether this host reaches the Ignite ports of every other host: discovery 47500, communication 47100, thin client 10800.',
+      affects: 'Without them the nodes do not form one cluster, or the loader cannot connect.',
+      bad: 'A firewall, or a wrong data address, stands between the hosts.',
+      fix: 'Open these ports between the hosts, and check the data address of each.' },
+    ports: { what: 'Whether the host can listen on the Ignite ports 47500, 47100 and 10800.',
+      affects: 'A node that cannot bind its port does not start, or takes another one that the others do not look for.',
+      bad: 'Something else holds a port.',
+      fix: 'Find what holds it (`ss -ltnp`) and stop it; a node a killed phase left goes with Clean hosts.' },
+    clock: { what: 'How far the clock of a server host is from the clock of each loader host.',
+      affects: 'The loader cuts the measure window by its clock, and the GC and CPU of the servers are cut by the same times: an offset shifts them against the load.',
+      bad: '100 ms or more warns, 1 s or more fails: a second of offset is a whole point of the series.' },
+  },
+  build: {
+    builds: { what: 'How the commits are built.',
+      affects: 'Fake builds: the release jars stand for every commit, so every commit measures the same code.',
+      bad: 'Good for trying the stand, of no use for finding regressions.',
+      fix: 'Drop `IGNITE_FIREWATCH_FAKE_BUILD` and restart Firewatch.' },
+    repository: { what: 'Whether the repository answers and has the branch (`git ls-remote`).',
+      affects: 'Every commit to build and measure comes from it.', bad: 'Nothing new is fetched or built.',
+      fix: 'Check the URL and the branch, and that this machine reaches the repository.' },
+    java: { what: 'The Java that Firewatch gives Maven as `JAVA_HOME`.',
+      affects: 'Ignite compiles with Java 17 or newer.', bad: 'No commit builds without it.' },
+    javac: { what: 'Whether the Java above is a JDK, with javac.',
+      affects: 'Maven compiles with the Java it runs on.', bad: 'A JRE has no compiler: every build fails.' },
+    maven: { what: 'The Maven that builds the commits, and the Java it runs on.',
+      affects: 'Maven builds with the Java it runs on, which has to be the one above.',
+      bad: 'A mavenrc or the start script of Maven points `JAVA_HOME` at another Java, and the builds use that one.' },
+    git: { what: 'git on this machine.',
+      affects: 'The mirror of the repository and the sources of every build come through it.', bad: 'Nothing is fetched or built without git.',
+      fix: 'Install git.' },
+    disk: { what: 'Free space under the cache and data directories.',
+      affects: 'The cache holds the mirror, the Maven repository and the jars of every build; data, the database and the files of the runs.',
+      bad: 'Under 20 GB warns: the builds of a few weeks need about that; under 5 GB fails.',
+      fix: 'Free space there, or keep less in Settings → Storage.' },
+  },
+};
+// only a remote host is held to its fingerprint: this machine is not
+const FP_NOTE = 'It is in the fingerprint of the host: once the stand is fixed, a change of it fails the phases there rather than mix two setups in one trend.';
 // What a check found: a mark, the name, the finding and, under it, how to fix it (`code` in back quotes)
 const fixHtml = (f) => esc(f).replace(/`([^`]+)`/g, '<code>$1</code>');
-const checkRows = (items) => items.map((i) => `<tr class="check-${esc(i.level)}"><td>${CHECK_MARKS[i.level]}</td><td>${esc(i.name)}</td>
+// The tip of a check, in the cell of its name: what it looks at and what it bears on; for a warning or a failure, why it
+// hurts and how to fix it
+let checkTipSeq = 0;
+function checkTip(kind, i, remote) {
+  const a = (CHECK_ABOUT[kind] || {})[i.name];
+  if (!a) return '';
+  const bad = i.level !== 'ok', why = bad && a.bad ? (typeof a.bad === 'string' ? a.bad : a.bad[i.level]) : null, fix = bad && (i.fix || a.fix);
+  return `<div class="check-tip check-tip-${esc(i.level)}" role="tooltip" id="check-tip-${++checkTipSeq}">
+    <div class="check-tip-what">${fixHtml(a.what)}</div>
+    <div><span class="check-tip-label">Affects</span>${fixHtml(a.affects)}${a.fp && remote ? ` ${FP_NOTE}` : ''}</div>
+    ${why ? `<div class="check-tip-why"><span class="check-tip-label">${i.level === 'fail' ? 'Why it fails' : 'Why it warns'}</span>${fixHtml(why)}</div>` : ''}
+    ${fix ? `<div><span class="check-tip-label">How to fix</span>${fixHtml(fix)}</div>` : ''}</div>`;
+}
+const checkName = (kind, i, remote) => {
+  const tip = checkTip(kind, i, remote);
+  return tip ? `<td class="check-name"><span class="check-name-text" tabindex="0" aria-describedby="check-tip-${checkTipSeq}">${esc(i.name)}</span>${tip}</td>`
+    : `<td>${esc(i.name)}</td>`;
+};
+const checkRows = (items, kind = 'host', remote = false) => items.map((i) => `<tr class="check-${esc(i.level)}"><td>${CHECK_MARKS[i.level]}</td>${checkName(kind, i, remote)}
   <td>${esc(i.text)}${i.fix ? `<div class="check-fix">${fixHtml(i.fix)}</div>` : ''}</td></tr>`).join('');
+// the tip shows on hover or focus (CSS); fixed, so neither a card nor the scroll of the page cuts it, and placed here by its
+// name: below it, or above when there is no room below
+function placeCheckTip(cell) {
+  const tip = cell && cell.querySelector('.check-tip');
+  if (!tip) return;
+  const r = cell.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = `${Math.max(8, Math.min(r.left, innerWidth - w - 8))}px`;
+  tip.style.top = `${r.bottom + 4 + h <= innerHeight - 8 ? r.bottom + 4 : Math.max(8, r.top - h - 4)}px`;
+}
+document.addEventListener('mouseover', (e) => { const c = e.target.closest && e.target.closest('td.check-name'); if (c) placeCheckTip(c); });
+document.addEventListener('focusin', (e) => { const c = e.target.closest && e.target.closest('td.check-name'); if (c) placeCheckTip(c); });
+addEventListener('scroll', () => placeCheckTip(document.querySelector('td.check-name:hover, td.check-name:focus-within')), true);
 const checkReport = (r) => (!r ? '' : r.hosts.map((h) => `<div class="check-host"><div class="check-host-name">${esc(h.address)} <span class="muted">${esc(h.role)}</span></div>
-  <table class="check"><tbody>${checkRows(h.items)}</tbody></table></div>`).join(''));
+  <table class="check"><tbody>${checkRows(h.items, 'host', h.role !== 'all')}</tbody></table></div>`).join('')); // role "all": this machine
 // The state of a check in the head of its block: what it found, that it runs, or that it has not run
 function checkBadge(r, running, none = 'not checked') {
   if (running) return '<span class="badge running">checking…</span>';
@@ -2326,7 +2441,7 @@ const loadReport = (l) => (!l ? '' : `<table class="hosts-result"><thead><tr><th
   <span class="muted small-text"><a href="#/jobs/${l.jobId}">job #${l.jobId}</a> · ${fmt.date(l.at)}</span>`);
 
 // Check of this machine under the repository: what builds the commits, then the button and its log
-const appCheck = (r, running, error) => `<table class="check tools"><tbody>${r ? checkRows(r.items) : ''}</tbody></table>
+const appCheck = (r, running, error) => `<table class="check tools"><tbody>${r ? checkRows(r.items, 'build') : ''}</tbody></table>
   ${!r && running ? '<div class="hint">Asking the repository, Java, Maven, git and the disk…</div>' : ''}
   ${error && !running ? `<div class="error small-text">${esc(error)}</div>` : ''}
   <div class="step-foot"><button type="button" class="small" data-app-check-run ${running ? 'disabled' : ''}>${running ? 'Checking…' : r ? 'Check again' : 'Check'}</button>

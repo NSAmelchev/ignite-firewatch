@@ -90,7 +90,8 @@ unreachable between the hosts and clocks a second apart; it warns about clocks 1
 governor other than `performance`, turbo boost on, a slow clock source (`hpet`, `acpi_pm`, `xen`: every timestamp of a
 latency pays for reading it), steal time of 1 % or more (a VM whose neighbours take its CPU) and a CPU busy with something
 else for 10 % or more during the second of the probe (with the three busiest processes); it shows SMT as it is. Warnings and
-errors carry `fix`, how to fix them. On `local` a foreign JVM is only a warning: it may be the development environment.
+errors carry `fix`, how to fix them. In the UI the name of every check, of the hosts and of the builds alike, has a tip:
+what it looks at and what it bears on and, for a warning or a failure, why it hurts and how to fix it. On `local` a foreign JVM is only a warning: it may be the development environment.
 Check takes the Ignite ports, so it runs when no job runs and none waits, or while the stand is closed for maintenance
 (the waiting jobs do not start then), and one at a time: a job queued meanwhile waits for its end. Clean hosts follows the
 same rule.
