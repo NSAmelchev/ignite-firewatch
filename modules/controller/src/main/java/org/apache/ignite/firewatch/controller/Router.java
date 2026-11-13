@@ -61,6 +61,9 @@ public final class Router implements HttpHandler {
         /** When set, the body is streamed from this file instead of {@link #body}. */
         public java.nio.file.Path file;
 
+        /** When set, writes the body as it goes, of a length nobody knows in advance (a zip made on the fly). */
+        public Body stream;
+
         /** */
         public Map<String, String> headers = new LinkedHashMap<>();
 
@@ -77,6 +80,33 @@ public final class Router implements HttpHandler {
             r.file = file;
 
             return r;
+        }
+
+        /**
+         * Creates a response whose body is written as it is made: the client gets it chunked.
+         *
+         * @param contentType Content type.
+         * @param body Writer of the body.
+         * @return Response.
+         */
+        public static Response stream(String contentType, Body body) {
+            Response r = new Response();
+            r.contentType = contentType;
+            r.stream = body;
+
+            return r;
+        }
+
+        /**
+         * Makes the browser save the body as a file instead of showing it.
+         *
+         * @param name File name.
+         * @return This response.
+         */
+        public Response attachment(String name) {
+            headers.put("Content-Disposition", "attachment; filename=\"" + name.replaceAll("[^A-Za-z0-9._+-]", "_") + "\"");
+
+            return this;
         }
 
         /**
@@ -110,6 +140,18 @@ public final class Router implements HttpHandler {
 
             return r;
         }
+    }
+
+    /** Writes the body of a {@link Response#stream} response. */
+    @FunctionalInterface
+    public interface Body {
+        /**
+         * Writes the body.
+         *
+         * @param out Body of the response; closed by the caller.
+         * @throws IOException If writing fails.
+         */
+        void write(OutputStream out) throws IOException;
     }
 
     /** HTTP request with its path parameters, query and body. */
@@ -420,6 +462,22 @@ public final class Router implements HttpHandler {
 
         if (r.status == 204 || "HEAD".equals(ex.getRequestMethod())) {
             ex.sendResponseHeaders(r.status, -1);
+            ex.close();
+
+            return;
+        }
+
+        if (r.stream != null) {
+            ex.sendResponseHeaders(r.status, 0);
+
+            try (OutputStream out = ex.getResponseBody()) {
+                r.stream.write(out);
+            }
+            catch (IOException e) {
+                // the headers are gone, so is the chance to say it to the client: it gets a cut body
+                Log.warn(ex.getRequestURI() + ": the body broke off: " + e.getMessage());
+            }
+
             ex.close();
 
             return;

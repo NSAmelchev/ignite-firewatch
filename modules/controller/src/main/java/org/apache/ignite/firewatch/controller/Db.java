@@ -409,6 +409,32 @@ public final class Db implements AutoCloseable {
     }
 
     /**
+     * Reads the builds of a commit: its own and those with the modules of a scenario, newest first.
+     *
+     * @param sha Commit sha.
+     * @return Builds.
+     */
+    public synchronized List<Build> buildsOf(String sha) {
+        try (PreparedStatement ps = c.prepareStatement(
+            "SELECT * FROM builds WHERE sha = ? OR sha LIKE ? ORDER BY started_at DESC")) {
+            ps.setString(1, sha);
+            ps.setString(2, sha + "+%");
+
+            try (ResultSet rs = ps.executeQuery()) {
+                List<Build> out = new ArrayList<>();
+
+                while (rs.next())
+                    out.add(buildOf(rs));
+
+                return out;
+            }
+        }
+        catch (SQLException e) {
+            throw wrap(e);
+        }
+    }
+
+    /**
      * Reads build records, newest first.
      *
      * @param limit Maximum number of builds.

@@ -31,7 +31,7 @@ public final class Builder {
     private static final Pattern CORE_JAR = Pattern.compile("ignite-core-(.+)\\.jar");
 
     /** */
-    private static final String OK_MARKER = "OK";
+    static final String OK_MARKER = "OK";
 
     /** */
     private static final Pattern MODULE = Pattern.compile("[a-z][a-z0-9-]*");

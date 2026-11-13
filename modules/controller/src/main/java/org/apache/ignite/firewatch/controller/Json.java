@@ -3,8 +3,10 @@ package org.apache.ignite.firewatch.controller;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -13,6 +15,9 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 
 /** Shared Jackson mapper (lenient on unknown fields: result files may grow with the harness). */
 public final class Json {
+    /** An object as a map, for {@code MAPPER.convertValue}: what a record says plus what is computed for the page. */
+    public static final TypeReference<Map<String, Object>> MAP = new TypeReference<>() { };
+
     /** */
     public static final ObjectMapper MAPPER = JsonMapper.builder()
         .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS)

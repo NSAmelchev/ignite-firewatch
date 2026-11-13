@@ -533,3 +533,26 @@ tr.check-warn td:first-child, tr.check-warn td:last-child { color: var(--warn); 
 tr.check-fail td:first-child, tr.check-fail td:last-child { color: var(--bad); }
 table.hosts-result { width: auto; margin: 6px 0; }
 .load-block { margin-top: 10px; }
+/* Downloads: Download ▾ of a job, the files of a phase unfolded under it, the builds of a commit */
+.dl { position: relative; display: inline-block; }
+button.dl-btn { padding: 3px 10px; font-size: 13px; color: var(--muted); background: transparent; }
+button.dl-btn:hover, .dl.open button.dl-btn { color: var(--fg); border-color: var(--muted); }
+.dl-menu { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; min-width: 360px; background: var(--bg); border: 1px solid var(--line);
+  border-radius: 8px; box-shadow: 0 6px 24px rgba(0, 0, 0, .12); padding: 6px 0; font-size: 13px; font-weight: 400; }
+.dl-group { padding: 6px 12px 2px; font-size: 11px; font-weight: 600; letter-spacing: .03em; color: var(--muted); text-transform: uppercase; }
+.dl-item { display: flex; align-items: baseline; gap: 10px; padding: 5px 12px; color: var(--fg); text-decoration: none; }
+a.dl-item:hover { background: var(--card); }
+.dl-item .dl-name { flex: 1; min-width: 0; }
+.dl-item .dl-name .muted { font-size: 12px; }
+.dl-item .dl-size { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dl-item.off { color: var(--muted); cursor: default; }
+.dl-sep { border-top: 1px solid var(--line); margin: 6px 0; }
+td.files-cell { white-space: nowrap; }
+button.files-toggle { border: 0; background: transparent; padding: 0; color: var(--accent); font-size: 13px; }
+tr.files-row td { background: var(--card); padding: 6px 8px 8px; }
+.file-chips { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 13px; }
+.file-chips > span { white-space: nowrap; }
+.file-chips .muted { font-size: 12px; }
+.inline-dl { font-size: 13px; margin-left: 6px; }
+.builds-line { font-size: 13px; margin-top: 4px; }
+.builds-line .sep { color: var(--line); margin: 0 8px; }

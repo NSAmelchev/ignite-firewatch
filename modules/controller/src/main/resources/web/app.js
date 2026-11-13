@@ -189,6 +189,56 @@ const rankedMetrics = (m) => BISECT_KEYS.filter((k) => m[k] && MOVED.has(m[k].ve
   .sort((a, b) => (a === 'heapAfterGcMb') - (b === 'heapAfterGcMb') || signalOf(m[b]) - signalOf(m[a]));
 const movedMetrics = (j) => rankedMetrics((j.comparison && j.comparison.metrics) || {});
 // the actions of one job, side by side: run again (pooled), split or bisect a segment, cancel or retry
+// ------------------------------------------------------------------ downloads
+// What a job and its builds leave: Download ▾ asks for it when it opens, so a page costs nothing for it
+const buildLogUrl = (key) => `/api/builds/${encodeURIComponent(key)}/log`;
+const buildJarsUrl = (key) => `/api/builds/${encodeURIComponent(key)}/jars`;
+const dlButton = (jobId) => `<span class="dl"><button type="button" class="dl-btn" data-dl="${jobId}">Download ▾</button><div class="dl-menu" hidden></div></span>`;
+function downloadsMenu(d) {
+  const item = (href, name, sub, size) => `<${href ? `a class="dl-item" href="${href}"${href.endsWith('/log') ? ' target="_blank"' : ''}` : 'div class="dl-item off"'}>
+    <span class="dl-name">${name}${sub ? ` <span class="muted">${sub}</span>` : ''}</span><span class="dl-size">${size}</span></${href ? 'a' : 'div'}>`;
+  const z = d.zip, zip = `/api/jobs/${d.jobId}/zip`, logs = d.builds.some((b) => b.logBytes != null);
+  const job = z.phases ? `${item(zip, 'Results and logs', `${plural(z.phases, 'phase')}: logs, results, series, profile; build logs`, fmt.bytes(z.bytes))}
+      ${item(z.jfrBytes != null ? `${zip}?jfr=1` : null, 'With JFR recordings', z.jfrBytes != null ? 'one per node and phase' : 'gone: retention keeps them for the latest jobs', z.jfrBytes != null ? fmt.bytes(z.jfrBytes) : '')}`
+    : logs ? item(zip, 'Logs', 'of the builds: no phase ran', fmt.bytes(z.bytes)) : item(null, 'Nothing yet', 'no build or phase has run', '');
+  const builds = d.builds.map((b) => {
+    const who = `${esc(b.side)} <span class="mono">${esc(b.label)}</span>`;
+    return item(b.logBytes != null ? buildLogUrl(b.key) : null, `${who} · build log`, b.status === 'failed' ? 'failed' : b.logBytes == null ? 'none' : '', b.logBytes != null ? fmt.bytes(b.logBytes) : '')
+      + item(b.jarsBytes != null ? buildJarsUrl(b.key) : null, `${who} · Ignite jars`, b.jarsBytes != null ? `${esc(b.igniteVersion || '')}, zip`
+        : b.status === 'ok' ? 'evicted from the build cache' : b.status === 'failed' ? 'none: the build failed' : 'not built yet', b.jarsBytes != null ? fmt.bytes(b.jarsBytes) : '');
+  }).join('');
+  return `<div class="dl-group">Job #${d.jobId} · zip</div>${job}${builds ? `<div class="dl-sep"></div><div class="dl-group">Builds</div>${builds}` : ''}`;
+}
+function closeMenus() {
+  document.querySelectorAll('.dl-menu').forEach((m) => { m.hidden = true; m.parentElement.classList.remove('open'); });
+}
+async function toggleDownloads(btn) {
+  const menu = btn.nextElementSibling, opening = menu.hidden;
+  closeMenus();
+  if (!opening) return;
+  menu.hidden = false;
+  btn.parentElement.classList.add('open');
+  menu.innerHTML = '<div class="dl-item off">…</div>';
+  try { menu.innerHTML = downloadsMenu(await api.get(`/api/jobs/${btn.dataset.dl}/downloads`)); } catch (e) { menu.innerHTML = `<div class="dl-item off error">${esc(e.message)}</div>`; }
+}
+// one listener for every page: a menu closes on a click elsewhere, on a choice in it and on Escape
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-dl]');
+  if (b) { toggleDownloads(b); return; }
+  if (!e.target.closest('.dl-menu') || e.target.closest('a.dl-item')) closeMenus();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenus(); });
+// the build a job failed on, from its error "build of <label> failed: ...": its log is what to read first
+function failedBuildKey(j) {
+  const m = /^build of ([0-9a-f]+)((?:\+[a-z][a-z0-9-]*)*) failed/.exec(j.error || '');
+  const sha = m && [j.shaA, j.shaB].find((x) => x && x.startsWith(m[1]));
+  return sha ? sha + m[2] : null;
+}
+// the builds of a commit in one line: what they are, their log and jars
+const buildLinks = (b) => `${b.logBytes != null ? `<a href="${buildLogUrl(b.key)}" target="_blank">log</a>` : ''}${b.jarsBytes != null ? `${b.logBytes != null ? ' · ' : ''}<a href="${buildJarsUrl(b.key)}">jars</a>`
+  : b.status === 'ok' && !b.fake ? ' · <span class="muted" title="evicted by the limit of the build cache: the next run of the commit builds it again">jars evicted</span>' : ''}`;
+const buildsLine = (bs) => (!bs.length ? '' : `<div class="builds-line muted">Builds: ${bs.map((b) => `<span class="mono">${esc(b.key.includes('+') ? b.key.slice(b.key.indexOf('+')) : 'core')}</span>
+  ${b.status === 'ok' ? `${esc(b.igniteVersion || '')} · ${fmt.bytes(b.sizeBytes)}` : badge(b.status)}${b.logBytes != null || b.jarsBytes != null ? ' · ' : ''}${buildLinks(b)}`).join('<span class="sep">|</span>')}</div>`);
 function jobActions(j) {
   const n = j.segment ? j.segment.count : 1, act = j.status === 'queued' || j.status === 'running';
   return `<span class="job-actions">${
@@ -686,6 +736,7 @@ views.job = {
   async render(params) {
     const j = await api.get(`/api/jobs/${params.id}`);
     this.active = j.status === 'running' || j.status === 'queued';
+    if (this.filesOf !== params.id) { this.filesOf = params.id; this.openFiles = new Set(); } // the phases whose files are unfolded
     const running = j.status === 'running';
     const log = running || j.status === 'failed' ? await api.get(`/api/jobs/${j.id}/log?lines=40`).catch(() => null) : null;
     const files = this.active ? j.runs.map(() => []) : await Promise.all(j.runs.map((r) => api.get(`/api/runs/${r.id}/files`).catch(() => [])));
@@ -709,10 +760,10 @@ views.job = {
           ${j.type === 'abba' ? `<dt>B (target)</dt><dd>${refLine(j.refB, j.shaB, j.subjectB)}</dd>` : ''}
           <dt>Timing</dt><dd>created ${fmt.date(j.createdAt)} · started ${fmt.date(j.startedAt)} · finished ${fmt.date(j.finishedAt)} · took ${fmt.dur(j.startedAt, j.finishedAt)}</dd>
           ${running ? `<dt>Stage</dt><dd>${esc(j.stage)} · ${j.progress}%</dd>` : ''}
-          ${j.error ? `<dt>Error</dt><dd class="error">${esc(j.error)}</dd>` : ''}
+          ${j.error ? `<dt>Error</dt><dd class="error">${esc(j.error)}${failedBuildKey(j) ? ` <a class="inline-dl" href="${buildLogUrl(failedBuildKey(j))}" target="_blank">build log</a>` : ''}</dd>` : ''}
         </dl>
         <div class="actions-inline" style="margin-top:10px">
-          ${jobActions(j)}
+          ${jobActions(j)}${j.status === 'queued' ? '' : ` ${dlButton(j.id)}`}
         </div></div>
       </div>
       ${running ? `<div class="progress"><div style="width:${j.progress}%"></div></div>` : ''}
@@ -745,13 +796,23 @@ views.job = {
         <td>${esc(r.igniteVersion || '')}</td><td class="num">${fmt.num(r.throughput)}</td><td class="num">${fmt.num(r.p50Us)}</td><td class="num">${fmt.num(r.p99Us)}</td>
         <td class="num">${fmt.num(r.gcPausePct, 2)}</td><td class="num">${fmt.num(r.allocMbPerSec, 1)}</td><td class="num">${fmt.num(r.serverCpuPct, 1)}</td>
         <td class="num">${r.wallSec != null ? Math.round(r.wallSec) + ' s' : '–'}</td>
-        <td>${(files[i] || []).map((f) => `<a href="/api/runs/${r.id}/files/${esc(f.name)}" target="_blank">${esc(f.name)}</a>`).join(' · ')}</td></tr>`).join('') || '<tr><td colspan="12" class="muted">no phases yet</td></tr>'}</tbody></table>`;
+        <td class="files-cell">${(files[i] || []).length ? `<button type="button" class="files-toggle" data-files="${r.id}">${plural(files[i].length, 'file')} ${this.openFiles.has(r.id) ? '▾' : '▸'}</button>` : ''}</td></tr>
+        ${(files[i] || []).length ? `<tr class="files-row" data-files-of="${r.id}" ${this.openFiles.has(r.id) ? '' : 'hidden'}><td colspan="12"><div class="file-chips">${files[i].map((f) => `<span><a href="/api/runs/${r.id}/files/${esc(f.name)}" target="_blank">${esc(f.name)}</a> <span class="muted">${fmt.bytes(f.size)}</span></span>`).join('')}</div></td></tr>` : ''}`).join('') || '<tr><td colspan="12" class="muted">no phases yet</td></tr>'}</tbody></table>`;
   },
   bind(root) {
     bindJobActions(root, this);
     const sel = $('#prof-mode', root);
     if (sel) sel.addEventListener('change', (e) => { this.profMode = e.target.value; lastHtml = null; refresh(); });
     root.addEventListener('click', (e) => {
+      // the files of a phase unfold in place: the charts above stay as they are
+      const f = e.target.closest('button[data-files]');
+      if (f) {
+        const id = Number(f.dataset.files), open = !this.openFiles.has(id);
+        if (open) this.openFiles.add(id); else this.openFiles.delete(id);
+        $(`[data-files-of="${id}"]`, root).hidden = !open;
+        f.textContent = f.textContent.replace(/[▸▾]$/, open ? '▾' : '▸');
+        lastHtml = null;
+      }
       const b = e.target.closest('button[data-more]');
       if (b) guarded(() => moreRun(b.dataset.more));
       const sp = e.target.closest('button[data-split]');
@@ -1205,12 +1266,14 @@ views.commit = {
       return `<tr class="${idle ? 'sc-idle' : ''}" ${idle ? 'hidden' : ''}><td><b>${esc(scName(name))}</b></td>${cells}<td>${verdict ? badge(verdict) : ''}${runs > 1 ? ` <span class="muted">×${runs}</span>` : ''}</td>
         <td class="row-action" style="opacity:1">${act ? `${jobLink(act.job)} ${badge(act.job.status)}` : j ? moreRunBtn(j.job.id) : `<button class="small" data-run-sc="${esc(name)}">Run</button>`}</td></tr>`;
     }).join('');
+    const builds = await api.get(`/api/builds?sha=${encodeURIComponent(d.sha)}`).catch(() => []);
     return `
       <h1>Commit <span class="mono">${fmt.sha(d.sha)}</span>${c.seq != null ? ` <span class="muted">#${c.seq}</span>` : ''}</h1>
       <div class="card">
         <div><b>${subjectHtml(c.subject)}</b></div>
         <div class="muted">${esc(c.author || '')} · ${fmt.date(c.committedAt)} · parent <a class="mono" href="#/commits/${esc(c.parentSha || '')}">${fmt.sha(c.parentSha)}</a>
           ${repoWeb ? `· <a href="${esc(repoWeb)}/commit/${d.sha}" target="_blank" rel="noopener">repository</a>` : ''}</div>
+        ${buildsLine(builds)}
       </div>
       <h2>By scenario <span class="muted">this commit vs its parent; several runs are pooled</span></h2>
       <table class="commits runs-table"><thead><tr><th>Scenario</th>${METRIC_COLS.map(metricHead).join('')}<th>Verdict</th><th></th></tr></thead><tbody>${summary}</tbody></table>
@@ -2380,9 +2443,10 @@ views.settings = {
       <section data-tab="system" ${tab === 'system' ? '' : 'hidden'}>
         <h2 style="margin-top:0">Builds <span class="muted">last ${builds.length} · ${fmt.num(s.artifactsMb)} MB of artifacts${builds.some((b) => b.status === 'failed') ? ' · <span class="error">has failures</span>' : ''}</span></h2>
         ${health.maven ? `<div class="muted small-text" style="margin-bottom:6px">Maven: <span class="mono">${esc(health.maven)}</span> · maven.settings and maven.args of the config</div>` : ''}
-        <table><thead><tr><th>Commit</th><th>Status</th><th class="num">Took</th><th class="num">Size</th><th>Started</th><th>Error</th></tr></thead>
-        <tbody>${builds.map((b) => `<tr><td class="mono"><a href="#/commits/${b.sha}">${fmt.sha(b.sha)}</a>${b.fake ? ' <span class="muted">(fake)</span>' : ''}</td><td>${badge(b.status)}</td>
-          <td class="num">${b.durationSec != null ? Math.round(b.durationSec) + ' s' : '–'}</td><td class="num">${fmt.bytes(b.sizeBytes)}</td><td>${fmt.ago(b.startedAt)}</td><td class="error">${esc(b.error || '')}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">none</td></tr>'}</tbody></table>
+        <table><thead><tr><th>Commit</th><th>Status</th><th class="num">Took</th><th class="num">Size</th><th>Started</th><th>Error</th><th>Files</th></tr></thead>
+        <tbody>${builds.map((b) => `<tr><td class="mono"><a href="#/commits/${b.sha.split('+')[0]}">${fmt.sha(b.sha)}</a>${b.sha.includes('+') ? ` <span class="muted">${esc(b.sha.slice(b.sha.indexOf('+')))}</span>` : ''}${b.fake ? ' <span class="muted">(fake)</span>' : ''}</td><td>${badge(b.status)}</td>
+          <td class="num">${b.durationSec != null ? Math.round(b.durationSec) + ' s' : '–'}</td><td class="num">${fmt.bytes(b.sizeBytes)}</td><td>${fmt.ago(b.startedAt)}</td><td class="error">${esc(b.error || '')}</td>
+          <td style="white-space:nowrap">${buildLinks(b)}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">none</td></tr>'}</tbody></table>
         <h2>Controller log <span class="muted">${esc(health.version)} · up ${fmt.dur(new Date(Date.now() - health.uptimeSec * 1000).toISOString())} · ${esc(s.jdk)}</span></h2>
         <pre class="log">${esc(log.map((e) => `${e.at} ${e.level} ${e.msg}`).join('\n'))}</pre>
       </section>`;

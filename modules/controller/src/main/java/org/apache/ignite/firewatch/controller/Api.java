@@ -266,6 +266,11 @@ public final class Api {
         r.get("/api/jobs/{id}/series", req -> jobSeries(req.paramLong("id")));
         r.get("/api/jobs/{id}/profile", req -> jobProfile(req.paramLong("id"), req.queryInt("limit", 40)));
         r.get("/api/noise", req -> jobs.noise(req.query("scenario", Settings.firstScenario(db))));
+        Downloads downloads = new Downloads(cfg, db, scenarios);
+        r.get("/api/jobs/{id}/downloads", req -> downloads.of(req.paramLong("id")));
+        r.get("/api/jobs/{id}/zip", req -> downloads.jobZip(req.paramLong("id"), "1".equals(req.query("jfr", "0"))));
+        r.get("/api/builds/{key}/log", req -> downloads.buildLog(req.param("key")));
+        r.get("/api/builds/{key}/jars", req -> downloads.buildJars(req.param("key")));
         r.get("/api/runs/{id}/series", req -> runFile(req.paramLong("id"), "series.json", true));
         r.get("/api/runs/{id}/result", req -> runFile(req.paramLong("id"), "result.json", true));
         r.get("/api/runs/{id}/files", req -> runFiles(req.paramLong("id")));
@@ -297,7 +302,19 @@ public final class Api {
             return jobs.calibrate(Req.str(b, "ref", null), Req.str(b, "scenario", Settings.firstScenario(db)),
                 Req.integer(b, "priority", 0));
         });
-        r.get("/api/builds", req -> db.builds(req.queryInt("limit", 50)));
+        // a build with what of it can be downloaded; ?sha= the builds of one commit
+        r.get("/api/builds", req -> {
+            String sha = req.query("sha", null);
+            List<Map<String, Object>> out = new ArrayList<>();
+
+            for (Build b : sha == null ? db.builds(req.queryInt("limit", 50)) : db.buildsOf(sha)) {
+                Map<String, Object> m = Json.MAPPER.convertValue(b, Json.MAP);
+                m.putAll(downloads.build(b.sha, b));
+                out.add(m);
+            }
+
+            return out;
+        });
         r.post("/api/worker/pause", req -> {
             runner.setPaused(true);
 
