@@ -272,10 +272,16 @@ async function splitJob(jobId, mode) {
 }
 const METRIC_NAMES = { throughput: 'throughput', p99Us: 'p99', serverCpuUsPerOp: 'CPU/op', allocKbPerOp: 'alloc/op', heapAfterGcMb: 'heap after GC' };
 // where a run goes in the queue: the same two choices in every dialog that queues one, as usual by default. `usual` is the
-// priority of its kind (a manual run 1, an A/A 0); ahead goes before the ordinary manual jobs
+// priority of its kind (a manual run 1, an A/A 0); ahead of the queue is `front`, which frontPriority() finds
 const AHEAD = 2;
-const priorityField = (usual = 1) => `<div class="seg-radio"><label><input type="radio" name="prio" value="${usual}" checked><span>as usual</span></label>
-  <label><input type="radio" name="prio" value="${Math.max(AHEAD, usual + 1)}"><span>ahead of the queue</span></label></div>`;
+const priorityField = (usual, front) => `<div class="seg-radio"><label><input type="radio" name="prio" value="${usual}" checked><span>as usual</span></label>
+  <label title="right after the running job: priority ${front}, above every waiting one"><input type="radio" name="prio" value="${front}"><span>ahead of the queue</span></label></div>`;
+// ahead of the queue goes before every job waiting now, the steps of bisections started ahead too: one above the highest
+// priority queued (the queue runs the highest first, the oldest of equal ones first), at least AHEAD
+async function frontPriority(usual = 1) {
+  const active = await api.get('/api/jobs?filter=active&limit=500').catch(() => []);
+  return Math.max(AHEAD, usual + 1, ...active.filter((j) => j.status === 'queued').map((j) => j.priority + 1));
+}
 const priorityOf = (w) => Number(w.querySelector('[name=prio]:checked').value);
 const metricOption = (k, x) => `${esc(METRIC_NAMES[k])} ${fmt.pct(x.deltaPct)} (${esc(x.verdict)}, ${signalText(x)})`;
 const levelsOf = (n) => Math.ceil(Math.log2(Math.max(2, n)));
@@ -294,7 +300,7 @@ async function startBisect(jobId, metric) {
   const body = `<dl class="kv">
     <dt>Segment</dt><dd>${jobTitle(j, false)} <span class="muted">${jobRefsShort(j)}</span></dd>
     <dt>Follow</dt><dd><select name="metric">${moved.map((k) => `<option value="${k}" ${k === pick ? 'selected' : ''}>${metricOption(k, m[k])}</option>`).join('')}</select></dd>
-    <dt>Priority</dt><dd>${priorityField()}</dd>
+    <dt>Priority</dt><dd>${priorityField(1, await frontPriority())}</dd>
     <dt>Takes</dt><dd>≈ ${lv}–${2 * lv} steps per change${e ? `, ~${mins(e.totalSec)} for one` : ''} <span class="muted">(${n} commits, ${lv} levels: the left half,
       and the right one too when the left moved; halves measured before are reused)</span></dd>
   </dl>
@@ -329,7 +335,7 @@ async function pickBisects({ title, note, rows }) {
     <td class="num" data-delta></td><td class="num" data-signal></td><td class="num" data-range></td></tr>`;
   const body = `<table class="bisect-pick"><thead><tr><th>Scenario</th><th>Metric</th><th class="num">Δ</th><th class="num"${hint('signal')}>Signal</th><th class="num">Commits</th></tr></thead>
     <tbody>${rows.map(line).join('')}</tbody></table>
-    <dl class="kv"><dt>Priority</dt><dd>${priorityField()}</dd></dl>
+    <dl class="kv"><dt>Priority</dt><dd>${priorityField(1, await frontPriority())}</dd></dl>
     <div class="modal-note">${note} Steps of several bisections take turns in the queue. ${term('signal', 'Signal')} under ${WEAK_SIGNAL}× is weak: such a search rarely reaches a commit.</div>`;
   const optionOf = (tr) => rows[Number(tr.dataset.pick)].options[Number($('select', tr).value)];
   const picked = (w) => [...w.querySelectorAll('[data-row]:checked')].map((i) => ({ r: rows[Number(i.dataset.row)], o: optionOf(i.closest('tr')) }));
@@ -430,7 +436,7 @@ async function deepBisect(id) {
   const body = `<dl class="kv">
     <dt>Metric</dt><dd>${metricName(b)} <span class="muted">${esc(scName(b.scenario))}</span></dd>
     <dt>Segment</dt><dd>${plural(n, 'commit')} <span class="muted">${fmt.sha(b.shaA)}..${fmt.sha(b.shaB)}</span>${b.state.root ? ` · ${fmt.pct(b.state.root.deltaPct)}` : ''}</dd>
-    <dt>Priority</dt><dd>${priorityField()}</dd>
+    <dt>Priority</dt><dd>${priorityField(1, await frontPriority())}</dd>
     <dt>Takes</dt><dd>≈ ${steps} steps${e ? `, ~${mins(e.totalSec)}` : ''} <span class="muted">(${lv} levels; pairs measured before are reused, a second change adds more)</span></dd>
   </dl>
   <div class="modal-note">Measures both halves on every level and follows the one that carries the change, even under the threshold; a close call gets up to
@@ -530,7 +536,7 @@ async function confirmLaunch({ title, what, job, note, scenario, scenarios, choo
   const chosen = (w) => (choose ? [...w.querySelectorAll('input[name=sc]:checked')].map((i) => i.value) : scenarios || [scenario]);
   const estimateOf = (list, prio) => (choose ? (list.length ? estimate(list[0], list.length, prio) : Promise.resolve(''))
     : estimate(scenarios ? scenarios.join(',') : scenario, jobs, prio));
-  const est = await estimateOf(picked || [], priority);
+  const [est, front] = await Promise.all([estimateOf(picked || [], priority), frontPriority(priority)]);
   const dl = job && job.status === 'done' ? deltaLine(job) : '';
   const scenarioRow = choose
     ? `<div class="choose two">${choose.map((c) => `<label><input type="checkbox" name="sc" value="${esc(c.name)}" ${c.checked ? 'checked' : ''}> ${esc(scName(c.name))}${c.note ? ` <span class="muted">${esc(c.note)}</span>` : ''}</label>`).join('')}</div>`
@@ -540,7 +546,7 @@ async function confirmLaunch({ title, what, job, note, scenario, scenarios, choo
     <dt>What</dt><dd>${what || (job ? `${jobTitle(job, false)} <span class="muted">${jobRefsShort(job)}</span>` : '')}${note ? `<div class="muted">${esc(note)}</div>` : ''}</dd>
     <dt>Scenario${choose || scenarios ? 's' : ''}</dt><dd>${scenarioRow}</dd>
     ${dl ? `<dt>Now</dt><dd>${dl}${job.runs > 1 ? ` <span class="muted">×${job.runs}</span>` : ''}</dd>` : ''}
-    <dt>Priority</dt><dd>${priorityField(priority)}</dd>
+    <dt>Priority</dt><dd>${priorityField(priority, front)}</dd>
   </dl><dl class="kv est">${est}</dl>`;
   return modal(title, body, ok, {
     value: (w) => ({ priority: priorityOf(w), scenarios: chosen(w) }),
