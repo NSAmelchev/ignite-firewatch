@@ -45,6 +45,9 @@ public final class StandCheck {
     /** CPU busy with something else while nothing of the stand runs. */
     static final double BUSY_WARN_PCT = 10;
 
+    /** Clock sources whose reading costs a microsecond or so: every timestamp of a latency pays it. */
+    static final List<String> SLOW_CLOCKS = List.of("hpet", "acpi_pm", "jiffies", "xen");
+
     /** The windows of JFR are cut by the clock of the loader, whose series are per second. */
     static final long CLOCK_FAIL_MS = 1000;
 
@@ -293,6 +296,14 @@ public final class StandCheck {
                 : Boolean.TRUE.equals(turbo) ? "on: the clock follows the temperature and the load of the other cores" : "off",
             "`echo " + ("/sys/devices/system/cpu/cpufreq/boost".equals(f.get("turboFile")) ? "0" : "1") + " | sudo tee "
                 + f.get("turboFile") + "`");
+        Object clock = f.get("clocksource");
+        boolean slowClock = clock != null && SLOW_CLOCKS.contains(String.valueOf(clock));
+        r.add("clocksource", slowClock ? WARN : OK, clock == null ? "not reported" : clock + (slowClock
+                ? ": reading the time is slow, so the latencies measured come out longer than they are" : ""),
+            "`echo tsc | sudo tee /sys/devices/system/clocksource/clocksource0/current_clocksource` when "
+                + "`available_clocksource` lists it; the kernel option `clocksource=tsc` keeps it");
+        Object smt = f.get("smt");
+        r.add("smt", OK, smt == null ? "not reported" : String.valueOf(smt));
         Object steal = f.get("cpuStealPct");
         double st = steal == null ? 0 : ((Number)steal).doubleValue();
         r.add("steal", st >= STEAL_WARN_PCT ? WARN : OK, steal == null ? "not reported" : st >= STEAL_WARN_PCT
@@ -308,7 +319,12 @@ public final class StandCheck {
         r.fingerprint = fingerprintOf(f);
     }
 
-    /** Memory goes by whole GB: the kernel keeps a slightly different amount for itself from boot to boot. */
+    /**
+     * What must stay the same for runs to stay comparable. Memory goes by whole GB: the kernel keeps a slightly different
+     * amount for itself from boot to boot. The clock source, SMT, turbo, the options of the kernel and the vulnerabilities
+     * it leaves open change after a reboot without anything else changing, and so do the numbers; a host that does not
+     * tell leaves them out, and a fingerprint taken before they were there is compared on what it has.
+     */
     static Map<String, String> fingerprintOf(Map<String, Object> f) {
         Map<String, String> fp = new LinkedHashMap<>();
         fp.put("cpu", String.valueOf(f.get("cpu")));
@@ -316,6 +332,14 @@ public final class StandCheck {
         fp.put("memGb", String.valueOf(Math.round(((Number)f.get("memMb")).longValue() / 1024.0)));
         fp.put("kernel", String.valueOf(f.get("kernel")));
         fp.put("jdk", String.valueOf(f.get("jdk")));
+
+        for (String k : List.of("clocksource", "smt", "kernelOptions", "vulnerable")) {
+            if (f.get(k) != null)
+                fp.put(k, String.valueOf(f.get(k)));
+        }
+
+        if (f.get("turbo") != null)
+            fp.put("turbo", Boolean.TRUE.equals(f.get("turbo")) ? "on" : "off");
 
         return fp;
     }

@@ -52,6 +52,9 @@ public final class LoaderResult {
     /** Mean process CPU of the loader JVM over the measure window, percent of all CPUs; null if unavailable. */
     public Double loaderCpuPct;
 
+    /** Mean CPU of the whole machine of the loader over the measure window, percent; null if unavailable. */
+    public Double machineCpuPct;
+
     /** */
     public Series series = new Series();
 

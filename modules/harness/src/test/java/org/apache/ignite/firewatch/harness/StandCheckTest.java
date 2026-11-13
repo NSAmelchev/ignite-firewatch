@@ -109,6 +109,10 @@ class StandCheckTest {
         assertEquals(StandCheck.OK, level(with("cpuBusyPct", 3.0), "busy", StandCheck.FAIL));
         assertEquals(StandCheck.OK, level(with("turbo", false), "turbo", StandCheck.FAIL));
         assertEquals(StandCheck.OK, level(goodHost(), "steal", StandCheck.FAIL), "no /proc: not reported");
+        assertEquals(StandCheck.WARN, level(with("clocksource", "hpet"), "clocksource", StandCheck.FAIL));
+        assertEquals(StandCheck.OK, level(with("clocksource", "tsc"), "clocksource", StandCheck.FAIL));
+        assertEquals(StandCheck.OK, level(with("clocksource", "kvm-clock"), "clocksource", StandCheck.FAIL),
+            "the clock of a KVM guest is fast");
     }
 
     /** What the probe reads of /proc: all CPUs together, the time of a process past its name. */

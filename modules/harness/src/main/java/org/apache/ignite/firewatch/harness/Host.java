@@ -23,6 +23,15 @@ interface Host {
         return null;
     }
 
+    /**
+     * The counters a phase reads before and after its load, see {@link HostProbe#counters()}.
+     *
+     * @return The counters, or null when the host cannot tell.
+     */
+    default Map<String, Object> counters() {
+        return HostProbe.counters();
+    }
+
     /** The directory of the phase on this host, for its JVMs; {@code out} is the phase directory of this machine. */
     String dir(Path out);
 

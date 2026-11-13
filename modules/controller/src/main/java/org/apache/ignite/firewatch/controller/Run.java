@@ -79,4 +79,7 @@ public final class Run {
 
     /** */
     public Long errors;
+
+    /** Why the numbers of the phase may be off (foreign load, steal, throttling), "; "-separated; null when it was quiet. */
+    public String noise;
 }

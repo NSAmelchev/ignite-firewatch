@@ -85,6 +85,12 @@ public final class PhaseResult {
     /** What every host of a remote stand said about itself before the phase, by name. */
     public Map<String, Map<String, Object>> hosts;
 
+    /** What else ran on every host during the load of the phase; see {@link HostNoise}. */
+    public List<HostNoise> noise;
+
+    /** Why the numbers of this phase may be off: foreign load, steal, throttling; empty when nothing was seen. */
+    public List<String> noisy = new ArrayList<>();
+
     /** Garbage collection of the server JVMs. */
     public static final class Gc {
         /** */
@@ -113,6 +119,21 @@ public final class PhaseResult {
 
         /** */
         public Double loaderJvmPct;
+    }
+
+    /** What else ran on one host while the phase loaded it. */
+    public static final class HostNoise {
+        /** */
+        public String host;
+
+        /** CPU of the machine over the measure window that none of the JVMs of the phase used, percent; null if unknown. */
+        public Double foreignCpuPct;
+
+        /** CPU time the hypervisor gave other machines during the load, percent; null if unknown. */
+        public Double stealPct;
+
+        /** How many times the CPU throttled itself on heat during the load; null if the host does not tell. */
+        public Long throttled;
     }
 
     /** Heap usage of the server JVMs. */

@@ -43,6 +43,12 @@ public final class HostProbe {
         {"/sys/devices/system/cpu/intel_pstate/no_turbo", "0"},
         {"/sys/devices/system/cpu/cpufreq/boost", "1"}};
 
+    /** The options of the kernel that change how fast it runs: the rest (the image, the root, the console) is left out. */
+    private static final Pattern BOOT_ONLY = Pattern.compile(
+        "(BOOT_IMAGE|root|ro|rw|initrd|quiet|splash|console|crashkernel|resume|rootflags|rootfstype|LANG|rd\\..*|"
+            + "systemd\\..*|net\\.ifnames|biosdevname|vt\\..*|nomodeset|panic|loglevel|plymouth\\..*|audit|"
+            + "fsck\\..*|apparmor|security|selinux|lsm|cgroup_.*|zswap\\..*|init|boot)(=.*)?");
+
     /**
      * Runs the probe command given in the first argument.
      *
@@ -58,6 +64,9 @@ public final class HostProbe {
                 break;
             case "connect":
                 System.out.println(Json.CANONICAL.writeValueAsString(connect(args[1])));
+                break;
+            case "counters":
+                System.out.println(Json.CANONICAL.writeValueAsString(counters()));
                 break;
             default:
                 throw new IllegalArgumentException("unknown probe: " + args[0]);
@@ -81,10 +90,105 @@ public final class HostProbe {
         m.put("thp", selected(readLine("/sys/kernel/mm/transparent_hugepage/enabled")));
         m.put("governor", readLine("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"));
         turbo(m);
+        m.put("clocksource", readLine("/sys/devices/system/clocksource/clocksource0/current_clocksource"));
+        m.put("smt", readLine("/sys/devices/system/cpu/smt/control"));
+        m.put("kernelOptions", kernelOptions(readLine("/proc/cmdline")));
+        m.put("vulnerable", vulnerable(Path.of("/sys/devices/system/cpu/vulnerabilities")));
         m.put("foreignJvms", foreignJvms());
         cpuLoad(m);
 
         return m;
+    }
+
+    /**
+     * The options of {@code /proc/cmdline} that bear on speed, sorted: {@code mitigations=off}, {@code nosmt},
+     * {@code transparent_hugepage=}, {@code intel_idle.max_cstate=}, {@code isolcpus=} and the like.
+     *
+     * @param cmdline Command line of the kernel, or null.
+     * @return The options, {@code none} without any, null when there is no command line.
+     */
+    static String kernelOptions(String cmdline) {
+        if (cmdline == null)
+            return null;
+
+        List<String> out = new ArrayList<>();
+
+        for (String o : cmdline.trim().split("\\s+")) {
+            if (!o.isEmpty() && !BOOT_ONLY.matcher(o).matches())
+                out.add(o);
+        }
+
+        out.sort(null);
+
+        return out.isEmpty() ? "none" : String.join(" ", out);
+    }
+
+    /**
+     * The CPU vulnerabilities the kernel leaves open, from {@code /sys/devices/system/cpu/vulnerabilities}: they change
+     * with {@code mitigations=off} and with updates of the kernel or the microcode, and so does the speed.
+     *
+     * @param dir The directory, a file a vulnerability.
+     * @return Names of the open ones, {@code none}, or null when the kernel does not tell.
+     */
+    static String vulnerable(Path dir) {
+        if (!Files.isDirectory(dir))
+            return null;
+
+        List<String> open = new ArrayList<>();
+
+        try (var s = Files.list(dir)) {
+            for (Path p : (Iterable<Path>)s.sorted()::iterator) {
+                String v = readLine(p.toString());
+
+                if (v != null && v.startsWith("Vulnerable"))
+                    open.add(p.getFileName().toString());
+            }
+        }
+        catch (IOException e) {
+            return null;
+        }
+
+        return open.isEmpty() ? "none" : String.join(",", open);
+    }
+
+    /**
+     * What a phase reads before and after its load: the CPU times of {@code /proc/stat} for the steal, and the times the
+     * CPU throttled itself on heat.
+     *
+     * @return {@code cpu}: the eight times of {@link #cpuTimes}, {@code throttle}: the sum of the throttle counters;
+     *      each null where the host does not tell.
+     */
+    static Map<String, Object> counters() {
+        Map<String, Object> m = new LinkedHashMap<>();
+        long[] cpu = cpuTimes(readLine("/proc/stat"));
+        m.put("cpu", cpu == null ? null : java.util.Arrays.stream(cpu).boxed().toList());
+        m.put("throttle", throttleCount());
+
+        return m;
+    }
+
+    /** Sum of the thermal throttle counters of every CPU, or null when there are none (a VM, not Linux). */
+    private static Long throttleCount() {
+        File[] cpus = new File("/sys/devices/system/cpu").listFiles((d, n) -> n.matches("cpu\\d+"));
+
+        if (cpus == null)
+            return null;
+
+        long sum = 0;
+        boolean any = false;
+
+        for (File c : cpus) {
+            for (String f : new String[] {"core_throttle_count", "package_throttle_count"}) {
+                String v = readLine(c.getPath() + "/thermal_throttle/" + f);
+
+                if (v != null) {
+                    sum += Long.parseLong(v);
+                    any = true;
+                }
+            }
+        }
+
+        return any ? sum : null;
     }
 
     /** {@code turbo}: whether the CPU may clock above its base, {@code turboFile} the file that says it; null when none does. */

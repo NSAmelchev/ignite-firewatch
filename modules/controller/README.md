@@ -87,14 +87,17 @@ Check. With `FAKE_BUILD` a single warning stands for Maven.
 **Check** (`POST /api/stand/check`, the controller calls `harness.jar check`) checks the saved stand or the one just
 entered. It fails on ssh, a JDK below 17, less than 5 GB of disk, less than 2 GB of memory, foreign JVMs, Ignite ports
 unreachable between the hosts and clocks a second apart; it warns about clocks 100 ms apart, swap, THP `always`, a CPU
-governor other than `performance`, turbo boost on, steal time of 1 % or more (a VM whose neighbours take its CPU) and a CPU
-busy with something else for 10 % or more during the second of the probe (with the three busiest processes). Warnings and
+governor other than `performance`, turbo boost on, a slow clock source (`hpet`, `acpi_pm`, `xen`: every timestamp of a
+latency pays for reading it), steal time of 1 % or more (a VM whose neighbours take its CPU) and a CPU busy with something
+else for 10 % or more during the second of the probe (with the three busiest processes); it shows SMT as it is. Warnings and
 errors carry `fix`, how to fix them. On `local` a foreign JVM is only a warning: it may be the development environment.
 Check takes the Ignite ports, so it runs when no job runs and none waits, or while the stand is closed for maintenance
 (the waiting jobs do not start then), and one at a time: a job queued meanwhile waits for its end. Clean hosts follows the
 same rule.
 A passed Check of a stand that is not fixed yet keeps the fingerprint of each host (CPU, cores, memory in GB, OS kernel,
-JDK), and without it a job on `remote` does not start. Before every phase the harness compares the host with its
+JDK, and where the host tells them: the clock source, SMT, turbo, the options of the kernel that bear on speed and the CPU
+vulnerabilities it leaves open; these change after a reboot or an update of the microcode while nothing else does), and
+without it a job on `remote` does not start. A fingerprint taken before a key existed is compared on the keys it has. Before every phase the harness compares the host with its
 fingerprint: when they differ, the phase fails, saying what changed, and nothing goes into the history. Fixing the stand
 fixes the fingerprint too: a Check after it only shows the state.
 
@@ -473,7 +476,9 @@ strength of the signal, commits.
   details are open, the overview folded. Below is the map of the scenario: rows by size, Δ on wide blocks. Scenario,
   metric, zoom and the chosen block are in the address (the link can be shared); blocks refined by a split are paler; an
   active bisection has a badge over the map and a dashed stripe through every row for each range it still searches.
-- **Job**: among the actions a Download ▾ button: the zip of the job without JFR and with it, the log and the Ignite jars
+- **Job**: a phase during which something besides the stand used a host has a `noisy` badge and a note under the
+  comparison with the reasons (`runs.noise`, from `noisy` of its `result.json`): foreign CPU, steal, throttling on heat;
+  its numbers may be off, the job is worth another run on a quiet stand. Among the actions a Download ▾ button: the zip of the job without JFR and with it, the log and the Ignite jars
   of the build of A and B; the menu asks for its content and sizes only when it opens. The error of a failed build leads
   straight into its log. In the table of phases "N files ▸" unfolds the files of a phase with their sizes under its row.
   The ABBA table (phases, A, B, Δ, CI, threshold, verdict): the verdict metrics and alloc/op, the others on a button; only

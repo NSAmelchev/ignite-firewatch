@@ -97,6 +97,18 @@ final class RemoteHost implements Host {
     }
 
     /** {@inheritDoc} */
+    @Override public Map<String, Object> counters() {
+        try {
+            return Json.MAPPER.convertValue(json(run(ssh(probe("counters")))),
+                new TypeReference<LinkedHashMap<String, Object>>() {
+                });
+        }
+        catch (IOException | RuntimeException e) {
+            return null; // a phase measures all the same; only its noise goes untold
+        }
+    }
+
+    /** {@inheritDoc} */
     @Override public void prepare(Path harnessJar, Path libsDir, Path out) throws IOException {
         sweep();
         String libs = libsOf(libsDir);

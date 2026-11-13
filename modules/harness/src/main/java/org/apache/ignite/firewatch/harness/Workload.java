@@ -111,6 +111,8 @@ final class Workload {
         List<Double> measuredOps = new ArrayList<>();
         double ldrCpuSum = 0;
         int ldrCpuN = 0;
+        double machineSum = 0;
+        int machineN = 0;
 
         long tick = System.nanoTime();
         r.loadStartMs = System.currentTimeMillis();
@@ -137,6 +139,7 @@ final class Workload {
             double p50 = second.getValueAtPercentile(50) / 1000.0;
             double p99 = second.getValueAtPercentile(99) / 1000.0;
             double cpu = os.getProcessCpuLoad() * 100;
+            double machine = os.getCpuLoad() * 100;
 
             r.series.t.add(s);
             r.series.ops.add(ops);
@@ -152,6 +155,11 @@ final class Workload {
                 if (cpu >= 0) {
                     ldrCpuSum += cpu;
                     ldrCpuN++;
+                }
+
+                if (machine >= 0) {
+                    machineSum += machine;
+                    machineN++;
                 }
             }
 
@@ -176,6 +184,7 @@ final class Workload {
         r.throughput = Stats.summary(measuredOps);
         r.latencyUs = LoaderResult.Latency.ofNanos(measured);
         r.loaderCpuPct = ldrCpuN == 0 ? null : ldrCpuSum / ldrCpuN;
+        r.machineCpuPct = machineN == 0 ? null : machineSum / machineN;
 
         return r;
     }

@@ -239,6 +239,12 @@ const buildLinks = (b) => `${b.logBytes != null ? `<a href="${buildLogUrl(b.key)
   : b.status === 'ok' && !b.fake ? ' · <span class="muted" title="evicted by the limit of the build cache: the next run of the commit builds it again">jars evicted</span>' : ''}`;
 const buildsLine = (bs) => (!bs.length ? '' : `<div class="builds-line muted">Builds: ${bs.map((b) => `<span class="mono">${esc(b.key.includes('+') ? b.key.slice(b.key.indexOf('+')) : 'core')}</span>
   ${b.status === 'ok' ? `${esc(b.igniteVersion || '')} · ${fmt.bytes(b.sizeBytes)}` : badge(b.status)}${b.logBytes != null || b.jarsBytes != null ? ' · ' : ''}${buildLinks(b)}`).join('<span class="sep">|</span>')}</div>`);
+// what else ran on the hosts while a phase measured: its numbers may be off, the job is worth another run on a quiet stand
+const noisyNote = (runs) => {
+  const noisy = runs.filter((r) => r.noise);
+  return !noisy.length ? '' : `<div class="card notice">${noisy.map((r) => `Phase ${esc(r.phase)}: ${esc(r.noise)}`).join('<br>')}
+    <div class="small-text">Something besides the stand used the hosts while ${noisy.length > 1 ? 'these phases' : 'it'} measured: the numbers may be off. Run the job again when the stand is quiet.</div></div>`;
+};
 function jobActions(j) {
   const n = j.segment ? j.segment.count : 1, act = j.status === 'queued' || j.status === 'running';
   return `<span class="job-actions">${
@@ -797,6 +803,7 @@ views.job = {
         ${more ? `<button class="att-more" data-metrics-more>${this.allMetrics ? 'Fewer metrics' : `${plural(more, 'more metric')}`}</button>` : ''}
         ${broken.length ? `<div class="card notice" style="margin-top:6px">Phase ${broken.join(', ')} is far from its twin on ops/s: this run says little, a deep search leaves it out and measures the pair again.</div>` : ''}
         <div class="muted">${esc(cmp.note || '')}</div>` : ''}
+      ${noisyNote(j.runs)}
       <h2>Per-second series <span class="muted">${j.type === 'abba' ? 'A phases blue, B phases orange, repeats dashed' : ''}</span></h2>
       ${this.active ? '<div class="muted">Shown when the job finishes: the page does not stream metrics while it runs, so as not to load the stand.</div>'
         : `<div id="charts" class="chart-grid${this.allCharts ? ' show-all' : ''}"><div class="muted">loading charts…</div></div>
@@ -806,7 +813,7 @@ views.job = {
       <h2>Phases</h2>
       <table><thead><tr><th>Phase</th><th>Commit</th><th>Status</th><th>Ignite</th><th class="num">ops/s</th><th class="num">p50 µs</th><th class="num">p99 µs</th><th class="num">GC %</th><th class="num">alloc MB/s</th><th class="num">srv CPU %</th><th class="num">wall</th><th>Files</th></tr></thead>
       <tbody>${j.runs.map((r, i) => `<tr>
-        <td><b>${esc(r.phase)}</b></td><td class="mono">${fmt.sha(r.sha)}</td><td>${badge(r.status)}${r.error ? `<div class="error">${esc(r.error)}</div>` : ''}</td>
+        <td><b>${esc(r.phase)}</b></td><td class="mono">${fmt.sha(r.sha)}</td><td style="white-space:nowrap">${badge(r.status)}${r.noise ? ` <span class="badge partial" title="${esc(r.noise)}">noisy</span>` : ''}${r.error ? `<div class="error">${esc(r.error)}</div>` : ''}</td>
         <td>${esc(r.igniteVersion || '')}</td><td class="num">${fmt.num(r.throughput)}</td><td class="num">${fmt.num(r.p50Us)}</td><td class="num">${fmt.num(r.p99Us)}</td>
         <td class="num">${fmt.num(r.gcPausePct, 2)}</td><td class="num">${fmt.num(r.allocMbPerSec, 1)}</td><td class="num">${fmt.num(r.serverCpuPct, 1)}</td>
         <td class="num">${r.wallSec != null ? Math.round(r.wallSec) + ' s' : '–'}</td>

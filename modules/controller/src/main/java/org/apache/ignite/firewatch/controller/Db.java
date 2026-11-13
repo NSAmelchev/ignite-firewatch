@@ -21,7 +21,7 @@ import java.util.Map;
  */
 public final class Db implements AutoCloseable {
     /** */
-    private static final int SCHEMA_VERSION = 3;
+    private static final int SCHEMA_VERSION = 4;
 
     /** */
     private final Connection c;
@@ -115,6 +115,11 @@ public final class Db implements AutoCloseable {
                     + "created_at TEXT NOT NULL)");
                 st.execute("ALTER TABLE jobs ADD COLUMN comparison_id INTEGER");
                 st.execute("CREATE INDEX IF NOT EXISTS jobs_comparison ON jobs(comparison_id)");
+            }
+
+            if (v < 4) {
+                // why the numbers of a phase may be off: foreign load, steal or throttling while it measured
+                st.execute("ALTER TABLE runs ADD COLUMN noise TEXT");
             }
 
             if (v < SCHEMA_VERSION) {
@@ -1532,7 +1537,7 @@ public final class Db implements AutoCloseable {
         try (PreparedStatement ps = c.prepareStatement("UPDATE runs SET status = ?, finished_at = ?, error = ?, "
             + "ignite_version = ?, wall_sec = ?, throughput = ?, p50_us = ?, p99_us = ?, p999_us = ?, gc_pause_pct = "
             + "?, gc_max_pause_ms = ?, alloc_mb_per_sec = ?, server_cpu_pct = ?, machine_cpu_pct = ?, heap_after_gc_mb "
-            + "= ?, errors = ? WHERE id = ?")) {
+            + "= ?, errors = ?, noise = ? WHERE id = ?")) {
             ps.setString(1, r.status);
             ps.setString(2, r.finishedAt);
             ps.setString(3, r.error);
@@ -1549,7 +1554,8 @@ public final class Db implements AutoCloseable {
             setDouble(ps, 14, r.machineCpuPct);
             setDouble(ps, 15, r.heapAfterGcMb);
             setLong(ps, 16, r.errors);
-            ps.setLong(17, r.id);
+            ps.setString(17, r.noise);
+            ps.setLong(18, r.id);
             ps.executeUpdate();
         }
         catch (SQLException e) {
@@ -1644,6 +1650,7 @@ public final class Db implements AutoCloseable {
         r.machineCpuPct = getDouble(rs, "machine_cpu_pct");
         r.heapAfterGcMb = getDouble(rs, "heap_after_gc_mb");
         r.errors = getLong(rs, "errors");
+        r.noise = rs.getString("noise");
 
         return r;
     }

@@ -8,6 +8,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Tests of {@link PhaseData}. */
 class PhaseDataTest {
@@ -27,6 +29,22 @@ class PhaseDataTest {
         assertFalse(d.ok());
         assertEquals("the harness died: Exception in thread \"main\" java.lang.OutOfMemoryError: Java heap space",
             d.error);
+    }
+
+    /** What else ran on the hosts goes to the run, so the job page can say it. */
+    @Test void aNoisyPhaseSaysWhy() throws Exception {
+        Files.writeString(dir.resolve("result.json"), "{\"status\": \"ok\", \"throughput\": {\"mean\": 1000.0},"
+            + " \"noisy\": [\"foreign CPU 23 % on this machine\", \"steal 2.5 % on bench-1\"]}");
+        PhaseData d = PhaseData.read(dir, "B1", "b".repeat(40));
+        assertTrue(d.ok());
+        Run r = new Run();
+        d.fill(r);
+        assertEquals("foreign CPU 23 % on this machine; steal 2.5 % on bench-1", r.noise);
+
+        Files.writeString(dir.resolve("result.json"), "{\"status\": \"ok\", \"throughput\": {\"mean\": 1000.0}, \"noisy\": []}");
+        Run quiet = new Run();
+        PhaseData.read(dir, "B1", "b".repeat(40)).fill(quiet);
+        assertNull(quiet.noise, "a quiet phase, or a result of an older harness");
     }
 
     /** */

@@ -62,7 +62,7 @@ waits for the topology, creates the cache, preloads the keys with a streamer →
 | `series.json` | per-second series of the whole phase, index = seconds from the start of the load, `measureStartIndex` is the start of the measurement window |
 | `scenario.json` | the effective scenario (with the defaults); its sha256 is `scenarioHash` in the result |
 | `node-i.log`, `node-i.jfr`, `node-i.cmd` | the log, the JFR recording and the command line of server node i |
-| `loader.log`, `loader.json`, `loader.cmd` | the same for the loader; `loader.json` is the raw result of the client |
+| `loader.log`, `loader.json`, `loader.cmd` | the same for the loader; `loader.json` is the raw result of the client, with the CPU of its whole machine (`machineCpuPct`) |
 | `ignite-firewatch.jfc` | the JFR profile (GC, GCHeapSummary, CPULoad 1 s, ThreadAllocationStatistics 1 s, ExecutionSample 10 ms) |
 | `profile.json` | hot methods of the measurement window from `jdk.ExecutionSample` (summed over the nodes): `self` is the method on top of the stack, `total` anywhere in the stack, 200 entries each |
 | `work/` | Ignite work directories, temp and JFR repositories of the child JVMs |
@@ -87,6 +87,11 @@ waits for the topology, creates the cache, preloads the keys with a streamer →
   `loaderJvmPct`.
 - `heap`: `afterGcMbMean` (summed over the servers), `committedMbMax`.
 - `nodes[]`: the same for every node plus the file names; `env`: JDK, OS, number of CPUs, memory of the machine.
+- `noise[]`: what else ran on every host during the load: `foreignCpuPct`, the CPU of the machine over the measurement
+  window that none of the JVMs of the phase used (the machine CPU comes from the JFR of its nodes, or from the loader on a
+  host of its own); `stealPct` and `throttled`, from `/proc/stat` and the thermal throttle counters read right before and
+  right after the loader (`HostProbe counters`, over ssh on a remote host); null where a host does not tell. `noisy[]`
+  says why the numbers may be off: foreign CPU of 10 % or more, steal of 1 % or more, any throttling.
 
 ### `series.json`
 

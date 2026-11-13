@@ -39,6 +39,9 @@ public final class PhaseData {
     /** */
     public Long errors;
 
+    /** Why the numbers of the phase may be off, "; "-separated; null when nothing was seen. */
+    public String noise;
+
     /** Metric key → value, see {@link Stats#METRICS}. */
     public Map<String, Double> metrics = new LinkedHashMap<>();
 
@@ -88,6 +91,9 @@ public final class PhaseData {
         d.harnessVersion = text(r, "harnessVersion");
         d.wallSec = num(r, "wallSec");
         d.errors = r.hasNonNull("errors") ? r.get("errors").asLong() : null;
+        List<String> noisy = new ArrayList<>();
+        r.path("noisy").forEach(n -> noisy.add(n.asText()));
+        d.noise = noisy.isEmpty() ? null : String.join("; ", noisy);
 
         if (!d.ok())
             return d;
@@ -166,6 +172,7 @@ public final class PhaseData {
         run.serverCpuPct = metrics.get("serverCpuPct");
         run.machineCpuPct = metrics.get("machineCpuPct");
         run.heapAfterGcMb = metrics.get("heapAfterGcMb");
+        run.noise = noise;
     }
 
     /** */

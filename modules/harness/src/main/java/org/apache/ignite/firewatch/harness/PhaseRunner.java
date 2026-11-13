@@ -11,10 +11,12 @@ import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 import org.apache.ignite.firewatch.harness.api.Bench;
@@ -30,6 +32,12 @@ import org.apache.ignite.firewatch.harness.api.Scale;
 final class PhaseRunner {
     /** */
     private static final Duration SERVER_STOP_GRACE = Duration.ofSeconds(60);
+
+    /** CPU busy with something else during the measure window that makes a phase noisy, percent of the machine. */
+    static final double FOREIGN_CPU_PCT = 10;
+
+    /** Steal time during the load that makes a phase noisy, percent. */
+    static final double STEAL_PCT = 1;
 
     /** A phase in which a larger share of operations failed measured a failure, not the speed: it fails. */
     static final double MAX_ERROR_PCT = 1;
@@ -207,6 +215,8 @@ final class PhaseRunner {
             if (options.standFile != null)
                 res.loaderHost = ldrHost.name();
 
+            // steal and throttling count over the load: what the hosts say right before and right after it
+            Map<Host, Map<String, Object>> before = counters(hosts);
             JvmProcess ldr = ldrHost.start(l);
             children.add(ldr);
             log("started loader pid=" + ldr.pid() + ", warmup " + res.warmupSec + " s + measure " + res.measureSec
@@ -216,6 +226,7 @@ final class PhaseRunner {
             Duration ldrTimeout = Duration.ofSeconds(b.startTimeoutSec() + setupSec + res.warmupSec + res.measureSec
                 + 90);
             Integer rc = ldr.waitFor(ldrTimeout);
+            Map<Host, Map<String, Object>> after = counters(hosts);
 
             if (rc == null) {
                 ldr.kill();
@@ -261,6 +272,7 @@ final class PhaseRunner {
             series.loaderCpuPct.addAll(lr.series.loaderCpuPct);
             int total = res.warmupSec + res.measureSec;
             List<JfrMetrics.NodeMetrics> nodeMetrics = new ArrayList<>();
+            List<Host> nodeHosts = new ArrayList<>(); // where each of nodeMetrics ran
             List<JfrProfile.Profile> profiles = new ArrayList<>();
 
             for (int i = 0; i < servers.size(); i++) {
@@ -279,6 +291,7 @@ final class PhaseRunner {
                 JfrMetrics.NodeMetrics nm = JfrMetrics.parse(jfr, lr.loadStartMs, lr.measureStartMs, lr.measureEndMs,
                     total);
                 nodeMetrics.add(nm);
+                nodeHosts.add(placement.servers.get(i));
 
                 try {
                     profiles.add(JfrProfile.parse(jfr, lr.measureStartMs, lr.measureEndMs));
@@ -299,6 +312,27 @@ final class PhaseRunner {
             }
 
             aggregate(res, series, nodeMetrics, lr, total);
+            res.noise = new ArrayList<>();
+
+            for (Host h : hosts) {
+                // the machine CPU of a host comes from the JFR of its nodes, or from the loader on a host of its own
+                List<Double> machine = new ArrayList<>();
+                double ours = h == ldrHost && lr.loaderCpuPct != null ? lr.loaderCpuPct : 0;
+
+                for (int i = 0; i < nodeMetrics.size(); i++) {
+                    if (nodeHosts.get(i) == h) {
+                        machine.add(nodeMetrics.get(i).cpuMachinePct);
+                        ours += nodeMetrics.get(i).cpuJvmPct;
+                    }
+                }
+
+                Double machinePct = !machine.isEmpty() ? machine.stream().mapToDouble(d -> d).average().orElse(0)
+                    : h == ldrHost ? lr.machineCpuPct : null;
+                res.noise.add(hostNoise(options.standFile == null ? "this machine" : h.name(), machinePct, ours,
+                    before.get(h), after.get(h)));
+            }
+
+            res.noisy = noisy(res.noise);
 
             if (!profiles.isEmpty())
                 Json.write(out.resolve("profile.json"), JfrProfile.merge(profiles));
@@ -505,5 +539,85 @@ final class PhaseRunner {
     /** */
     private static void log(String msg) {
         System.out.println("[harness] " + msg);
+    }
+
+    /** The counters of every host; a host that cannot tell is left out. */
+    private static Map<Host, Map<String, Object>> counters(Set<Host> hosts) {
+        Map<Host, Map<String, Object>> m = new HashMap<>();
+
+        for (Host h : hosts) {
+            Map<String, Object> c = h.counters();
+
+            if (c != null)
+                m.put(h, c);
+        }
+
+        return m;
+    }
+
+    /**
+     * What else ran on a host during the phase.
+     *
+     * @param name Host as the result names it.
+     * @param machinePct CPU of the whole machine over the measure window, percent; null if unknown.
+     * @param oursPct CPU of the JVMs of the phase on it over the same window, percent.
+     * @param before Counters before the load, or null.
+     * @param after Counters after it, or null.
+     * @return The noise of the host.
+     */
+    static PhaseResult.HostNoise hostNoise(String name, Double machinePct, double oursPct, Map<String, Object> before,
+        Map<String, Object> after) {
+        PhaseResult.HostNoise n = new PhaseResult.HostNoise();
+        n.host = name;
+        n.foreignCpuPct = machinePct == null ? null : Math.round(Math.max(0, machinePct - oursPct) * 10) / 10.0;
+        long[] a = times(before), b = times(after);
+
+        if (a != null && b != null)
+            n.stealPct = HostProbe.shares(a, b)[1];
+
+        Object ta = before == null ? null : before.get("throttle"), tb = after == null ? null : after.get("throttle");
+
+        if (ta instanceof Number && tb instanceof Number)
+            n.throttled = Math.max(0, ((Number)tb).longValue() - ((Number)ta).longValue());
+
+        return n;
+    }
+
+    /** The CPU times of the counters, or null. */
+    private static long[] times(Map<String, Object> c) {
+        Object cpu = c == null ? null : c.get("cpu");
+
+        if (!(cpu instanceof List) || ((List<?>)cpu).size() < 8)
+            return null;
+
+        long[] t = new long[8];
+
+        for (int i = 0; i < 8; i++)
+            t[i] = ((Number)((List<?>)cpu).get(i)).longValue();
+
+        return t;
+    }
+
+    /**
+     * Why the numbers of a phase may be off.
+     *
+     * @param noise The noise of every host.
+     * @return Reasons, empty when every host was quiet.
+     */
+    static List<String> noisy(List<PhaseResult.HostNoise> noise) {
+        List<String> out = new ArrayList<>();
+
+        for (PhaseResult.HostNoise n : noise) {
+            if (n.foreignCpuPct != null && n.foreignCpuPct >= FOREIGN_CPU_PCT)
+                out.add("foreign CPU " + Math.round(n.foreignCpuPct) + " % on " + n.host);
+
+            if (n.stealPct != null && n.stealPct >= STEAL_PCT)
+                out.add("steal " + n.stealPct + " % on " + n.host);
+
+            if (n.throttled != null && n.throttled > 0)
+                out.add("CPU throttled on heat " + n.throttled + " times on " + n.host);
+        }
+
+        return out;
     }
 }
