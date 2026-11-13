@@ -61,6 +61,9 @@ public final class Bisect {
     /** */
     public int priority;
 
+    /** Who started it: its steps, queued later by the worker, are queued in that name. */
+    public String requestedBy;
+
     /** */
     public String status;
 

@@ -266,6 +266,7 @@ public final class JobService {
 
         j.bisectId = b.id;
         j.bisectStep = step;
+        j.requestedBy = b.requestedBy; // queued by the worker, in the name of who started the bisection
 
         return insert(j);
     }
@@ -289,6 +290,7 @@ public final class JobService {
         j.shaB = c.shaB;
         j.label = c.label;
         j.comparisonId = c.id;
+        j.requestedBy = c.requestedBy;
 
         return insert(j);
     }
@@ -843,6 +845,9 @@ public final class JobService {
 
     /** */
     private Job insert(Job j) {
+        if (j.requestedBy == null)
+            j.requestedBy = Who.current(); // the request that queues it; none for what the stand queues by itself
+
         rememberCommit(j.shaA);
 
         if (j.shaB != null && !j.shaB.equals(j.shaA))
@@ -903,7 +908,7 @@ public final class JobService {
      * @return {@code True} if the cancellation was requested.
      */
     public boolean cancel(long id) {
-        boolean ok = db.requestCancel(id);
+        boolean ok = db.requestCancel(id, Who.current());
 
         if (ok) {
             Log.info("job #" + id + " cancel requested");

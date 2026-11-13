@@ -394,6 +394,7 @@ public final class Router implements HttpHandler {
         String method = ex.getRequestMethod();
         String[] path = split(ex.getRequestURI().getPath());
         boolean pathMatched = false;
+        Who.set(Who.fromHeader(ex.getRequestHeaders().getFirst(Who.HEADER))); // the pool reuses threads: cleared below
 
         try {
             for (Route r : routes) {
@@ -436,6 +437,9 @@ public final class Router implements HttpHandler {
         catch (Exception e) {
             Log.error(method + " " + ex.getRequestURI() + " failed", e);
             error(ex, 500, e.toString());
+        }
+        finally {
+            Who.set(null);
         }
     }
 

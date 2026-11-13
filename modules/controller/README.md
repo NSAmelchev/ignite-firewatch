@@ -140,6 +140,14 @@ as `local`, and it is not shown the wizard.
   shas, type and scenario is not duplicated while it is queued or running.
 - Priority: higher runs first; auto = 0, manual 1 by default. Statuses: `queued → running → done | failed | cancelled |
   interrupted` (the last one is a restart of the controller during the job).
+- Who: the UI asks the name of its user once (2 to 40 characters: letters, digits, spaces and `. _ @ -`, a letter or a
+  digit first; both sides bring it to NFC and one space between words), keeps it in `localStorage` and sends it with
+  every request in `X-Firewatch-User`, URL-encoded. It is not
+  authentication: anyone may type any name. `Who` keeps the name for the thread of the request, so whatever queues a
+  job on it records `jobs.requested_by`, and a cancel records `jobs.cancelled_by` (schema v5). Steps of a bisection,
+  queued later by the worker, carry the name of who started it (`bisects.requested_by`), the jobs of a comparison that of
+  who queued it (`comparisons.requested_by`); what the stand queues by itself has no name. A request without the header,
+  or with a name that breaks the rule, names nobody: scripts with `curl` work as before.
 - Auto-run: the watermark starts at the head of the first poll and only moves forward; commits that came during a pause,
   were filtered out by the paths or did not fit `maxBacklog` stay available for a manual run on the Commits page (the
   Run button is ABBA against the parent).
@@ -454,9 +462,12 @@ strength of the signal, commits.
 - **Noise**: a row per scenario: the Δ of the last A/A on ops/s, p99 and CPU/op in separate columns, how many calibrations
   (`2 of 3` while it has no thresholds of its own), the history unfolds. One button makes up A/A where there are fewer than
   three, the other runs all the scenarios.
-- **Queue**: a compact block of the current job with Log and Cancel, the queue with priorities, the expected start and
-  duration of every job, when what waits now ends and when the bisections end (they add steps one at a time), the active
-  bisections, the history with a "without bisect steps" box; steps are marked "bisect #N · step k".
+- **Queue**: a compact block of the current job with Log and Cancel and who queued it, the queue with priorities, who
+  queued every job (By: the user's own name in bold, `–` for what the stand queued by itself or what was queued before
+  the names), the expected start and duration of every job, when what waits now ends and when the bisections end (they
+  add steps one at a time), the active bisections, the history with a "without bisect steps" box and who queued and who
+  cancelled each job; steps are marked "bisect #N · step k". The name of the user is in the header, a click changes it
+  (the jobs queued before keep the old one); the dialogs that queue or cancel say "as <name>".
 - **Bisects** (`#/bisects`): every bisection, the active ones on top, the chips All, Active, Needs a deep search, Found,
   No single commit (the choice shows in the address). A repeated search of the same range on the same metric is one row,
   the earlier numbers next to it; the same in Comparison.

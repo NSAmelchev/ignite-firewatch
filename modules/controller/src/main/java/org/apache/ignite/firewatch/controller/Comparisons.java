@@ -89,6 +89,7 @@ public final class Comparisons {
         Comparison c = resolve(base == null || base.isBlank() ? null : mirror.normalize(base),
             mirror.normalize(target));
         c.priority = priority;
+        c.requestedBy = Who.current();
 
         for (String name : names) {
             if (db.hasActiveJob(Job.ABBA, c.shaA, c.shaB, name))

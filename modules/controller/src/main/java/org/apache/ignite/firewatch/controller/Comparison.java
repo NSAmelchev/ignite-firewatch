@@ -32,6 +32,9 @@ public final class Comparison {
     /** */
     public int priority;
 
+    /** Who queued it. */
+    public String requestedBy;
+
     /** */
     public String createdAt;
 

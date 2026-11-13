@@ -144,6 +144,7 @@ public final class Bisector {
         b.shaA = root.shaA;
         b.shaB = root.shaB;
         b.priority = priority == null ? AHEAD : priority;
+        b.requestedBy = Who.current();
         b.status = Bisect.RUNNING;
         Bisect.State s = b.state;
         s.root = r;

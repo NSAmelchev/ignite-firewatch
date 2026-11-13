@@ -91,6 +91,12 @@ public final class Job {
     /** */
     public boolean cancelRequested;
 
+    /** Who queued it: the name of the request, see {@link Who}; null for what the stand queued by itself. */
+    public String requestedBy;
+
+    /** Who cancelled it; null when nobody did or the request named nobody. */
+    public String cancelledBy;
+
     /** */
     public String logFile;
 

@@ -689,6 +689,47 @@ class PipelineTest {
         return bisector.get(id);
     }
 
+    /**
+     * The name of a request goes to what it queues and cancels; the steps the worker queues later carry the name of
+     * the bisection, and what the stand queues by itself has none.
+     */
+    @Test void whoQueuedAndWhoCancelled() throws Exception {
+        List<String> c = eightCommits();
+        throughput(c, 4, 9000);
+
+        try {
+            Who.set("alice");
+            Job manual = jobs.enqueue(Job.ABBA, origin.shas.get(0), c.get(0), "smoke", 1, JobService.SRC_MANUAL, null);
+            assertEquals("alice", manual.requestedBy);
+            Who.set("bob");
+            assertTrue(jobs.cancel(manual.id));
+            assertEquals("alice", db.job(manual.id).requestedBy);
+            assertEquals("bob", db.job(manual.id).cancelledBy);
+
+            Who.set(null);
+            Job root = measuredSegment(origin.shas.get(1), c.get(7));
+            assertNull(root.requestedBy, "queued with no request: the stand itself");
+            Who.set("carol");
+            Bisector bisector = new Bisector(db, mirror, jobs);
+            Bisect b = bisector.start(root.id, "throughput", null);
+            assertEquals("carol", b.requestedBy);
+            assertEquals("carol", b.waiting.requestedBy);
+            Who.set(null); // the worker queues the next steps
+            b = runToTheEnd(bisector, b.id);
+            assertTrue(db.jobsOfBisect(b.id).size() > 1);
+            assertTrue(db.jobsOfBisect(b.id).stream().allMatch(j -> "carol".equals(j.requestedBy)));
+
+            Who.set("dave");
+            Comparison cmp = new Comparisons(db, mirror, jobs, scenarios, bisector).create(origin.shas.get(0), c.get(7),
+                List.of("smoke"), 2);
+            assertEquals("dave", db.comparison(cmp.id).requestedBy);
+            assertTrue(db.jobsOfComparison(cmp.id).stream().allMatch(j -> "dave".equals(j.requestedBy)));
+        }
+        finally {
+            Who.set(null);
+        }
+    }
+
     /** */
     @Test void bisectFindsTheCommitCheckingTheOtherHalfOfAMovedOne() throws Exception {
         List<String> c = eightCommits();

@@ -21,7 +21,7 @@ import java.util.Map;
  */
 public final class Db implements AutoCloseable {
     /** */
-    private static final int SCHEMA_VERSION = 4;
+    private static final int SCHEMA_VERSION = 5;
 
     /** */
     private final Connection c;
@@ -120,6 +120,14 @@ public final class Db implements AutoCloseable {
             if (v < 4) {
                 // why the numbers of a phase may be off: foreign load, steal or throttling while it measured
                 st.execute("ALTER TABLE runs ADD COLUMN noise TEXT");
+            }
+
+            if (v < 5) {
+                // who queued and who cancelled: the name the UI sends, see Who
+                st.execute("ALTER TABLE jobs ADD COLUMN requested_by TEXT");
+                st.execute("ALTER TABLE jobs ADD COLUMN cancelled_by TEXT");
+                st.execute("ALTER TABLE bisects ADD COLUMN requested_by TEXT");
+                st.execute("ALTER TABLE comparisons ADD COLUMN requested_by TEXT");
             }
 
             if (v < SCHEMA_VERSION) {
@@ -566,7 +574,7 @@ public final class Db implements AutoCloseable {
 
         try (PreparedStatement ps = c.prepareStatement("INSERT INTO jobs(type, source, status, priority, scenario, "
             + "scenario_hash, ref_a, sha_a, ref_b, sha_b, label, created_at, stage, progress, bisect_id, bisect_step, "
-            + "comparison_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
+            + "comparison_id, requested_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)",
             Statement.RETURN_GENERATED_KEYS)) {
             ps.setString(1, j.type);
             ps.setString(2, j.source);
@@ -584,6 +592,7 @@ public final class Db implements AutoCloseable {
             setLong(ps, 14, j.bisectId);
             setLong(ps, 15, j.bisectStep == null ? null : (long)j.bisectStep);
             setLong(ps, 16, j.comparisonId);
+            ps.setString(17, j.requestedBy);
             ps.executeUpdate();
 
             try (ResultSet rs = ps.getGeneratedKeys()) {
@@ -719,18 +728,31 @@ public final class Db implements AutoCloseable {
      * @param id Job id.
      * @return Whether there was something to cancel.
      */
-    public synchronized boolean requestCancel(long id) {
+    public boolean requestCancel(long id) {
+        return requestCancel(id, null);
+    }
+
+    /**
+     * Marks a job for cancellation; a queued job is cancelled right away. Returns false if there is nothing to cancel.
+     *
+     * @param id Job id.
+     * @param by Who cancels it, or {@code null}.
+     * @return Whether there was something to cancel.
+     */
+    public synchronized boolean requestCancel(long id, String by) {
         try (PreparedStatement q = c.prepareStatement("UPDATE jobs SET status = 'cancelled', finished_at = ?, "
-            + "cancel_requested = 1 WHERE id = ? AND status = 'queued'");
-             PreparedStatement r = c.prepareStatement("UPDATE jobs SET cancel_requested = 1 WHERE id = ? AND status = "
-                 + "'running'")) {
+            + "cancel_requested = 1, cancelled_by = ? WHERE id = ? AND status = 'queued'");
+             PreparedStatement r = c.prepareStatement("UPDATE jobs SET cancel_requested = 1, cancelled_by = ? WHERE id = ? "
+                 + "AND status = 'running'")) {
             q.setString(1, now());
-            q.setLong(2, id);
+            q.setString(2, by);
+            q.setLong(3, id);
 
             if (q.executeUpdate() > 0)
                 return true;
 
-            r.setLong(1, id);
+            r.setString(1, by);
+            r.setLong(2, id);
 
             return r.executeUpdate() > 0;
         }
@@ -1114,6 +1136,8 @@ public final class Db implements AutoCloseable {
         Long step = getLong(rs, "bisect_step");
         j.bisectStep = step == null ? null : step.intValue();
         j.comparisonId = getLong(rs, "comparison_id");
+        j.requestedBy = rs.getString("requested_by");
+        j.cancelledBy = rs.getString("cancelled_by");
 
         return j;
     }
@@ -1218,8 +1242,8 @@ public final class Db implements AutoCloseable {
             b.createdAt = now();
 
         try (PreparedStatement ps = c.prepareStatement("INSERT INTO bisects(scenario, metric, direction, root_job, "
-            + "sha_a, sha_b, priority, status, reason, result_sha, created_at, finished_at, state_json) VALUES (?, ?, "
-            + "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            + "sha_a, sha_b, priority, status, reason, result_sha, created_at, finished_at, state_json, requested_by) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             Statement.RETURN_GENERATED_KEYS)) {
             ps.setString(1, b.scenario);
             ps.setString(2, b.metric);
@@ -1234,6 +1258,7 @@ public final class Db implements AutoCloseable {
             ps.setString(11, b.createdAt);
             ps.setString(12, b.finishedAt);
             ps.setString(13, Json.write(b.state));
+            ps.setString(14, b.requestedBy);
             ps.executeUpdate();
 
             try (ResultSet rs = ps.getGeneratedKeys()) {
@@ -1384,6 +1409,7 @@ public final class Db implements AutoCloseable {
         b.createdAt = rs.getString("created_at");
         b.finishedAt = rs.getString("finished_at");
         b.state = Json.read(rs.getString("state_json"), Bisect.State.class);
+        b.requestedBy = rs.getString("requested_by");
 
         return b;
     }
@@ -1401,7 +1427,7 @@ public final class Db implements AutoCloseable {
             x.createdAt = now();
 
         try (PreparedStatement ps = c.prepareStatement("INSERT INTO comparisons(ref_a, sha_a, ref_b, sha_b, label, "
-            + "priority, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", Statement.RETURN_GENERATED_KEYS)) {
+            + "priority, created_at, requested_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", Statement.RETURN_GENERATED_KEYS)) {
             ps.setString(1, x.refA);
             ps.setString(2, x.shaA);
             ps.setString(3, x.refB);
@@ -1409,6 +1435,7 @@ public final class Db implements AutoCloseable {
             ps.setString(5, x.label);
             ps.setInt(6, x.priority);
             ps.setString(7, x.createdAt);
+            ps.setString(8, x.requestedBy);
             ps.executeUpdate();
 
             try (ResultSet rs = ps.getGeneratedKeys()) {
@@ -1492,6 +1519,7 @@ public final class Db implements AutoCloseable {
         x.label = rs.getString("label");
         x.priority = rs.getInt("priority");
         x.createdAt = rs.getString("created_at");
+        x.requestedBy = rs.getString("requested_by");
 
         return x;
     }

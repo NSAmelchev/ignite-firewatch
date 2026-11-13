@@ -2,10 +2,28 @@
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
 
+// ------------------------------------------------------------------ who
+// The name the user gives once: the browser keeps it and sends it with every request (Who on the server). Not a login:
+// anyone may type any name; it says who queued and who cancelled a job
+const WHO_KEY = 'firewatch.user';
+const WHO_MAX = 40;
+const WHO_RULE = /^[\p{L}\p{N}][\p{L}\p{N} ._@-]{1,39}$/u;
+const whoNorm = (s) => String(s || '').normalize('NFC').trim().replace(/\s+/g, ' '); // NFC: an accent typed apart is one letter
+const whoValid = (s) => WHO_RULE.test(whoNorm(s));
+let who = (() => {
+  try { const v = localStorage.getItem(WHO_KEY); return whoValid(v) ? whoNorm(v) : null; } catch { return null; }
+})();
+// a name changed in another tab takes effect here too
+addEventListener('storage', (e) => {
+  if (e.key === WHO_KEY && whoValid(e.newValue)) { who = whoNorm(e.newValue); paintWho(); }
+});
+
 // ------------------------------------------------------------------ api
 async function call(method, path, body) {
+  const headers = body === undefined ? {} : { 'Content-Type': 'application/json' };
+  if (who) headers['X-Firewatch-User'] = encodeURIComponent(who); // a header carries no Cyrillic
   const res = await fetch(path, {
-    method, headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+    method, headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (res.status === 204) return null;
@@ -313,6 +331,7 @@ async function startBisect(jobId, metric) {
   <div class="modal-note">Every step is an ordinary ABBA run, one at a time in the queue. Every half that moves on its own is searched, down to its
     commit; a range that moves while its halves do not ends as spread over small changes. Cancel removes its queued step.</div>`;
   const v = await modal(`Bisect ${n} commits`, body, 'Start', {
+    asWho: true,
     value: (w) => ({ metric: w.querySelector('[name=metric]').value, priority: priorityOf(w) }),
   });
   if (!v) return;
@@ -358,6 +377,7 @@ async function pickBisects({ title, note, rows }) {
     w.querySelector('[data-yes]').disabled = !on.length;
   };
   const v = await modal(title, body, 'Start', {
+    asWho: true,
     open: (w) => { takes(w); w.addEventListener('change', () => takes(w)); },
     value: (w) => ({ priority: priorityOf(w), items: picked(w).map(({ o }) => ({ jobId: o.jobId, metric: o.metric })) }),
   });
@@ -447,7 +467,7 @@ async function deepBisect(id) {
   </dl>
   <div class="modal-note">Measures both halves on every level and follows the one that carries the change, even under the threshold; a close call gets up to
     ${DEEP_RUNS} runs, and so does the commit it ends on. It ends on a commit, or on the shortest range that still moves. Cancel removes its queued step.</div>`;
-  const v = await modal(`Deep search of bisect #${b.id}`, body, 'Start', { value: priorityOf });
+  const v = await modal(`Deep search of bisect #${b.id}`, body, 'Start', { value: priorityOf, asWho: true });
   if (!v) return;
   await api.post(`/api/bisects/${id}/deep`, { priority: v });
   toast(`bisect #${id}: deep search started`);
@@ -507,25 +527,62 @@ function deltaLine(j) {
 }
 const mins = (sec) => fmt.len(sec);
 // A modal in the page: resolves true on the main button (or Enter), false on Cancel, Esc or a click outside
-function modal(title, body, ok = 'OK', { open, value, danger } = {}) {
+// `required`: no Cancel, and neither Escape nor a click outside closes it; `asWho`: says in whose name the action goes
+function modal(title, body, ok = 'OK', { open, value, danger, required, asWho } = {}) {
   return new Promise((resolve) => {
     const w = document.createElement('div');
     w.className = 'modal-back';
     w.innerHTML = `<div class="modal" role="dialog" aria-modal="true"><h3>${title}</h3><div class="modal-body">${body}</div>
-      <div class="modal-foot"><div class="modal-sum" data-sum></div><button data-no>Cancel</button><button class="${danger ? 'danger' : 'primary'}" data-yes>${ok}</button></div></div>`;
+      <div class="modal-foot"><div class="modal-left"><div class="modal-sum" data-sum></div>${asWho && who ? `<div class="modal-as">as ${esc(who)}</div>` : ''}</div>${required ? '' : '<button data-no>Cancel</button>'}<button class="${danger ? 'danger' : 'primary'}" data-yes>${ok}</button></div></div>`;
     // value(w) reads the dialog's inputs before it goes away; without it a confirmation resolves to true
     const yes = () => { const v = value ? value(w) : true; done(v); };
     const done = (v) => { document.removeEventListener('keydown', key, true); w.remove(); resolve(v); };
     const key = (e) => {
-      if (e.key === 'Escape') { e.preventDefault(); done(false); }
+      if (e.key === 'Escape' && !required) { e.preventDefault(); done(false); }
       if (e.key === 'Enter') { e.preventDefault(); if (!w.querySelector('[data-yes]').disabled) yes(); }
     };
-    w.addEventListener('click', (e) => { if (e.target === w || e.target.closest('[data-no]')) done(false); else if (e.target.closest('[data-yes]')) yes(); });
+    w.addEventListener('click', (e) => { if ((e.target === w && !required) || e.target.closest('[data-no]')) done(false); else if (e.target.closest('[data-yes]')) yes(); });
     document.addEventListener('keydown', key, true);
     document.body.appendChild(w);
     if (open) open(w);
     w.querySelector('[data-yes]').focus();
   });
+}
+// Asks the name: once and for good when the browser has none (`required`), or from the name in the header to change it
+async function askWho(required) {
+  const note = required ? 'Queue shows it next to the jobs you queue or cancel.'
+    : 'Queue shows it next to the jobs you queue or cancel from now on; the earlier ones keep the name they have.';
+  const v = await modal(required ? 'Who are you?' : 'Your name', `<label for="who-name">Name or login</label>
+    <input id="who-name" name="who" value="${esc(who || '')}" maxlength="${WHO_MAX}" autocomplete="nickname" spellcheck="false" aria-describedby="who-note" style="width:100%">
+    <div class="hint" id="who-note" role="status">${note}</div>`, required ? 'Continue' : 'Save', {
+    required,
+    open: (w) => {
+      const i = w.querySelector('[name=who]'), yes = w.querySelector('[data-yes]'), hint = w.querySelector('#who-note');
+      // the rule only when it is broken: what the name is for comes first; one letter is a name being typed, not a broken one
+      const check = () => {
+        const s = whoNorm(i.value), ok = whoValid(s), bad = s !== '' && !ok && !/^[\p{L}\p{N}]$/u.test(s);
+        yes.disabled = !ok;
+        i.classList.toggle('bad', bad);
+        i.setAttribute('aria-invalid', String(bad));
+        hint.classList.toggle('error', bad);
+        hint.textContent = bad ? `2 to ${WHO_MAX} letters, digits, spaces or . _ @ -, starting with a letter or a digit` : note;
+      };
+      i.addEventListener('input', check);
+      check();
+      setTimeout(() => { i.focus(); i.select(); }, 0); // a new name replaces the old one at once
+    },
+    value: (w) => whoNorm(w.querySelector('[name=who]').value),
+  });
+  if (!v) return;
+  who = v;
+  try { localStorage.setItem(WHO_KEY, v); } catch { /* the browser keeps nothing: asked again next time */ }
+  paintWho();
+}
+function paintWho() {
+  const b = $('#who');
+  if (!b) return;
+  b.textContent = who || '';
+  b.hidden = !who;
 }
 // The confirmation of every launch: what is queued, the Δ it re-checks, where it goes in the queue, how long it takes and when
 // it should be done. Resolves to { priority, scenarios } (false on cancel): the priority chosen, as usual by default (`priority`
@@ -555,6 +612,7 @@ async function confirmLaunch({ title, what, job, note, scenario, scenarios, choo
     <dt>Priority</dt><dd>${priorityField(priority, front)}</dd>
   </dl><dl class="kv est">${est}</dl>`;
   return modal(title, body, ok, {
+    asWho: true,
     value: (w) => ({ priority: priorityOf(w), scenarios: chosen(w) }),
     open: (w) => {
       const yes = w.querySelector('[data-yes]');
@@ -663,16 +721,16 @@ views.queue = {
           <div class="now-tools"><button class="small" data-log-toggle>Log</button><button class="small" data-cancel="${running.id}">Cancel</button></div>
         </div>
         <div class="progress"><div style="width:${running.progress}%"></div></div>
-        <div class="now-meta muted"><span>${esc(scName(running.scenario))} · ${jobRefsShort(running)}</span><span>${esc(running.stage || '')} · started ${fmt.ago(running.startedAt)}${running.cancelRequested ? ' · <span class="error">cancelling…</span>' : ''}</span><b>${running.progress}%${timeLeft(running) ? ` · ${fmt.len(timeLeft(running))} left` : ''}</b></div>
+        <div class="now-meta muted"><span>${esc(scName(running.scenario))} · ${jobRefsShort(running)}</span><span>${esc(running.stage || '')} · started ${fmt.ago(running.startedAt)}${running.requestedBy ? ` · by ${esc(running.requestedBy)}` : ''}${running.cancelRequested ? ' · <span class="error">cancelling…</span>' : ''}</span><b>${running.progress}%${timeLeft(running) ? ` · ${fmt.len(timeLeft(running))} left` : ''}</b></div>
         <pre class="log" ${this.logOpen ? '' : 'hidden'}>${esc(log && log.text ? log.text : '(no log yet)')}</pre>` : '<div class="muted">Nothing is running.</div>'}
       </div>
       <h2>Waiting (${health.jobs.queued || 0})${(health.jobs.queued || 0) > queued.length ? ` <span class="muted">first ${queued.length} shown</span>` : ''}</h2>
-      <table class="commits runs-table"><thead><tr><th>#</th><th>Job</th><th>Scenario</th><th>Source</th><th class="num">Priority</th><th title="estimated from the median duration of recent jobs of the same scenario plus builds">Starts</th><th class="num">Takes</th><th></th></tr></thead>
+      <table class="commits runs-table"><thead><tr><th>#</th><th>Job</th><th>Scenario</th><th>Source</th><th>By</th><th class="num">Priority</th><th title="estimated from the median duration of recent jobs of the same scenario plus builds">Starts</th><th class="num">Takes</th><th></th></tr></thead>
       <tbody>${queued.map((j) => `<tr>
-        <td>${jobLink(j)}</td><td class="subject">${jobTitle(j)}${parentTag(j)}<div class="muted">${jobRefsShort(j)}</div></td><td>${esc(scName(j.scenario))}</td><td>${jobSource(j)}</td>
+        <td>${jobLink(j)}</td><td class="subject">${jobTitle(j)}${parentTag(j)}<div class="muted">${jobRefsShort(j)}</div></td><td>${esc(scName(j.scenario))}</td><td>${jobSource(j)}</td><td>${byCell(j)}</td>
         <td class="num">${j.priority} <button class="small" data-prio="${j.id}" data-delta="1" title="raise">▲</button><button class="small" data-prio="${j.id}" data-delta="-1" title="lower">▼</button></td>
         <td style="white-space:nowrap">${health.worker.paused ? '<span class="muted">paused</span>' : etaStart(j.etaStartAt)}</td><td class="num muted">${j.etaSec != null ? `~${mins(j.etaSec)}` : '–'}</td>
-        <td><button class="small" data-cancel="${j.id}">Cancel</button></td></tr>`).join('') || '<tr><td colspan="8" class="muted">empty</td></tr>'}</tbody></table>
+        <td><button class="small" data-cancel="${j.id}">Cancel</button></td></tr>`).join('') || '<tr><td colspan="9" class="muted">empty</td></tr>'}</tbody></table>
       ${health.queueDrainsAt && !health.worker.paused ? `<div class="muted">${(health.jobs.queued || 0) > queued.length ? `…and ${(health.jobs.queued || 0) - queued.length} more. ` : ''}What waits now ends at about ${etaStart(health.queueDrainsAt)}${health.bisectsDoneAt ? `; active bisects keep adding steps until about ${etaStart(health.bisectsDoneAt)}` : ''}.</div>` : ''}
       ${shownBisects.length ? `<h2>Active bisects <span class="muted">a step at a time in the queue · <a href="#/bisects">all bisects</a></span></h2>
       <table><thead><tr><th>#</th><th>Scenario</th><th>Metric</th><th>Status</th><th>Now</th><th></th></tr></thead>
@@ -696,13 +754,19 @@ views.queue = {
 const prLink = (ref) => { const m = /^(?:pr\/|pull\/|#)(\d+)\b/i.exec(ref || ''); return m && repoWeb ? ` <a href="${esc(repoWeb)}/pull/${m[1]}" target="_blank" rel="noopener" title="open on GitHub">PR ${m[1]} ↗</a>` : ''; };
 
 const jobSource = (j) => `${esc(j.source)}${j.type === 'abba' ? '' : ` · ${esc(j.type)}`}`;
+// who queued a job and who cancelled it; what the stand queues by itself has no name; the user's own name is bold
+const byName = (name) => `<span class="by-name${name === who ? ' mine' : ''}" title="${esc(name)}">${esc(name)}</span>`;
+// no name: what a person queues by hand had none before the stand asked for it, or came through the API without one
+const noName = (j) => (['manual', 'compare'].includes(j.source) ? 'no name: queued before the stand asked for one, or through the API without it'
+  : 'queued by the stand itself (or before the stand asked for names)');
+const byCell = (j) => `${j.requestedBy ? byName(j.requestedBy) : `<span class="muted" title="${noName(j)}">–</span>`}${j.cancelledBy ? `<div class="muted">cancelled by ${byName(j.cancelledBy)}</div>` : ''}`;
 function historyTable(history) {
-  return `<table class="commits runs-table"><thead><tr><th>#</th><th>Job</th><th>Scenario</th><th>Source</th><th>Result</th><th>Finished</th><th class="num">Took</th><th></th></tr></thead>
+  return `<table class="commits runs-table"><thead><tr><th>#</th><th>Job</th><th>Scenario</th><th>Source</th><th>By</th><th>Result</th><th>Finished</th><th class="num">Took</th><th></th></tr></thead>
     <tbody>${history.map((j) => `<tr>
       <td>${jobLink(j)}</td><td class="subject">${jobTitle(j)}${prLink(j.refB)}${parentTag(j)}<div class="muted">${jobRefsShort(j)}</div>${j.error ? `<div class="error one-line" title="${esc(j.error)}">${esc(j.error)}</div>` : ''}</td>
-      <td>${esc(scName(j.scenario))}</td><td>${jobSource(j)}</td><td>${j.status === 'done' ? verdictBadge(j) : badge(j.status)}</td>
+      <td>${esc(scName(j.scenario))}</td><td>${jobSource(j)}</td><td>${byCell(j)}</td><td>${j.status === 'done' ? verdictBadge(j) : badge(j.status)}</td>
       <td class="muted">${fmt.ago(j.finishedAt)}</td><td class="num">${fmt.dur(j.startedAt, j.finishedAt)}</td>
-      <td><button class="small" data-retry="${j.id}">Retry</button></td></tr>`).join('') || '<tr><td colspan="8" class="muted">nothing yet</td></tr>'}</tbody></table>`;
+      <td><button class="small" data-retry="${j.id}">Retry</button></td></tr>`).join('') || '<tr><td colspan="9" class="muted">nothing yet</td></tr>'}</tbody></table>`;
 }
 
 function bindJobActions(root, view) {
@@ -710,7 +774,7 @@ function bindJobActions(root, view) {
     const b = e.target.closest('button');
     if (!b) return;
     if (b.dataset.cancel) guarded(async () => {
-      if (!(await modal(`Cancel job #${b.dataset.cancel}?`, '<div class="muted">A running job is stopped at once.</div>', 'Cancel job', { danger: true }))) return;
+      if (!(await modal(`Cancel job #${b.dataset.cancel}?`, '<div class="muted">A running job is stopped at once.</div>', 'Cancel job', { danger: true, asWho: true }))) return;
       await api.post(`/api/jobs/${b.dataset.cancel}/cancel`); toast(`job #${b.dataset.cancel} cancelled`); refresh(); });
     if (b.dataset.retry) guarded(() => moreRun(b.dataset.retry, true));
     if (b.dataset.bisect) guarded(() => startBisect(b.dataset.bisect, b.dataset.metric || (view && view.metric)));
@@ -2995,7 +3059,13 @@ bindSearch();
 document.addEventListener('change', (e) => {
   if ((e.target.tagName === 'SELECT' || e.target.type === 'checkbox') && e.target.closest('#app') && !e.target.closest('form')) e.target.blur();
 }, true);
-api.get('/api/stand').then((s) => { setupPending = s.needsSetup; }).catch(() => null).finally(() => {
+// the name first: what the user queues from the very first page carries it
+(who ? Promise.resolve() : askWho(true)).catch(() => null).then(() => {
+  paintWho();
+  const chip = $('#who');
+  if (chip) chip.addEventListener('click', () => askWho(false));
+  return api.get('/api/stand');
+}).then((s) => { setupPending = s.needsSetup; }).catch(() => null).finally(() => {
   $('header nav').hidden = setupPending;
   $('.search').hidden = setupPending;
   route();
