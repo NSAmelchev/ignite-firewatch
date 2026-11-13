@@ -1,99 +1,104 @@
-# harness — нагрузочный тест одной фазы
+# harness — the load test of one phase
 
-Запускает одну фазу прогона: N серверных JVM Apache Ignite на jar'ах конкретной сборки, затем loader-JVM
-(thick-клиент), который создаёт кэш, предзагружает ключи и даёт put/get-нагрузку. Латентность — HdrHistogram
-на стороне клиента, серверные метрики (GC, аллокации, CPU, heap) — из JFR-записи каждого узла. Фаза = свежие JVM;
-ABBA-сравнение — это четыре фазы (A1 B1 B2 A2), которые запускает контроллер.
+Runs one phase of a run: N Apache Ignite server JVMs on the jars of one build, then a loader JVM (a thick or thin
+client) that creates the cache, preloads the keys and gives the put/get load. Latency is an HdrHistogram on the client
+side; the server metrics (GC, allocation, CPU, heap) come from the JFR recording of every node. A phase is fresh JVMs; an
+ABBA comparison is four phases (A1 B1 B2 A2), which the controller runs.
 
-## Сборка
+## Build
 
 ```bash
-mvn -q package                     # нужен JDK 17
+mvn -q package                     # needs JDK 17
 ```
 
-Получается `modules/harness/target/harness.jar` (shaded: Jackson и HdrHistogram перепакованы, Ignite в нём нет).
-Harness компилируется против релиза `ignite-core` из `pom.xml` (`ignite.version`), а работает с jar'ами любого
-коммита 2.x: используется только давно стабильный public API.
+The result is `modules/harness/target/harness.jar` (shaded: Jackson and HdrHistogram are relocated, Ignite is not in it).
+The harness is compiled against the `ignite-core` release of `pom.xml` (`ignite.version`) and runs with the jars of any
+2.x commit: it uses only public API that has been stable for long.
 
-## Jar'ы Ignite
+## Ignite jars
 
-- Для локальной отладки без сборки Ignite: `modules/harness/dev-libs.sh` кладёт релизную `ignite-core` с зависимостями
-  в `modules/harness/target/dev-libs`.
-- Для коммита: в клоне apache/ignite
+- To debug locally without building Ignite: `modules/harness/dev-libs.sh` puts the `ignite-core` release with its
+  dependencies into `modules/harness/target/dev-libs`.
+- For a commit, in a clone of apache/ignite:
   `mvn -pl modules/core -am -Dmaven.test.skip=true -DskipTests -Dmaven.javadoc.skip=true -Dmaven.source.skip=true -Dcheckstyle.skip=true install`,
-  затем `mvn -pl modules/core dependency:copy-dependencies -DincludeScope=runtime -DoutputDirectory=LIBS`
-  и `cp modules/core/target/ignite-core-*.jar LIBS/` (без `-sources`/`-tests`/`original-`). Это делает контроллер.
+  then `mvn -pl modules/core dependency:copy-dependencies -DincludeScope=runtime -DoutputDirectory=LIBS`
+  and `cp modules/core/target/ignite-core-*.jar LIBS/` (without `-sources`/`-tests`/`original-`). The controller does this.
 
-## Запуск
+## Run
 
 ```bash
 java -Xmx128m -jar modules/harness/target/harness.jar run \
   --libs modules/harness/target/dev-libs --scenario putget-thin-t16 --quick \
   --out /tmp/smoke --run-id smoke-1 --phase S
-java -jar modules/harness/target/harness.jar list    # все сценарии (JSON): id, версия, топология, тайминги, исходники
+java -jar modules/harness/target/harness.jar list    # every scenario (JSON): id, version, topology, timings, sources
 ```
 
-`--quick` — 2 с прогрева + 5 с замера вместо значений сценария: проверить сценарий или конвейер.
-`--stand FILE` — запустить JVM на хостах удалённого стенда (см. ниже).
-`--scale MEMORY_MB,FILL_PCT,THREADS_FACTOR,1` — размеры стенда (см. ниже). `--warmup-sec`, `--measure-sec` — другие тайминги, чем у сценария.
+`--quick` is 2 s of warmup and 5 s of measurement instead of the values of the scenario: to try a scenario or the pipeline.
+`--stand FILE` runs the JVMs on the hosts of a remote stand (see below).
+`--scale MEMORY_MB,FILL_PCT,THREADS_FACTOR,1` gives the sizes of the stand (see below). `--warmup-sec` and `--measure-sec`
+give other timings than the scenario's.
 
 ```bash
-java -jar modules/harness/target/harness.jar check --dir data       # эта машина, отчёт в JSON
-java -jar modules/harness/target/harness.jar check --stand FILE     # хосты стенда: каждый сам по себе и связь между ними
-java -jar modules/harness/target/harness.jar sweep --stand FILE     # снять с хостов JVM и каталоги убитых фаз
+java -jar modules/harness/target/harness.jar check --dir data       # this machine, the report as JSON
+java -jar modules/harness/target/harness.jar check --stand FILE     # the hosts of a stand: each on its own and the way between them
+java -jar modules/harness/target/harness.jar sweep --stand FILE     # take the JVMs and directories of killed phases off the hosts
 ```
 
-Коды выхода: 0 — фаза завершена, 1 — фаза упала (детали в `result.json` и логах), 2 — неверные аргументы.
-Launcher-JVM маленькая (`-Xmx128m` хватает), сама Ignite в ней не загружается; размеры heap серверов и loader'а
-задаются сценарием. Все дочерние JVM помечены `-Dignite.firewatch.run=<run-id>`: зависшие процессы убиваются
+Exit codes: 0 the phase finished, 1 the phase failed (details in `result.json` and the logs), 2 wrong arguments.
+The launcher JVM is small (`-Xmx128m` is enough) and does not load Ignite itself; the heap sizes of the servers and the
+loader come from the scenario. Every child JVM is marked `-Dignite.firewatch.run=<run-id>`: hung processes are killed with
 `pkill -f ignite.firewatch.run=<run-id>`.
 
-Последовательность фазы: старт серверов → ожидание `HARNESS_READY` в логе каждого → старт loader'а → loader
-ждёт топологию, создаёт кэш, предзагружает ключи стримером → warmup → measure → loader пишет `loader.json` →
-серверам SIGTERM (узел останавливается штатно, JFR дописывается) → разбор JFR → `result.json`, `series.json`.
-При любой ошибке дочерние JVM убиваются, `result.json` получает `status: failed` и `error`.
+The order of a phase: the servers start → `HARNESS_READY` is awaited in the log of each → the loader starts → the loader
+waits for the topology, creates the cache, preloads the keys with a streamer → warmup → measure → the loader writes
+`loader.json` → SIGTERM to the servers (the node stops gracefully, JFR is written out) → JFR is parsed → `result.json`,
+`series.json`. On any error the child JVMs are killed and `result.json` gets `status: failed` and `error`.
 
-## Что лежит в `--out`
+## What is in `--out`
 
-| Файл | Что |
+| File | What |
 |---|---|
-| `result.json` | итог фазы (ниже) |
-| `series.json` | посекундные ряды всей фазы, индекс = секунды от старта нагрузки, `measureStartIndex` — начало окна измерения |
-| `scenario.json` | эффективный сценарий (с дефолтами), его sha256 — `scenarioHash` в результате |
-| `node-i.log`, `node-i.jfr`, `node-i.cmd` | лог, JFR-запись и командная строка серверного узла i |
-| `loader.log`, `loader.json`, `loader.cmd` | то же для loader'а; `loader.json` — сырой результат клиента |
-| `ignite-firewatch.jfc` | JFR-профиль (GC, GCHeapSummary, CPULoad 1 s, ThreadAllocationStatistics 1 s, ExecutionSample 10 ms) |
-| `profile.json` | горячие методы окна measure по `jdk.ExecutionSample` (сумма по узлам): `self` — метод на вершине стека, `total` — где угодно в стеке, по 200 записей |
-| `work/` | рабочие каталоги Ignite, temp и JFR-репозитории дочерних JVM |
+| `result.json` | the outcome of the phase (below) |
+| `series.json` | per-second series of the whole phase, index = seconds from the start of the load, `measureStartIndex` is the start of the measurement window |
+| `scenario.json` | the effective scenario (with the defaults); its sha256 is `scenarioHash` in the result |
+| `node-i.log`, `node-i.jfr`, `node-i.cmd` | the log, the JFR recording and the command line of server node i |
+| `loader.log`, `loader.json`, `loader.cmd` | the same for the loader; `loader.json` is the raw result of the client |
+| `ignite-firewatch.jfc` | the JFR profile (GC, GCHeapSummary, CPULoad 1 s, ThreadAllocationStatistics 1 s, ExecutionSample 10 ms) |
+| `profile.json` | hot methods of the measurement window from `jdk.ExecutionSample` (summed over the nodes): `self` is the method on top of the stack, `total` anywhere in the stack, 200 entries each |
+| `work/` | Ignite work directories, temp and JFR repositories of the child JVMs |
 
 ### `result.json`
 
 - `status` (`ok`/`failed`), `error`, `harnessVersion`, `scenarioName`, `scenarioHash`, `runId`, `phase`,
-  `igniteVersion` (из `ignite.version()`), `startedAt`, `measureStartAt`, `warmupSec`, `measureSec`, `wallSec`,
-  `connectMs`, `preloadMs`, `errors` (неудачные операции).
-- Если упало больше 1 % операций нагрузки (с прогревом), фаза падает с ошибкой `N of M operations failed (P%), the first: …`:
-  такой прогон меряет поломку, а не скорость. Первую ошибку loader кладёт в `loader.json` (`firstError`).
-- `startMs` и версию узла launcher берёт из строки `HARNESS_READY` и читает лог узла построчно до неё, поэтому лог в сотни МБ
-  ему не мешает.
-- `throughput` — ops/s по посекундным замерам окна measure: `mean`, `stdev`, `min`, `max`, `total`, `samples`.
-- `latencyUs` — `mean`, `p50`, `p90`, `p99`, `p999`, `max` (микросекунды, HdrHistogram за всё окно measure;
-  при фиксированном rate латентность считается от запланированного момента операции).
-- `gc` — за окно measure, сумма по серверам: `count`, `totalPauseMs`, `maxPauseMs`, `pausePct`, `allocMbPerSec`.
-- `cpu` — проценты от всех CPU машины: `serverJvmPct` (сумма по серверам, user+system), `machinePct`,
+  `igniteVersion` (from `ignite.version()`), `startedAt`, `measureStartAt`, `warmupSec`, `measureSec`, `wallSec`,
+  `connectMs`, `preloadMs`, `errors` (failed operations).
+- When more than 1 % of the load operations fail (warmup included), the phase fails with
+  `N of M operations failed (P%), the first: …`: such a run measures a breakage, not speed. The loader puts the first
+  error into `loader.json` (`firstError`).
+- The launcher takes `startMs` and the version of a node from its `HARNESS_READY` line and reads the node log line by
+  line up to it, so a log of hundreds of MB does not get in its way.
+- `throughput`: ops/s over the per-second samples of the measurement window: `mean`, `stdev`, `min`, `max`, `total`,
+  `samples`.
+- `latencyUs`: `mean`, `p50`, `p90`, `p99`, `p999`, `max` (microseconds, an HdrHistogram over the whole measurement
+  window; at a fixed rate latency counts from the moment the operation was scheduled).
+- `gc`: over the measurement window, summed over the servers: `count`, `totalPauseMs`, `maxPauseMs`, `pausePct`,
+  `allocMbPerSec`.
+- `cpu`: percent of all the CPUs of the machine: `serverJvmPct` (summed over the servers, user + system), `machinePct`,
   `loaderJvmPct`.
-- `heap` — `afterGcMbMean` (сумма по серверам), `committedMbMax`.
-- `nodes[]` — то же по каждому узлу плюс имена файлов; `env` — JDK, ОС, число CPU, память машины.
+- `heap`: `afterGcMbMean` (summed over the servers), `committedMbMax`.
+- `nodes[]`: the same for every node plus the file names; `env`: JDK, OS, number of CPUs, memory of the machine.
 
 ### `series.json`
 
-`t[]`, `ops[]`, `p50Us[]`, `p99Us[]`, `loaderCpuPct[]` (клиент) и `serverCpuPct[]`, `machineCpuPct[]`,
-`gcPauseMs[]`, `allocMb[]`, `heapUsedMb[]` (из JFR, `null` там, где выборки нет).
+`t[]`, `ops[]`, `p50Us[]`, `p99Us[]`, `loaderCpuPct[]` (the client) and `serverCpuPct[]`, `machineCpuPct[]`,
+`gcPauseMs[]`, `allocMb[]`, `heapUsedMb[]` (from JFR, `null` where there is no sample).
 
-## Сценарий
+## Scenario
 
-Сценарий — класс в пакете `org.apache.ignite.firewatch.scenarios` (`modules/harness/src/main/java/org/apache/ignite/firewatch/scenarios/`),
-наследник `org.apache.ignite.firewatch.harness.api.Scenario` с аннотацией `@Bench`. Harness находит такие классы сам
-(`Catalog`), поэтому добавить сценарий = добавить файл, удалить = удалить файл.
+A scenario is a class in the package `org.apache.ignite.firewatch.scenarios`
+(`modules/harness/src/main/java/org/apache/ignite/firewatch/scenarios/`) that extends
+`org.apache.ignite.firewatch.harness.api.Scenario` and carries `@Bench`. The harness finds such classes by itself
+(`Catalog`): adding a scenario is adding a file, removing one is removing the file.
 
 ```java
 @Bench(id = "putget-thin-t16", version = 1,
@@ -103,30 +108,33 @@ public class PutGetThinT16 extends PutGetInMemory {
 }
 ```
 
-- `@Bench`: `id` (стабильная идентичность, на него ссылаются задачи), `version` (поднять, когда меняется
-  измеряемое: хэш сценария = `sha256(id:version)`), `description`, `@Servers(count, heapMb, jvmOpts, group)`,
+- `@Bench`: `id` (the stable identity, jobs refer to it), `version` (raise it when what is measured changes: the hash of
+  the scenario is `sha256(id:version)`), `description`, `@Servers(count, heapMb, jvmOpts, group)`,
   `@Loader(client, threads, count, heapMb, jvmOpts, rateOpsPerSec, group)`, `warmupSec`, `measureSec`,
-  `startTimeoutSec`, `setupTimeoutSec`. Это чистые данные: каталог читает их без Ignite в classpath.
-- Методы класса (выполняются в JVM узлов и loader'а, где есть jar'ы коммита):
-  `configureServer(IgniteConfiguration, Env)` — только отличия от умолчаний Ignite (discovery, client connector,
-  local host и work directory уже заданы harness'ом); `configureClient` / `configureThinClient` для loader'а;
-  `setup(Session)` — кеши, `session.activate()` для persistence, прогрузка (её длительность — метрика preload);
-  `op(Session, ThreadLocalRandom)` — одна операция, вызывается из всех потоков нагрузки, её латентность пишется.
-- `Env.resource(name)` копирует ресурс из `harness.jar` (например `ssl/node.jks`) в рабочую папку узла.
-- `rateOpsPerSec = 0` — closed loop без пауз; больше нуля — open loop, rate делится между потоками.
-- Heap задаётся `-Xms=-Xmx`; к `jvmOpts` всегда добавляются `--add-opens` для JDK 17, `-DIGNITE_QUIET=true`,
-  `-DIGNITE_UPDATE_NOTIFIER=false`, `-Djava.net.preferIPv4Stack=true`, `-Djava.io.tmpdir` внутри `--out` и для
-  серверов `-XX:StartFlightRecording` с `ignite-firewatch.jfc`.
-- Сценарии компилируются против релизной `ignite-core`, а запускаются с jar'ами коммита: использовать
-  давно стабильный публичный API, иначе на старых коммитах фаза упадёт с понятной ошибкой.
-- Группы хостов (`group`) пока не используются, есть только `local`; `@Loader(count)` больше 1 не поддерживается.
-- Размеры стенда: `Scale.current()` даёт регион (`regionMb(база, sql)`) и число записей (`entries(база, байт на запись, копий, sql)`). Без `--scale`
-  это те же базовые числа, поэтому история не рвётся. Новый сценарий должен брать размеры отсюда, а не из констант.
+  `startTimeoutSec`, `setupTimeoutSec`. These are plain data: the catalog reads them without Ignite on the classpath.
+- The methods of the class run in the JVMs of the nodes and the loader, which have the jars of the commit:
+  `configureServer(IgniteConfiguration, Env)` sets only what differs from the defaults of Ignite (discovery, the client
+  connector, the local host and the work directory are set by the harness); `configureClient` / `configureThinClient`
+  for the loader; `setup(Session)` makes the caches, calls `session.activate()` for persistence and loads the data (its
+  duration is the preload metric); `op(Session, ThreadLocalRandom)` is one operation, called from every load thread, and
+  its latency is what gets recorded.
+- `Env.resource(name)` copies a resource of `harness.jar` (for example `ssl/node.jks`) into the work directory of the
+  node.
+- `rateOpsPerSec = 0` is a closed loop without pauses; above zero it is an open loop, the rate split between the threads.
+- The heap is set as `-Xms` = `-Xmx`; `jvmOpts` always get the `--add-opens` of JDK 17, `-DIGNITE_QUIET=true`,
+  `-DIGNITE_UPDATE_NOTIFIER=false`, `-Djava.net.preferIPv4Stack=true`, `-Djava.io.tmpdir` inside `--out` and, for the
+  servers, `-XX:StartFlightRecording` with `ignite-firewatch.jfc`.
+- Scenarios are compiled against the `ignite-core` release and run with the jars of the commit: use public API that has
+  been stable for long, or the phase fails on old commits with a clear error.
+- Host groups (`group`) are not used yet, there is only `local`; `@Loader(count)` above 1 is not supported.
+- Sizes of the stand: `Scale.current()` gives the region (`regionMb(base, sql)`) and the number of entries
+  (`entries(base, bytes per entry, copies, sql)`). Without `--scale` these are the same base numbers, so the history
+  does not break. A new scenario takes its sizes from here, not from constants.
 
-## Удалённый стенд
+## Remote stand
 
-С `--stand FILE` JVM фазы работают на Linux-хостах, launcher остаётся на этой машине и управляет ими по ssh. Агентов на хостах нет.
-На хосте нужны JDK 17, вход по ключу, `rsync` и `pkill`, sudo не нужен.
+With `--stand FILE` the JVMs of a phase run on Linux hosts; the launcher stays on this machine and drives them over ssh.
+There are no agents on the hosts. A host needs JDK 17, login by key, `rsync` and `pkill`; no sudo.
 
 ```json
 {"hosts": [{"address": "bench-1", "user": "bench", "port": 22, "role": "servers", "javaHome": "/usr/lib/jvm/java-17",
@@ -138,17 +146,24 @@ public class PutGetThinT16 extends PutGetInMemory {
  "runPrefix": "598ae77e-"}
 ```
 
-- Раскладка детерминирована: узел `i` идёт на `servers[i % N]` в порядке файла, loader на первый хост `loaders`. Ignite слушает `dataAddress`,
-  если он задан, ssh всегда ходит на `address`.
-- Перед фазой `rsync` кладёт `harness.jar` в `<workDir>/harness.jar` и jar'ы сборки в `<workDir>/builds/<ключ сборки>/libs`: они остаются на
-  хосте, и повторная фаза ничего не копирует. Каталог фазы — `<workDir>/runs/<run-id>`.
-- ssh не спрашивает ничего (`BatchMode=yes`) и не пускает на хост, ключа которого нет в `known_hosts`; `sshAcceptNewHosts: true` принимает такой
-  ключ при первом входе и дописывает его (`StrictHostKeyChecking=accept-new`), сменившийся ключ не принимается всё равно.
-- ssh держит соединение всю жизнь JVM и приносит её вывод в локальный лог, поэтому `HARNESS_READY`, логи и код выхода работают как локально.
-- У каждой JVM свой маркер `-Dignite.firewatch.run=<run-id>-<label>`: сигналы идут отдельным вызовом ssh с `pkill -f`, и останавливается ровно одна JVM.
-- После остановки `rsync` забирает `node-i.jfr` и `loader.json`, результаты считаются на этой машине, каталог фазы на хосте удаляется, в том
-  числе при сбое. В `result.json` появляются `nodes[].host`, `loaderHost` и `hosts` — что каждый хост сказал о себе перед фазой.
-- В начале фазы снимается всё, что осталось на хосте от этого стенда (`runPrefix`), на хосте остаётся 20 последних сборок. `HostProbe`, запущенный там на
-  JDK стенда, рассказывает о машине; если она разошлась с `fingerprints`, фаза падает с указанием, что изменилось.
-- `check` кладёт на хост `harness.jar` и запускает `HostProbe`: факты о машине, затем по очереди открывает на каждом хосте порты Ignite и пробует
-  их с остальных. Тем же соединением сравниваются часы: сервер отвечает своим временем, время в пути вычитается.
+- The placement is fixed: node `i` goes to `servers[i % N]` in the order of the file, the loader to the first host of
+  `loaders`. Ignite listens on `dataAddress` when it is set; ssh always goes to `address`.
+- Before a phase `rsync` puts `harness.jar` into `<workDir>/harness.jar` and the jars of the build into
+  `<workDir>/builds/<build key>/libs`: they stay on the host, and a repeated phase copies nothing. The directory of the
+  phase is `<workDir>/runs/<run-id>`.
+- ssh asks nothing (`BatchMode=yes`) and does not log in to a host whose key `known_hosts` lacks;
+  `sshAcceptNewHosts: true` takes such a key on first contact and adds it (`StrictHostKeyChecking=accept-new`), a changed
+  key is refused all the same.
+- ssh keeps the connection for the whole life of the JVM and brings its output into the local log, so `HARNESS_READY`,
+  the logs and the exit code work as they do locally.
+- Every JVM has its own marker `-Dignite.firewatch.run=<run-id>-<label>`: signals go by a separate ssh call with
+  `pkill -f`, and exactly one JVM stops.
+- After the stop `rsync` brings back `node-i.jfr` and `loader.json`, the results are computed on this machine, and the
+  directory of the phase on the host is removed, after a failure too. `result.json` gets `nodes[].host`, `loaderHost`
+  and `hosts`: what each host said about itself before the phase.
+- At the start of a phase whatever this stand (`runPrefix`) left on the host is taken off it; the host keeps the 20
+  latest builds. `HostProbe`, run there on the JDK of the stand, tells about the machine; when it differs from
+  `fingerprints`, the phase fails, saying what changed.
+- `check` puts `harness.jar` on the host and runs `HostProbe`: the facts of the machine (with a second of watching its
+  CPU for steal time and foreign load), then it opens the Ignite ports on each host in turn and tries them from the
+  others. The same connection compares the clocks: the server answers with its time, the time on the wire is taken out.

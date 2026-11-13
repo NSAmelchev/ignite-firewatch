@@ -80,4 +80,4 @@ public class PutGetThinT16 extends PutGetInMemory {
 
 - Java 17 without frameworks: the JDK's HTTP server, SQLite, git as a command line tool.
 - The web UI is plain ES modules and uPlot in `modules/controller/src/main/resources/web`, without a build step.
-- Code, comments, UI strings and `docs/` are in English; the module READMEs are in Russian.
+- Code, comments, UI strings, `docs/` and the module READMEs are in English.

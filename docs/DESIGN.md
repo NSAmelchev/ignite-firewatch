@@ -7,7 +7,7 @@ compares versions with the ABBA scheme and shows the result in its own UI. It fi
 Comparisons are not limited to branch commits: you can compare a PR against master, or any two refs, for example `2.17.0` and `2.18.0`.
 
 This document describes how the stand works and why. Details live in other files: [README](../README.md) and [DEVELOPMENT.md](../DEVELOPMENT.md) (running, building,
-deployment), and the module READMEs (in Russian): [modules/controller/README.md](../modules/controller/README.md) (jobs, statistics, API, UI) and
+deployment), and the module READMEs: [modules/controller/README.md](../modules/controller/README.md) (jobs, statistics, API, UI) and
 [modules/harness/README.md](../modules/harness/README.md) (phase, result format, scenarios).
 
 ## Principles
