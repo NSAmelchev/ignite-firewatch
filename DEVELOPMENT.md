@@ -45,6 +45,8 @@ IGNITE_FIREWATCH_FAKE_BUILD=1 bin/firewatch.sh start     # UI on :8090, release 
 - Remote benchmark hosts (Settings → Stand) need an ssh key: put `key` (mode 600) and `known_hosts` into
   `docker/ssh/`; the container sees them read-only as `/ssh`. `ssh.accept.new.hosts = true` lets ssh take the keys of
   hosts missing from `known_hosts`, which then stays as it is.
+- A stand without network fetches the sources from its disk: put a git repository or bundle into `docker/git/`
+  (`IGNITE_FIREWATCH_GIT_DIR`), the container sees it read-only as `/git`, and set `repo.url` to `/git/<name>`.
 - `docker/deploy.sh` deploys to another host; its values (host, docker context, time zone) go to the git-ignored
   `docker/deploy.env`, see `docker/deploy.env.example`.
 

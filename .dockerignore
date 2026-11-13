@@ -12,3 +12,4 @@ docs
 .DS_Store
 docker/deploy.env
 docker/ssh
+docker/git

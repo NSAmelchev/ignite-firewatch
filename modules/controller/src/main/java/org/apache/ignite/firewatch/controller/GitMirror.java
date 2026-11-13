@@ -124,16 +124,26 @@ public final class GitMirror {
     }
 
     /**
-     * Follows another repository or branch; refuses one the remote does not have.
+     * Follows another repository or branch; refuses one the remote does not have. The remote may be a path on this
+     * machine: a git repository or a bundle of one ({@code git bundle create x.bundle --all}).
      *
-     * @param newUrl Remote repository url.
+     * @param newUrl Remote repository url or path.
      * @param newBranch Branch to watch.
      */
     public synchronized void follow(String newUrl, String newBranch) throws IOException {
         ensure(); // a new stand chooses its repository before anything was cloned
 
-        if (!run(SHORT, "ls-remote", "--exit-code", "--heads", newUrl, "refs/heads/" + newBranch).ok())
+        Proc.Result ls = run(SHORT, "ls-remote", "--exit-code", "--heads", newUrl, "refs/heads/" + newBranch);
+
+        if (ls.code == 2 && !ls.timedOut) // --exit-code: the remote answered, but has no such branch
             throw new IllegalArgumentException("no branch " + newBranch + " at " + newUrl);
+
+        if (!ls.ok()) {
+            String why = ls.timedOut ? "timed out" : ls.out.lines().filter(l -> l.startsWith("fatal:")).findFirst()
+                .orElse(ls.tail(1)).trim();
+
+            throw new IllegalArgumentException("cannot read " + newUrl + ": " + why);
+        }
 
         git(SHORT, "remote", "set-url", "origin", newUrl);
         git(SHORT, "symbolic-ref", "HEAD", "refs/heads/" + newBranch);

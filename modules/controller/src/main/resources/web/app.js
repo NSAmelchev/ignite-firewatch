@@ -113,6 +113,8 @@ const HELP = {
   preloadMs: 'How long the data loads: noise of the stand, never a verdict.',
 };
 // a commit subject with its ticket and PR as links; never inside another link
+// a stand without network fetches from its own disk: git takes a path as well as a URL
+const REPO_PATH_HINT = 'A stand without network takes a path on its machine: a git repository (<span class="mono">git clone --mirror</span>) or a bundle of one (<span class="mono">git bundle create ignite.bundle --all</span>); in Docker, under <span class="mono">/git</span>. Every poll fetches from it, so a fresh copy put in its place arrives by itself.';
 const defaultPrUrl = () => (repoWeb ? `${repoWeb}/pull/` : '');
 function subjectHtml(s) {
   let pr = defaultPrUrl();
@@ -2145,8 +2147,9 @@ views.setup = {
           <div data-check-report>${checkReport(stand.check)}</div>${CHECK_LOG_BLOCK(stand.check)}</div>
         <div class="card"><h2 style="margin-top:0">Scenario sizes</h2>${sizesFields(stand.sizes, stand.check)}</div>
         <div class="card"><h2 style="margin-top:0">What to measure</h2>
-          <label>Git URL</label>
+          <label>Git URL or path</label>
           <input name="repo.url" value="${esc(settings['repo.url'])}" autocomplete="off" required>
+          <div class="muted small-text">${REPO_PATH_HINT}</div>
           <label>Main branch</label>
           <input name="repo.branch" value="${esc(settings['repo.branch'])}" autocomplete="off" required>
           <label>Release the dashboard compares it with</label>
@@ -2210,8 +2213,9 @@ views.settings = {
       <div class="seg" role="tablist">${SETTINGS_TABS.map(([k, name]) => `<button type="button" data-settings-tab="${k}" class="${k === tab ? 'on' : ''}">${name}</button>`).join('')}</div>
       <section data-tab="repository" ${tab === 'repository' ? '' : 'hidden'}><div class="card">
         <form id="repository">
-          <label>Git URL</label>
+          <label>Git URL or path</label>
           <input name="repo.url" value="${esc(settings['repo.url'])}" autocomplete="off" required>
+          <div class="muted small-text">${REPO_PATH_HINT}</div>
           <label>Main branch</label>
           <input name="repo.branch" value="${esc(settings['repo.branch'])}" autocomplete="off" required>
           <div class="actions"><button class="primary">Save</button></div>

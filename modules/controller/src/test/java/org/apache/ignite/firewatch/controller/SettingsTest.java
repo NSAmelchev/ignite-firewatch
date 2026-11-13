@@ -64,6 +64,7 @@ class SettingsTest {
         assertEquals("https://github.com/apache/ignite.git",
             Settings.validate(Settings.REPO_URL, "https://github.com/apache/ignite.git", sc));
         assertThrows(IllegalArgumentException.class, () -> Settings.validate(Settings.REPO_URL, "ext::sh -c id", sc));
+        assertEquals("/git/ignite.bundle", Settings.validate(Settings.REPO_URL, "/git/ignite.bundle", sc));
         assertEquals("ignite-2.18", Settings.validate(Settings.REPO_BRANCH, "ignite-2.18", sc));
         assertThrows(IllegalArgumentException.class,
             () -> Settings.validate(Settings.REPO_BRANCH, "--upload-pack=x", sc));

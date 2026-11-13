@@ -26,7 +26,19 @@ bin/firewatch.sh start      # in the unpacked directory; also stop, restart, sta
 ```
 
 Without internet access the stand still needs the dependencies of Ignite (a mirror in a settings.xml named by
-`maven.settings` of the config) and a git repository it can fetch (`repo.url`).
+`maven.settings` of the config) and the sources: `repo.url` (the setup wizard, Settings → Repository) takes a path on
+the machine of the stand as well as a URL. Copy there a repository made where the network is, either as a directory or
+as one file:
+
+```bash
+git clone --mirror https://github.com/apache/ignite.git ignite.git   # later: git -C ignite.git fetch --prune
+git -C ignite.git bundle create ignite.bundle --all                   # the same as one file
+```
+
+Every poll of the stand fetches from that path, so a fresh copy put in place of the old one arrives by itself: rsync of
+the directory carries only the new packs; a new bundle goes in with `mv` (a half-copied file fails one poll). A mirror
+clone of GitHub keeps the pull requests too, so `pr/N` works. In Docker the directory `docker/git`
+(`IGNITE_FIREWATCH_GIT_DIR`) is `/git` in the container: `repo.url = /git/ignite.git`.
 
 Open http://localhost:8090 and follow the setup wizard. Settings (port, directories, memory, timeouts) are in
 [config/ignite-firewatch.properties](config/ignite-firewatch.properties). To deploy to another host over ssh:

@@ -10,6 +10,7 @@ cache/
 # values of your stand (see docker/deploy.sh)
 docker/deploy.env
 docker/ssh/
+docker/git/
 # the wish list of whoever runs the stand
 docs/BACKLOG.md
 # local tool state

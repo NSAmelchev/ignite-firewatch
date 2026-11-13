@@ -20,6 +20,8 @@ services:
       - ../config:/app/config:ro
       # A remote stand: the private key as `key` and `known_hosts`, files on the machine of the container.
       - "${IGNITE_FIREWATCH_SSH_DIR:-./ssh}:/ssh:ro"
+      # A stand without network: a git repository or bundle put on the disk, repo.url = /git/<name> (see README).
+      - "${IGNITE_FIREWATCH_GIT_DIR:-./git}:/git:ro"
     environment:
       IGNITE_FIREWATCH_SSH_KEY: /ssh/key
       IGNITE_FIREWATCH_SSH_KNOWN_HOSTS: /ssh/known_hosts
