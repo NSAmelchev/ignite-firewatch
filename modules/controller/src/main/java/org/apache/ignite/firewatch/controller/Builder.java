@@ -271,7 +271,8 @@ public final class Builder {
     private void realBuild(String key, Path libs, Path log, BooleanSupplier cancelled) throws IOException,
         InterruptedException {
         String sha = shaOf(key);
-        Path work = workDir(key);
+        // absolute: Maven runs in this directory, so a relative cache.dir would point it at work/cache/work/...
+        Path work = workDir(key).toAbsolutePath();
         Files.createDirectories(cfg.m2Dir());
         Files.writeString(log, "export " + sha + " to " + work + "\n");
         mirror.export(sha, work);

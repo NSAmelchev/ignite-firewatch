@@ -2,9 +2,12 @@ package org.apache.ignite.firewatch.controller;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -103,6 +106,33 @@ class BuilderTest {
             assertEquals(List.of(), builder.evict(0, Set.of(sha)), "both builds belong to a commit in use");
             assertEquals(2, builder.evict(0, Set.of()).size());
             assertFalse(Files.exists(builder.libsDir(key)));
+        }
+    }
+
+    /** */
+    @Test void mavenGetsAnAbsoluteTmpDirWhenTheCacheDirIsRelative() throws Exception {
+        Assumptions.assumeTrue(GitFixture.gitAvailable(), "git is required");
+        GitFixture origin = new GitFixture(tmp.resolve("origin"));
+        String sha = origin.commit("c1", Map.of("pom.xml", "<project/>"));
+        GitMirror mirror = new GitMirror(tmp.resolve("mirror"), origin.url(), "master", Duration.ofMinutes(2));
+        mirror.fetch();
+
+        // Maven runs in the work directory of the build, not in that of the application
+        Path mvn = Files.writeString(tmp.resolve("mvn"), "#!/bin/sh\n"
+            + "for o in $MAVEN_OPTS; do case $o in -Djava.io.tmpdir=*) d=${o#-Djava.io.tmpdir=} ;; esac; done\n"
+            + "echo \"tmpdir $d\"\n"
+            + "[ -d \"$d\" ] && echo 'tmpdir exists'\n"
+            + "exit 1\n");
+        assertTrue(mvn.toFile().setExecutable(true));
+        Config cfg = new Config();
+        cfg.cacheDir = Path.of("").toAbsolutePath().relativize(tmp.resolve("cache").toAbsolutePath());
+        cfg.mvnExe = mvn.toString();
+
+        try (Db db = Db.open(tmp.resolve("t.db"))) {
+            Build b = new Builder(cfg, db, mirror).build(sha, null, false);
+            assertEquals(Build.FAILED, b.status, "the fake mvn fails the build");
+            String log = Files.readString(Path.of(b.logFile));
+            assertTrue(log.contains("tmpdir /") && log.contains("tmpdir exists"), log);
         }
     }
 
