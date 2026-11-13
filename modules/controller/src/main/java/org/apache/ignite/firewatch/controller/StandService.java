@@ -79,6 +79,14 @@ public final class StandService {
         this.scenarios = scenarios;
     }
 
+    /**
+     * Whether no job can take the hosts while Check or Clean hosts has them: the queue is empty, or the stand is closed
+     * for maintenance, so nothing of the queue starts. A running job holds the hosts itself, see {@link #tryHold}.
+     */
+    private boolean quiet() {
+        return db.jobs("active", 1).isEmpty() || Config.isTrue(db.setting(Settings.WORKER_PAUSED, "false"));
+    }
+
     /** */
     boolean tryHold() {
         return hold.tryAcquire();
@@ -125,8 +133,10 @@ public final class StandService {
             throw new IllegalStateException("a job or another Check is using the hosts");
 
         try {
-            if (!db.jobs("active", 1).isEmpty())
-                throw new IllegalStateException("the queue is not empty: Check takes the ports of Ignite on the hosts");
+            if (!quiet()) {
+                throw new IllegalStateException("the queue is not empty: Check takes the ports of Ignite on the hosts, close "
+                    + "the stand for maintenance to check it now");
+            }
 
             return runCheck(s);
         }
@@ -316,8 +326,8 @@ public final class StandService {
             throw new IllegalStateException("a job or Check is using the hosts");
 
         try {
-            if (!db.jobs("active", 1).isEmpty())
-                throw new IllegalStateException("the queue is not empty: its jobs are on the hosts");
+            if (!quiet())
+                throw new IllegalStateException("the queue is not empty: close the stand for maintenance to clean the hosts now");
 
             return sweep();
         }

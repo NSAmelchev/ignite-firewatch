@@ -125,11 +125,15 @@ class StandServiceTest {
     }
 
     /** */
-    @Test void checkWaitsForAnEmptyQueue() throws Exception {
+    @Test void checkWaitsForAnEmptyQueueUnlessTheStandIsClosedForMaintenance() throws Exception {
         try (Db db = Db.open(tmp.resolve("t.db"))) {
             db.insertJob(job());
             StandService s = new StandService(config(report(true)), db, threeServers());
-            assertThrows(IllegalStateException.class, () -> s.check(remote()));
+            IllegalStateException e = assertThrows(IllegalStateException.class, () -> s.check(remote()));
+            assertTrue(e.getMessage().contains("close the stand for maintenance"), e.getMessage());
+            db.setSetting(Settings.WORKER_PAUSED, "true");
+            assertTrue(s.check(remote()).path("ok").asBoolean(), "closed: nothing of the queue starts meanwhile");
+            assertTrue(s.clean(), "and the hosts can be cleaned");
         }
     }
 

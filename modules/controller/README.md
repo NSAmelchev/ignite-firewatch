@@ -90,7 +90,9 @@ unreachable between the hosts and clocks a second apart; it warns about clocks 1
 governor other than `performance`, turbo boost on, steal time of 1 % or more (a VM whose neighbours take its CPU) and a CPU
 busy with something else for 10 % or more during the second of the probe (with the three busiest processes). Warnings and
 errors carry `fix`, how to fix them. On `local` a foreign JVM is only a warning: it may be the development environment.
-Check takes the Ignite ports, so it runs with an empty queue and one at a time: a job queued meanwhile waits for its end.
+Check takes the Ignite ports, so it runs when no job runs and none waits, or while the stand is closed for maintenance
+(the waiting jobs do not start then), and one at a time: a job queued meanwhile waits for its end. Clean hosts follows the
+same rule.
 A passed Check of a stand that is not fixed yet keeps the fingerprint of each host (CPU, cores, memory in GB, OS kernel,
 JDK), and without it a job on `remote` does not start. Before every phase the harness compares the host with its
 fingerprint: when they differ, the phase fails, saying what changed, and nothing goes into the history. Fixing the stand
@@ -300,11 +302,11 @@ result is cached (LRU of 500 entries).
 | `GET /api/scenarios/{name}/describe` | a scenario as `harness.jar list` lists it: id, version, topology, timings, sources |
 | `GET /api/settings`, `PUT /api/settings {key: value}` | settings (validated) |
 | `GET /api/stand`, `PUT /api/stand {mode, hosts, sizes}` | the stand: mode, hosts, sizes, `needsSetup`, `frozen`, the last Check and Measure load; writing it ends the wizard, after the first finished phase it is 409 |
-| `POST /api/stand/check {mode, hosts, sizes}` | Check: the report of the hosts (warnings and errors carry `fix`, how to fix them) and the suggested sizes; 409 while the queue is busy or another Check runs |
+| `POST /api/stand/check {mode, hosts, sizes}` | Check: the report of the hosts (warnings and errors carry `fix`, how to fix them) and the suggested sizes; 409 while a job runs, while jobs wait and the stand is open, or while another Check runs |
 | `GET /api/app/check` | the last report of the check of the builds (`at`: when it was made) or `null` |
 | `POST /api/app/check {url, branch}` | the check of the builds on the machine of the controller: repository, Java, javac, Maven and its Java, git, disk; without the fields, the saved repository and branch |
 | `POST /api/stand/measure` | Measure load: a `probe` job; 409 once the stand is fixed |
-| `POST /api/stand/sweep` | take off the hosts what killed phases left; 409 while the queue is busy or a Check runs |
+| `POST /api/stand/sweep` | take off the hosts what killed phases left; 409 as for Check |
 | `GET /api/commits?limit=&scenario=` | the history of the branch with the jobs of every commit (without `compare`) |
 | `GET /api/commits/{sha}` | a commit, all its runs with their role (target, baseline, A/A) and the pooled repeats |
 | `GET /api/jobs?filter=active|history|history-no-steps|all&limit=` | jobs; for `active` also `etaStartAt`, `etaSec` (estimated start and duration), `history-no-steps` without the steps of bisections |

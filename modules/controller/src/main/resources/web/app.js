@@ -2360,7 +2360,10 @@ views.settings = {
       api.get('/api/builds?limit=20'), api.get('/api/stand'), api.get('/api/app/check').catch(() => null)]);
     this.stand = stand;
     if (!this.appRunning) this.appCheck = appKept; // the kept report; a running check paints its own
-    const queueBusy = (health.jobs.queued || 0) + (health.jobs.running || 0) ? 'Check waits for an empty queue: it takes the ports of Ignite on the hosts' : '';
+    // Check takes the ports of Ignite on the hosts: not during a job, and with jobs waiting only while the stand is closed for
+    // maintenance, so none of them starts meanwhile
+    const queueBusy = health.worker.busy ? 'Check waits for the running job: it takes the ports of Ignite on the hosts'
+      : (health.jobs.queued || 0) && !health.worker.paused ? 'Check waits for an empty queue, or close the stand for maintenance: it takes the ports of Ignite on the hosts' : '';
     const noises = (await Promise.all(scenarios.map((x) => api.get(`/api/noise?scenario=${encodeURIComponent(x.name)}`).catch(() => null)))).filter(Boolean);
     const rel = await api.get(`/api/release?scenario=${encodeURIComponent(scenarios[0].name)}`).catch(() => ({}));
     const w = health.watcher, s = health.system;
