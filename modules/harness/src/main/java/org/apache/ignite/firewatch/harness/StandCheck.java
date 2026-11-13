@@ -59,11 +59,15 @@ public final class StandCheck {
         /** */
         public String text;
 
+        /** How to fix it, {@code code} in back quotes; {@code null} when there is nothing to fix. */
+        public String fix;
+
         /** */
-        Item(String name, String level, String text) {
+        Item(String name, String level, String text, String fix) {
             this.name = name;
             this.level = level;
             this.text = text;
+            this.fix = fix;
         }
     }
 
@@ -86,7 +90,12 @@ public final class StandCheck {
 
         /** */
         void add(String name, String level, String text) {
-            items.add(new Item(name, level, text));
+            add(name, level, text, null);
+        }
+
+        /** */
+        void add(String name, String level, String text, String fix) {
+            items.add(new Item(name, level, text, OK.equals(level) ? null : fix));
         }
     }
 
@@ -257,17 +266,22 @@ public final class StandCheck {
             + " CPUs" + (mem >= MIN_MEMORY_MB ? "" : ": needs " + MIN_MEMORY_MB / 1024 + " GB"));
         List<?> jvms = (List<?>)f.get("foreignJvms");
         r.add("jvms", jvms.isEmpty() ? OK : foreign,
-            jvms.isEmpty() ? "no other JVM" : jvms.size() + " other JVM(s): " + jvms.get(0));
+            jvms.isEmpty() ? "no other JVM" : jvms.size() + " other JVM(s): " + jvms.get(0),
+            "stop them; what a killed phase left goes with Clean hosts");
         long swap = ((Number)f.get("swapMb")).longValue();
         r.add("swap", swap == 0 ? OK : WARN,
-            swap == 0 ? "off" : swap / 1024 + " GB of swap: a node that touches it stops measuring what it should");
+            swap == 0 ? "off" : swap / 1024 + " GB of swap: a node that touches it stops measuring what it should",
+            "`sudo swapoff -a`, and drop the swap of /etc/fstab to keep it off");
         Object thp = f.get("thp");
         r.add("thp", "always".equals(thp) ? WARN : OK,
-            thp == null ? "not reported" : thp + ("always".equals(thp) ? ": latency gets spikes" : ""));
+            thp == null ? "not reported" : thp + ("always".equals(thp) ? ": latency gets spikes" : ""),
+            "`echo madvise | sudo tee /sys/kernel/mm/transparent_hugepage/enabled`; the kernel option "
+                + "`transparent_hugepage=madvise` keeps it after a reboot");
         Object governor = f.get("governor");
         r.add("governor", governor == null || "performance".equals(governor) ? OK : WARN,
             governor == null ? "not reported" : governor + ("performance".equals(governor) ? ""
-                : ": the frequency follows the load, results follow it"));
+                : ": the frequency follows the load, results follow it"),
+            "`sudo cpupower frequency-set -g performance`");
         r.fingerprint = fingerprintOf(f);
     }
 
@@ -345,7 +359,8 @@ public final class StandCheck {
             return;
 
         long off = Math.abs(aheadMs);
-        server.add("clock", off >= CLOCK_FAIL_MS ? FAIL : off >= CLOCK_WARN_MS ? WARN : OK, off + " ms from " + loader);
+        server.add("clock", off >= CLOCK_FAIL_MS ? FAIL : off >= CLOCK_WARN_MS ? WARN : OK, off + " ms from " + loader,
+            "keep the clocks in sync: chrony or ntpd on every host");
     }
 
     /** */

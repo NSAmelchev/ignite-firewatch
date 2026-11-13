@@ -87,6 +87,17 @@ class StandCheckTest {
     }
 
     /** */
+    @Test void aWarningSaysHowToFixIt() {
+        StandCheck.HostReport r = new StandCheck.HostReport();
+        r.facts = with("thp", "always");
+        StandCheck.judge(r, StandCheck.FAIL);
+        StandCheck.Item thp = r.items.stream().filter(i -> i.name.equals("thp")).findFirst().orElseThrow();
+        assertTrue(thp.fix.contains("madvise"), thp.fix);
+        assertTrue(r.items.stream().filter(i -> StandCheck.OK.equals(i.level)).allMatch(i -> i.fix == null),
+            "nothing to fix in what passed");
+    }
+
+    /** */
     @Test void clocksAreJudgedByHowFarTheyAre() {
         StandCheck.HostReport r = new StandCheck.HostReport();
         StandCheck.clock(r, "l1", 5);

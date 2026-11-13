@@ -26,7 +26,7 @@ bin/firewatch.sh start      # in the unpacked directory; also stop, restart, sta
 ```
 
 Without internet access the stand still needs the dependencies of Ignite (a mirror in a settings.xml named by
-`maven.settings` of the config) and the sources: `repo.url` (the setup wizard, Settings → Repository) takes a path on
+`maven.settings` of the config) and the sources: `repo.url` (the setup wizard, Settings → Application) takes a path on
 the machine of the stand as well as a URL. Copy there a repository made where the network is, either as a directory or
 as one file:
 

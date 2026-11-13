@@ -160,6 +160,13 @@ public final class Api {
         });
         r.post("/api/stand/check", req -> stands.check(Json.read(req.json().toString(), Stand.class)));
         r.get("/api/stand/check/log", req -> stands.checkLog());
+        // only reads: the setup page and Settings run it whenever they open; the form may hold an unsaved repository
+        r.post("/api/app/check", req -> {
+            JsonNode b = req.json();
+
+            return BuildCheck.run(cfg, Req.str(b, "url", db.setting(Settings.REPO_URL, cfg.repoUrl)),
+                Req.str(b, "branch", db.setting(Settings.REPO_BRANCH, cfg.branch)));
+        });
         r.post("/api/stand/measure", req -> {
             if (Stand.frozen(db))
                 throw new IllegalStateException("the stand has finished runs: its load is fixed");

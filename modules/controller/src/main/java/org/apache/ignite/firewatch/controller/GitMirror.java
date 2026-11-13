@@ -132,19 +132,7 @@ public final class GitMirror {
      */
     public synchronized void follow(String newUrl, String newBranch) throws IOException {
         ensure(); // a new stand chooses its repository before anything was cloned
-
-        Proc.Result ls = run(SHORT, "ls-remote", "--exit-code", "--heads", newUrl, "refs/heads/" + newBranch);
-
-        if (ls.code == 2 && !ls.timedOut) // --exit-code: the remote answered, but has no such branch
-            throw new IllegalArgumentException("no branch " + newBranch + " at " + newUrl);
-
-        if (!ls.ok()) {
-            String why = ls.timedOut ? "timed out" : ls.out.lines().filter(l -> l.startsWith("fatal:")).findFirst()
-                .orElse(ls.tail(1)).trim();
-
-            throw new IllegalArgumentException("cannot read " + newUrl + ": " + why);
-        }
-
+        headOf(Proc.run(lsRemote(newUrl, newBranch), null, env(), SHORT), newUrl, newBranch);
         git(SHORT, "remote", "set-url", "origin", newUrl);
         git(SHORT, "symbolic-ref", "HEAD", "refs/heads/" + newBranch);
         url = newUrl;
@@ -556,8 +544,51 @@ public final class GitMirror {
         return Proc.run(cmd, null, env(), timeout);
     }
 
-    /** */
-    private static Map<String, String> env() {
+    /**
+     * The command that asks a remote for the head of a branch. It needs no repository of its own: a stand asks before
+     * anything is cloned.
+     *
+     * @param url Remote repository url or path.
+     * @param branch Branch.
+     * @return Command.
+     */
+    static List<String> lsRemote(String url, String branch) {
+        return List.of("git", "ls-remote", "--exit-code", "--heads", url, "refs/heads/" + branch);
+    }
+
+    /**
+     * Reads what {@link #lsRemote} said.
+     *
+     * @param ls Its result.
+     * @param url Remote repository url or path.
+     * @param branch Branch.
+     * @return Sha of the head of the branch.
+     * @throws IllegalArgumentException Saying why the branch cannot be read, in the words of git where it has some.
+     */
+    static String headOf(Proc.Result ls, String url, String branch) {
+        if (ls.code == 2 && !ls.timedOut) // --exit-code: the remote answered, but has no such branch
+            throw new IllegalArgumentException("no branch " + branch + " at " + url);
+
+        if (!ls.ok()) {
+            String why = ls.timedOut ? "timed out" : ls.out.lines().filter(l -> l.startsWith("fatal:")).findFirst()
+                .orElse(ls.tail(1)).trim();
+
+            throw new IllegalArgumentException("cannot read " + url + ": " + why);
+        }
+
+        // the output has stderr too: a warning of git may come before the line of the branch
+        String ref = "refs/heads/" + branch;
+
+        return ls.out.lines().filter(l -> l.endsWith("\t" + ref)).map(l -> l.substring(0, l.indexOf('\t')))
+            .findFirst().orElseThrow(() -> new IllegalArgumentException("cannot read " + url + ": " + ls.tail(1)));
+    }
+
+    /**
+     * The environment of every git command: never a prompt for a password, messages in English.
+     *
+     * @return Environment.
+     */
+    static Map<String, String> env() {
         return Map.of("GIT_TERMINAL_PROMPT", "0", "LC_ALL", "C");
     }
 }

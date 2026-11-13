@@ -114,7 +114,7 @@ const HELP = {
 };
 // a commit subject with its ticket and PR as links; never inside another link
 // a stand without network fetches from its own disk: git takes a path as well as a URL
-const REPO_PATH_HINT = 'A stand without network takes a path on its machine: a git repository (<span class="mono">git clone --mirror</span>) or a bundle of one (<span class="mono">git bundle create ignite.bundle --all</span>); in Docker, under <span class="mono">/git</span>. Every poll fetches from it, so a fresh copy put in its place arrives by itself.';
+const REPO_PATH_HINT = 'A stand without network takes a path on this machine: a mirror (<code>git clone --mirror</code>) or a bundle (<code>git bundle create ignite.bundle --all</code>); in Docker, under <code>/git</code>.';
 const defaultPrUrl = () => (repoWeb ? `${repoWeb}/pull/` : '');
 function subjectHtml(s) {
   let pr = defaultPrUrl();
@@ -2000,10 +2000,10 @@ const ticketRow = (key = '', l = { url: '', pr: '' }) => `<tr data-ticket><td><i
   <td><input name="url" value="${esc(l.url)}" placeholder="https://issues.apache.org/jira/browse/" autocomplete="off" spellcheck="false"></td>
   <td><input name="pr" value="${esc(l.pr)}" placeholder="${esc(defaultPrUrl() || 'https://github.com/org/repo/pull/')}" autocomplete="off" spellcheck="false"></td>
   <td><button type="button" class="small" data-ticket-remove>Remove</button></td></tr>`;
-const SETTINGS_TABS = [['automation', 'Automation'], ['release', 'Release'], ['notify', 'Notifications'], ['limits', 'Limits'], ['stand', 'Stand'], ['system', 'System'], ['repository', 'Repository']];
+const SETTINGS_TABS = [['automation', 'Automation'], ['release', 'Release'], ['notify', 'Notifications'], ['limits', 'Limits'], ['stand', 'Stand'], ['system', 'System'], ['repository', 'Application']];
 // Where the JVMs run: the setup of a new stand and the Stand section of Settings share these fields
 const STAND_MODES = [['local', 'This machine', 'All JVMs run here, next to the application.'],
-  ['remote', 'Remote Linux hosts', 'Server nodes and the loader run on the hosts below, over ssh. Commits are still built here.']];
+  ['remote', 'Remote Linux hosts', 'Server nodes and the loader run on these hosts over ssh; commits are still built here.']];
 const HOST_INPUTS = [['address', 'Address', 'bench-1.lan'], ['user', 'User', 'bench'], ['port', 'SSH port', '22'], ['javaHome', 'JDK 17', '/usr/lib/jvm/java-17'], ['workDir', 'Work directory', '/opt/firewatch'], ['dataAddress', 'Data address', 'optional']];
 const hostRow = (h = { port: 22, role: 'servers' }) => `<tr data-host>
   ${HOST_INPUTS.map(([k, , ph]) => `<td><input name="${k}" value="${esc(h[k] ?? '')}" placeholder="${ph}" autocomplete="off"></td>`).join('')}
@@ -2011,22 +2011,47 @@ const hostRow = (h = { port: 22, role: 'servers' }) => `<tr data-host>
   <td><button type="button" class="small" data-host-remove>Remove</button></td></tr>`;
 function standFields(stand) {
   const hosts = stand.hosts.length ? stand.hosts : [{ port: 22, role: 'servers' }, { port: 22, role: 'loaders' }];
-  return `<div class="mode-list">${STAND_MODES.map(([k, name, text]) => `<label class="mode-opt"><input type="radio" name="stand.mode" value="${k}" ${k === stand.mode ? 'checked' : ''}><span><b>${name}</b><div class="muted">${text}</div></span></label>`).join('')}</div>
+  return `<div class="mode-line"><div class="seg-radio">${STAND_MODES.map(([k, name]) => `<label><input type="radio" name="stand.mode" value="${k}" ${k === stand.mode ? 'checked' : ''}><span>${name}</span></label>`).join('')}</div>
+      <span class="hint" data-mode-text>${(STAND_MODES.find(([k]) => k === stand.mode) || STAND_MODES[0])[2]}</span></div>
     <div data-if-remote ${stand.mode === 'remote' ? '' : 'hidden'}>
       <table class="hosts"><thead><tr>${HOST_INPUTS.map(([, h]) => `<th>${h}</th>`).join('')}<th>Role</th><th></th></tr></thead>
         <tbody>${hosts.map((h) => hostRow(h)).join('')}</tbody></table>
-      <div class="actions"><button type="button" class="small" data-host-add>Add host</button></div>
-      <div class="muted small-text">The same node always lands on the same host. Data address is an optional separate network for the traffic between nodes.
-        The ssh key and known_hosts stay out of the database: they are files given to the application by <code>IGNITE_FIREWATCH_SSH_KEY</code> and <code>IGNITE_FIREWATCH_SSH_KNOWN_HOSTS</code>, now ${esc(stand.sshKey || 'the default of ssh')}.
-        A host whose key known_hosts lacks is ${stand.sshAcceptNewHosts ? 'taken on first contact, its key added' : 'refused'} (<code>IGNITE_FIREWATCH_SSH_ACCEPT_NEW_HOSTS</code>).</div>
+      <div class="step-foot"><button type="button" class="small" data-host-add>Add host</button>
+        <span class="hint">ssh key: ${stand.sshKey ? `<code>${esc(stand.sshKey)}</code>` : 'the default of ssh'} · a host missing from known_hosts is ${stand.sshAcceptNewHosts ? 'taken, its key added' : 'refused'}</span>
+        <details class="check-log step-log"><summary>About the hosts</summary><div class="hint">The same node always lands on the same host. Data address is an optional separate network for the traffic between nodes.
+          The ssh key and known_hosts stay out of the database: they are files given to the application by <code>IGNITE_FIREWATCH_SSH_KEY</code> and <code>IGNITE_FIREWATCH_SSH_KNOWN_HOSTS</code>;
+          <code>IGNITE_FIREWATCH_SSH_ACCEPT_NEW_HOSTS</code> takes the key of a host known_hosts lacks on first contact.</div></details></div>
     </div>`;
 }
 // The hosts as Check saw them or as the form has them: a report is good for exactly these
 const hostsKey = (hosts) => JSON.stringify(hosts.map((h) => ['role', ...HOST_INPUTS.map(([k]) => k)].map((k) => String(h[k] ?? ''))));
 const CHECK_MARKS = { ok: '✓', warn: '!', fail: '✗' };
-const checkReport = (r) => (!r ? '' : `<div class="check-verdict ${r.ok ? 'good' : 'bad'}">${r.ok ? 'Passed' : 'Failed: fix what is marked ✗ and run it again'}</div>
-  ${r.hosts.map((h) => `<div class="check-host"><b>${esc(h.address)}</b> <span class="muted">${esc(h.role)}</span>
-    <table class="check"><tbody>${h.items.map((i) => `<tr class="check-${esc(i.level)}"><td>${CHECK_MARKS[i.level]}</td><td>${esc(i.name)}</td><td>${esc(i.text)}</td></tr>`).join('')}</tbody></table></div>`).join('')}`);
+// What a check found: a mark, the name, the finding and, under it, how to fix it (`code` in back quotes)
+const fixHtml = (f) => esc(f).replace(/`([^`]+)`/g, '<code>$1</code>');
+const checkRows = (items) => items.map((i) => `<tr class="check-${esc(i.level)}"><td>${CHECK_MARKS[i.level]}</td><td>${esc(i.name)}</td>
+  <td>${esc(i.text)}${i.fix ? `<div class="check-fix">${fixHtml(i.fix)}</div>` : ''}</td></tr>`).join('');
+const checkReport = (r) => (!r ? '' : r.hosts.map((h) => `<div class="check-host"><div class="check-host-name">${esc(h.address)} <span class="muted">${esc(h.role)}</span></div>
+  <table class="check"><tbody>${checkRows(h.items)}</tbody></table></div>`).join(''));
+// The state of a check in the head of its block: what it found, that it runs, or that it has not run
+function checkBadge(r, running, none = 'not checked') {
+  if (running) return '<span class="badge running">checking…</span>';
+  if (!r) return `<span class="badge no-change">${none}</span>`;
+  const items = r.items || r.hosts.flatMap((h) => h.items);
+  const fails = items.filter((i) => i.level === 'fail').length, warns = items.filter((i) => i.level === 'warn').length;
+  if (!r.ok) return `<span class="badge failed">${fails ? plural(fails, 'problem') : 'failed'}</span>`;
+  return `<span class="badge ${warns ? 'partial' : 'ok'}">${r.items ? 'ready' : 'passed'}${warns ? `, ${plural(warns, 'warning')}` : ''}</span>`;
+}
+// The head of a block of the setup: its number (a tick once it passed), its name and the state of its check
+const stepHead = (n, title, sub, key, badge = '') => `<div class="step-head">${n ? `<span class="step-num" data-${key}-num>${n}</span>` : ''}<h2>${title}</h2>
+  <span class="muted">${sub}</span><span class="step-state" data-${key}-badge>${badge}</span></div>`;
+function paintStep(root, key, n, r, running, none) {
+  const badge = $(`[data-${key}-badge]`, root), num = $(`[data-${key}-num]`, root);
+  if (badge) badge.innerHTML = checkBadge(r, running, none);
+  if (num) {
+    num.className = `step-num${!r || running ? '' : r.ok ? ' ok' : ' bad'}`;
+    num.textContent = r && !running && r.ok ? '✓' : String(n);
+  }
+}
 // The log of Check: "[host ]$ command", "→ exit 0 in 0.3 s", "| output", "· note" (see CommandLog of the harness)
 const CHECK_LOG_LINE = /^(\S+ )?([$→|·]) (.*)$/;
 const checkLogLine = (l) => {
@@ -2037,8 +2062,8 @@ const checkLogLine = (l) => {
   const cls = { $: 'cl-cmd', '·': 'cl-note', '→': /^exit 0 /.test(m[3]) ? 'cl-end' : 'cl-end cl-bad' }[m[2]];
   return `<div class="${cls}">${host}${esc(m[2])} ${esc(m[3])}</div>`;
 };
-const checkLog = (l, open) => (!l || !l.lines.length ? '' : `<details class="check-log" ${open ? 'open' : ''}>
-  <summary>${l.running ? 'Check is running…' : 'Log of Check'} <span class="muted">· ${plural(l.lines.filter((x) => (CHECK_LOG_LINE.exec(x) || [])[2] === '$').length, 'command')}, run where the application runs (in Docker: inside its container)</span></summary>
+const checkLog = (l, open) => (!l || !l.lines.length ? '' : `<details class="check-log step-log" ${open ? 'open' : ''}>
+  <summary title="run where the application runs (in Docker: inside its container)">${l.running ? 'Running' : 'Log'} · ${plural(l.lines.filter((x) => (CHECK_LOG_LINE.exec(x) || [])[2] === '$').length, 'command')}</summary>
   <div class="check-log-lines mono">${l.lines.map(checkLogLine).join('')}</div></details>`);
 // what the running or the last Check printed; a closed log stays closed while it grows
 async function showCheckLog(form, open) {
@@ -2049,7 +2074,13 @@ async function showCheckLog(form, open) {
   const lines = $('.check-log-lines', box);
   if (lines && l.running) lines.scrollTop = lines.scrollHeight;
 }
-const CHECK_LOG_BLOCK = (check) => `<div data-check-log>${check ? '<button type="button" class="small" data-check-log-show>Log of the last Check</button>' : ''}</div>`;
+// Check of the hosts under their fields: what it found, then the button, what it tries and its log
+const hostsCheck = (check) => `<div data-check-report>${checkReport(check)}</div>
+  <div class="step-foot"><button type="button" class="small" data-stand-check>${check ? 'Check again' : 'Check hosts'}</button>
+    <span class="hint">ssh, JDK, disk, memory, the network between hosts, other JVMs, clocks, swap, THP, CPU governor</span>
+    <span class="step-log-box" data-check-log>${check ? '<button type="button" class="small" data-check-log-show>Log of the last Check</button>' : ''}</span></div>`;
+// a stand on this machine needs no Check to start, remote hosts do
+const hostsNone = (form) => ($('[name="stand.mode"]:checked', form).value === 'remote' ? 'not checked' : 'optional');
 const sizesText = (s) => (s.nodeMemoryMb ? `${fmt.num(s.nodeMemoryMb)} MB a node, region ${s.fillPct} % full, threads ×${s.threadsFactor}`
   : s.threadsFactor !== 1 ? `the sizes of the scenarios, threads ×${s.threadsFactor}` : 'the sizes of the scenarios');
 const recommendation = (r) => (!r ? '' : `${r.recommended && r.recommended.nodeMemoryMb
@@ -2079,7 +2110,9 @@ const standOf = (form) => ({
 function bindStandFields(form, edited = () => {}, checked = () => {}) {
   form.addEventListener('input', edited);
   form.addEventListener('change', () => {
-    $('[data-if-remote]', form).hidden = $('[name="stand.mode"]:checked', form).value !== 'remote';
+    const mode = $('[name="stand.mode"]:checked', form).value;
+    $('[data-if-remote]', form).hidden = mode !== 'remote';
+    $('[data-mode-text]', form).textContent = STAND_MODES.find(([k]) => k === mode)[2];
     edited();
   });
   form.addEventListener('click', (e) => {
@@ -2100,21 +2133,23 @@ function bindStandFields(form, edited = () => {}, checked = () => {}) {
       run.textContent = 'Checking…';
       $('[data-check-report]', form).innerHTML = '';
       $('[data-check-log]', form).innerHTML = '';
-      let passed = false;
+      paintStep(form, 'hosts', 2, null, true);
+      let passed = false, r = null;
       // the log as it grows; a failed tick is retried by the next one
       const timer = setInterval(() => showCheckLog(form).catch(() => {}), 1000);
       guarded(async () => {
         try {
-          const r = await api.post('/api/stand/check', standOf(form));
+          r = await api.post('/api/stand/check', standOf(form));
           passed = r.ok;
           $('[data-check-report]', form).innerHTML = checkReport(r);
           $('[data-sizes-recommended]', form).innerHTML = recommendation(r);
-          checked(r);
         }
         finally {
           clearInterval(timer);
           run.disabled = false;
-          run.textContent = 'Check';
+          run.textContent = r ? 'Check again' : 'Check hosts';
+          paintStep(form, 'hosts', 2, r, false, hostsNone(form));
+          checked(r); // null: it did not run, so nothing is checked
           await showCheckLog(form, !passed).catch(() => {});
         }
       });
@@ -2125,13 +2160,21 @@ const standSummary = (s) => `${s.mode === 'local' ? '<div>This machine: all JVMs
   : `<table><thead><tr>${HOST_INPUTS.map(([, h]) => `<th>${h}</th>`).join('')}<th>Role</th></tr></thead>
     <tbody>${s.hosts.map((h) => `<tr>${HOST_INPUTS.map(([k]) => `<td>${esc(h[k] ?? '')}</td>`).join('')}<td>${esc(h.role)}</td></tr>`).join('')}</tbody></table>`}
   <div style="margin-top:8px">Scenarios: ${esc(sizesText(s.sizes))}</div>`;
-const CHECK_BLOCK = '<div class="actions"><button type="button" class="small" data-stand-check>Check</button></div>';
 const loadReport = (l) => (!l ? '' : `<table class="hosts-result"><thead><tr><th>Threads</th><th class="num">ops/s</th><th class="num">p99 µs</th></tr></thead>
   <tbody>${l.steps.map((s) => `<tr class="${s.threadsFactor === l.threadsFactor ? 'verdict-metric' : ''}"><td>×${s.threadsFactor}</td><td class="num">${fmt.num(s.throughput)}</td><td class="num">${fmt.num(s.p99Us)}</td></tr>`).join('')}</tbody></table>
   <button type="button" class="small" data-sizes-use='${esc(JSON.stringify({ threadsFactor: l.threadsFactor }))}'>Use ×${l.threadsFactor}</button>
   <span class="muted small-text"><a href="#/jobs/${l.jobId}">job #${l.jobId}</a> · ${fmt.date(l.at)}</span>`);
 
-// The first page of a new stand: nothing is cloned or measured before it is done, and the header stays hidden
+// Check of this machine under the repository: what builds the commits, then the button and its log
+const appCheck = (r, running, error) => `<table class="check tools"><tbody>${r ? checkRows(r.items) : ''}</tbody></table>
+  ${!r && running ? '<div class="hint">Asking the repository, Java, Maven, git and the disk…</div>' : ''}
+  ${error && !running ? `<div class="error small-text">${esc(error)}</div>` : ''}
+  <div class="step-foot"><button type="button" class="small" data-app-check-run ${running ? 'disabled' : ''}>${running ? 'Checking…' : r ? 'Check again' : 'Check'}</button>
+    <span class="hint"><code>java</code>, <code>mvn</code>, <code>maven.*</code>: in <code>config/ignite-firewatch.properties</code> or <code>IGNITE_FIREWATCH_*</code>, a restart applies them</span>
+    <span class="step-log-box">${r ? checkLog({ running: false, lines: r.log }, false) : ''}</span></div>`;
+
+// The first page of a new stand: what this machine builds, then where the JVMs run. Nothing is cloned or measured
+// before it is done, and the header stays hidden
 let setupPending = false;
 views.setup = {
   async render() {
@@ -2140,40 +2183,74 @@ views.setup = {
     const stand = !saved.hosts.length && seen && seen.length ? { ...saved, mode: 'remote', hosts: seen } : saved; // a reload keeps the hosts Check saw
     this.check = saved.check;
     return `<h1>Set up the stand</h1>
-      <div class="muted" style="margin-bottom:12px">The stand is fixed by its first finished run: results of different stands must not mix.</div>
+      <div class="muted" style="margin-bottom:14px">First what this machine builds, then where the JVMs run. The stand is fixed by its first finished run: results of different stands must not mix.</div>
       <form id="setup">
-        <div class="card"><h2 style="margin-top:0">Where to run</h2>${standFields(stand)}
-          ${CHECK_BLOCK}<div class="muted small-text">Check tries the hosts: ssh, JDK, disk, memory, the way between them, other JVMs, clocks, swap, THP and the CPU governor. A remote stand has to pass it.</div>
-          <div data-check-report>${checkReport(stand.check)}</div>${CHECK_LOG_BLOCK(stand.check)}</div>
-        <div class="card"><h2 style="margin-top:0">Scenario sizes</h2>${sizesFields(stand.sizes, stand.check)}</div>
-        <div class="card"><h2 style="margin-top:0">What to measure</h2>
-          <label>Git URL or path</label>
-          <input name="repo.url" value="${esc(settings['repo.url'])}" autocomplete="off" required>
-          <div class="muted small-text">${REPO_PATH_HINT}</div>
-          <label>Main branch</label>
-          <input name="repo.branch" value="${esc(settings['repo.branch'])}" autocomplete="off" required>
-          <label>Release the dashboard compares it with</label>
-          <input name="release.tag" value="${esc(settings['release.tag'] || '')}" placeholder="the highest X.Y.Z tag" autocomplete="off">
-          <div class="muted small-text">The mirror is cloned after this step: a few minutes for a large repository.</div>
-        </div>
-        <div class="actions"><button class="primary">Start the stand</button></div>
+        <div class="card step">${stepHead(1, 'Application', 'builds every commit on this machine', 'app')}
+          <div class="repo-grid">
+            <label>Git URL or path<input name="repo.url" value="${esc(settings['repo.url'])}" autocomplete="off" spellcheck="false" required></label>
+            <label>Branch<input name="repo.branch" value="${esc(settings['repo.branch'])}" autocomplete="off" spellcheck="false" required></label>
+            <label>Release to compare with<input name="release.tag" value="${esc(settings['release.tag'] || '')}" placeholder="the highest X.Y.Z tag" autocomplete="off" spellcheck="false"></label>
+          </div>
+          <div class="hint">${REPO_PATH_HINT}</div>
+          <div data-app-check>${appCheck(null, true)}</div></div>
+        <div class="card step">${stepHead(2, 'Hosts', 'where the server nodes and the loader run', 'hosts')}
+          ${standFields(stand)}${hostsCheck(stand.check)}</div>
+        <div class="card step">${stepHead(3, 'Scenario sizes', 'optional: empty keeps the numbers the scenarios state', 'sizes')}
+          ${sizesFields(stand.sizes, stand.check)}</div>
+        <div class="start"><button class="primary" data-start disabled>Start the stand</button><span class="hint" data-start-why></span></div>
       </form>`;
   },
   bind(root) {
     const form = $('#setup', root);
+    // what keeps the stand from starting, or what comes after the start
+    const blocker = () => {
+      if (this.appRunning) return 'Step 1 is checking this machine…';
+      if (!this.app) return 'Step 1 could not check this machine: check it again.';
+      if (!this.app.ok) return 'Fix what step 1 marks ✗.';
+      if (standOf(form).mode === 'remote' && !(this.check && this.check.ok)) return this.check ? 'Fix what step 2 marks ✗.' : 'Remote hosts have to pass Check first.';
+      return null;
+    };
+    const paintStart = () => {
+      const why = blocker();
+      $('[data-start]', form).disabled = !!why;
+      $('[data-start-why]', form).textContent = why || 'The mirror is cloned next: a few minutes for a large repository.';
+    };
+    const paintHosts = () => { paintStep(form, 'hosts', 2, this.check, false, hostsNone(form)); paintStart(); };
+    const paintApp = () => {
+      $('[data-app-check]', form).innerHTML = appCheck(this.app, this.appRunning, this.appError);
+      paintStep(form, 'app', 1, this.app, this.appRunning);
+      paintStart();
+    };
+    // the repository of the form, saved or not; a later answer wins over an earlier one
+    let asked = 0;
+    const checkApp = () => {
+      const n = ++asked, fd = new FormData(form);
+      this.appRunning = true;
+      this.app = null;
+      this.appError = null;
+      paintApp();
+      api.post('/api/app/check', { url: String(fd.get('repo.url')).trim(), branch: String(fd.get('repo.branch')).trim() })
+        .then((r) => { if (n === asked) this.app = r; }, (e) => { if (n === asked) this.appError = `Check of this machine did not run: ${e.message}`; })
+        .finally(() => { if (n === asked) { this.appRunning = false; paintApp(); } });
+    };
     const dropStale = () => {
       const now = standOf(form);
-      if (!this.check || hostsKey(this.check.checked || []) === hostsKey(now.mode === 'remote' ? now.hosts : [])) return;
-      this.check = null;
-      $('[data-check-report]', form).innerHTML = '';
-      $('[data-sizes-recommended]', form).innerHTML = '';
+      if (this.check && hostsKey(this.check.checked || []) !== hostsKey(now.mode === 'remote' ? now.hosts : [])) {
+        this.check = null;
+        $('[data-check-report]', form).innerHTML = '';
+        $('[data-sizes-recommended]', form).innerHTML = '';
+      }
+      paintHosts();
     };
-    bindStandFields(form, dropStale, (r) => { this.check = r; });
+    bindStandFields(form, dropStale, (r) => { this.check = r; paintHosts(); });
+    form.addEventListener('click', (e) => { if (e.target.closest('[data-app-check-run]')) checkApp(); });
+    ['repo.url', 'repo.branch'].forEach((n) => $(`[name="${n}"]`, form).addEventListener('change', checkApp));
     dropStale();
+    checkApp();
     form.addEventListener('submit', (e) => {
       e.preventDefault();
+      if (blocker()) return;
       const fd = new FormData(form), stand = standOf(form);
-      if (stand.mode === 'remote' && !(this.check && this.check.ok)) { toast('the hosts have to pass Check first', true); return; }
       guarded(async () => {
         await api.put('/api/settings', { 'repo.url': fd.get('repo.url'), 'repo.branch': fd.get('repo.branch'), 'release.tag': fd.get('release.tag') });
         await api.put('/api/stand', stand);
@@ -2219,9 +2296,12 @@ views.settings = {
           <label>Main branch</label>
           <input name="repo.branch" value="${esc(settings['repo.branch'])}" autocomplete="off" required>
           <div class="actions"><button class="primary">Save</button></div>
-          <div class="muted small-text">Both are checked before saving, and the queue has to be empty. After a change the stand follows the new head: runs of the old branch stay in the database but leave Commits and Timeline.</div>
+          <div class="muted small-text">Both are checked before saving, and the queue has to be empty. After a change the stand follows the new head: runs of the old branch stay in the database but leave Commits and Timeline.
+            Every poll fetches from a path as from a URL: a fresh copy put in its place arrives by itself.</div>
         </form>
       </div>
+      <div class="card">${stepHead(null, 'Builds', 'what builds every commit on this machine', 'app', checkBadge(this.appCheck, this.appRunning))}
+        <div data-app-check>${appCheck(this.appCheck, this.appRunning, this.appError)}</div></div>
       <form id="tickets" class="card">
         <h2 style="margin-top:0">Ticket links <span class="muted">turn tickets and PR numbers in commit subjects into links</span></h2>
         <table class="ticket-keys"><thead><tr><th>Key</th><th>Ticket URL</th><th>Pull request URL</th><th></th></tr></thead>
@@ -2286,8 +2366,9 @@ views.settings = {
       </div></section>
       <section data-tab="stand" ${tab === 'stand' ? '' : 'hidden'}><div class="card">
         ${stand.frozen ? `${standSummary(stand)}<div class="muted small-text" style="margin-top:8px">Fixed by the first finished run: results of different stands must not mix. Another stand is another instance with its own data directory.</div>`
-          : `<form id="stand">${standFields(this.standDraft ? { ...stand, ...this.standDraft } : stand)}
-              ${CHECK_BLOCK}<div data-check-report>${checkReport(stand.check)}</div>${CHECK_LOG_BLOCK(stand.check)}
+          : `<form id="stand">${stepHead(null, 'Hosts', 'where the server nodes and the loader run', 'hosts',
+                checkBadge(stand.check, false, (this.standDraft || stand).mode === 'remote' ? 'not checked' : 'optional'))}
+              ${standFields(this.standDraft ? { ...stand, ...this.standDraft } : stand)}${hostsCheck(stand.check)}
               <h2>Scenario sizes</h2>${sizesFields((this.standDraft || stand).sizes, stand.check)}
               <div class="load-block"><div class="actions"><button type="button" class="small" id="measure-load">Measure load</button></div>
                 <div class="muted small-text">Runs the main scenario with ×1, ×2 and ×4 threads, about a minute each, until the throughput stops growing. These runs stay out of the history and do not fix the stand.</div>
@@ -2308,11 +2389,30 @@ views.settings = {
   },
   bind(root) {
     // the sections switch in place: unsaved input survives it
+    // Builds of the Application tab: checked when the tab first shows and on its button; the answer is painted into the
+    // page as it is now, which a poll may have rendered anew meanwhile
+    const checkApp = () => {
+      if (this.appRunning) return;
+      this.appRunning = true;
+      this.appError = null;
+      const paint = () => {
+        const box = $('[data-app-check]'), badge = $('[data-app-badge]');
+        if (box) box.innerHTML = appCheck(this.appCheck, this.appRunning, this.appError);
+        if (badge) badge.innerHTML = checkBadge(this.appCheck, this.appRunning);
+      };
+      paint();
+      api.post('/api/app/check', {}).then((r) => { this.appCheck = r; }, (e) => { this.appError = `Check of this machine did not run: ${e.message}`; })
+        .finally(() => { this.appRunning = false; lastHtml = null; paint(); });
+    };
+    const showApp = () => { if ((this.tab || SETTINGS_TABS[0][0]) === 'repository' && !this.appCheck && !this.appError) checkApp(); };
+    root.addEventListener('click', (e) => { if (e.target.closest('[data-app-check-run]')) checkApp(); });
     root.querySelectorAll('button[data-settings-tab]').forEach((b) => b.addEventListener('click', () => {
       this.tab = b.dataset.settingsTab;
       root.querySelectorAll('button[data-settings-tab]').forEach((x) => x.classList.toggle('on', x === b));
       root.querySelectorAll('section[data-tab]').forEach((x) => { x.hidden = x.dataset.tab !== this.tab; });
+      showApp();
     }));
+    showApp();
     bindScenarioPicker($('#settings', root), this.picked, { builds: 1, per: 'a run' });
     [['calibration', this.aaPicked], ['master', this.masterPicked]].forEach(([p, picked]) => {
       const f = $(`#schedule-${p}`, root), sync = () => {
@@ -2354,6 +2454,8 @@ views.settings = {
           && !(await modal('Follow another repository?', `<div><span class="mono">${esc(d['repo.branch'])}</span> of <span class="mono">${esc(d['repo.url'])}</span>. Runs of the current branch leave Commits and Timeline.</div>`, 'Follow'))) return;
         await api.put('/api/settings', d);
         toast('repository saved');
+        this.appCheck = null; // the builds are checked again against the new repository
+        this.appError = null;
         refresh();
       });
     });

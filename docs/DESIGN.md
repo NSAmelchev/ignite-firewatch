@@ -86,6 +86,7 @@ survives a restart.
 | `Retention` | keeps JFR files and phase work directories only for the last N jobs, trims logs over 20 MB to their head and tail; `Comparisons` and `Bisector` apply the comparison and bisect limits, `Builder` applies the build LRU |
 | `Notifier` | Telegram and webhook notifications about regressions and finished work |
 | `Stand`, `StandService` | what the stand runs on: this machine or hosts over ssh, scenario sizes; Check, recommendations, host cleanup; frozen by the first completed phase |
+| `BuildCheck` | whether this machine builds: the repository, the configured Java and its javac, Maven with the environment of a build and the Java it really runs on, git, disk |
 | `Api`, `Router`, `Settings` | REST, UI static files, settings with validation |
 
 SQLite: `commits`, `builds`, `jobs`, `runs`, `bisects`, `comparisons`, `settings`, the schema version in `schema_version` (currently 3).
@@ -171,8 +172,8 @@ Only Queue and the pages with work in progress refresh themselves: job, bisect, 
 | Job | details of one job |
 | Noise | what the noise thresholds are now and which calibrations they come from |
 | Scenarios | what exactly runs, with the source code |
-| Settings | automation, release, notifications, limits, stand, system, repository |
-| Setup | where to run a new stand and what to measure: shown once, on an empty DB |
+| Settings | automation, release, notifications, limits, stand, system, application (the repository and the check of the builds) |
+| Setup | a new stand in three steps: the application (repository, release, the check of what builds the commits), the hosts with Check, the sizes; shown once, on an empty DB |
 
 ## Memory
 
