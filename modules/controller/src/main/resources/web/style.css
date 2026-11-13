@@ -477,7 +477,7 @@ table.hosts select { min-width: 92px; }
 .check-fix code { font-size: 11px; }
 table.check.tools { margin-top: 10px; }
 /* the name of a check carries a tip: what it looks at, what it bears on and, when it is not ok, why and how to fix it */
-.check-name-text { border-bottom: 1px dotted var(--muted); cursor: help; }
+.check-name-text { border-bottom: 1px dotted var(--muted); }
 .check-name-text:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
 .check-tip { position: fixed; z-index: 50; width: min(380px, calc(100vw - 16px)); padding: 8px 10px; background: var(--bg); color: var(--fg);
   border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 24px rgba(0, 0, 0, .18); font-size: 12px; line-height: 1.45;
