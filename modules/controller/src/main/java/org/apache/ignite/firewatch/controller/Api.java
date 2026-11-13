@@ -211,12 +211,20 @@ public final class Api {
 
             return jobs.detail(req.paramLong("id"));
         });
-        r.post("/api/jobs/{id}/retry", req -> jobs.retry(req.paramLong("id")));
+        r.post("/api/jobs/{id}/retry", req -> {
+            JsonNode b = req.json();
+
+            return jobs.retry(req.paramLong("id"), b.hasNonNull("priority") ? b.get("priority").asInt() : null);
+        });
         r.get("/api/estimate",
             req -> jobs.estimate(req.query("scenario", Settings.firstScenario(db)), req.query("type", Job.ABBA),
                 req.queryInt("jobs", 1), List.of(req.query("shas", "").split(",")), req.queryInt("extraBuilds", 0),
                 req.queryInt("priority", 1)));
-        r.post("/api/jobs/{id}/split", req -> jobs.split(req.paramLong("id"), Req.str(req.json(), "mode", "halves")));
+        r.post("/api/jobs/{id}/split", req -> {
+            JsonNode b = req.json();
+
+            return jobs.split(req.paramLong("id"), Req.str(b, "mode", "halves"), Req.integer(b, "priority", 1));
+        });
         r.get("/api/attention", req -> new Attention(db, mirror, jobs, scenarios, bisector).view());
         r.get("/api/bisects",
             req -> bisector.list(req.query("scenario", null), "true".equals(req.query("active", "false")),

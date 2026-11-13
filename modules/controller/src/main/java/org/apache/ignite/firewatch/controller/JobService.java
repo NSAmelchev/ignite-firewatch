@@ -509,6 +509,18 @@ public final class JobService {
      * @return Queued jobs.
      */
     public List<Job> split(long id, String mode) throws IOException {
+        return split(id, mode, 1);
+    }
+
+    /**
+     * Splits a measured segment, see {@link #split(long, String)}.
+     *
+     * @param id Id of the measured job.
+     * @param mode Split mode: {@code halves} or {@code commits}.
+     * @param priority Queue priority of the new jobs.
+     * @return Queued jobs.
+     */
+    public List<Job> split(long id, String mode, int priority) throws IOException {
         Job s = db.job(id);
 
         if (s == null)
@@ -534,7 +546,7 @@ public final class JobService {
                     continue;
 
                 try {
-                    out.add(enqueue(Job.ABBA, parent, c, s.scenario, 1, SRC_MANUAL, Job.shortSha(c) + " vs parent"));
+                    out.add(enqueue(Job.ABBA, parent, c, s.scenario, priority, SRC_MANUAL, Job.shortSha(c) + " vs parent"));
                 }
                 catch (IllegalArgumentException dup) {
                     // already queued
@@ -546,14 +558,14 @@ public final class JobService {
             int left = range.size() / 2, right = range.size() - left;
 
             try {
-                out.add(enqueueSegment(s.shaA, mid, left, s.scenario, 1, SRC_MANUAL));
+                out.add(enqueueSegment(s.shaA, mid, left, s.scenario, priority, SRC_MANUAL));
             }
             catch (IllegalArgumentException dup) {
                 // already queued
             }
 
             try {
-                out.add(enqueueSegment(mid, s.shaB, right, s.scenario, 1, SRC_MANUAL));
+                out.add(enqueueSegment(mid, s.shaB, right, s.scenario, priority, SRC_MANUAL));
             }
             catch (IllegalArgumentException dup) {
                 // already queued
@@ -911,6 +923,17 @@ public final class JobService {
      * @return Queued job.
      */
     public Job retry(long id) {
+        return retry(id, null);
+    }
+
+    /**
+     * Queues a new job with the parameters of a finished one.
+     *
+     * @param id Id of the job to repeat.
+     * @param priority Queue priority, or {@code null} for that of the old job, at least that of a manual one.
+     * @return Queued job.
+     */
+    public Job retry(long id, Integer priority) {
         Job old = db.job(id);
 
         if (old == null)
@@ -923,7 +946,7 @@ public final class JobService {
         j.type = old.type;
         j.source = SRC_AUTO.equals(old.source) ? SRC_MANUAL : old.source; // a retried compare stays a compare
         j.scenario = old.scenario;
-        j.priority = Math.max(old.priority, 1);
+        j.priority = priority != null ? priority : Math.max(old.priority, 1);
         j.refA = old.refA;
         j.shaA = old.shaA;
         j.refB = old.refB;

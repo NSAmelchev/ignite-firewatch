@@ -343,6 +343,9 @@ class PipelineTest {
         Job retry = jobs.retry(j.id);
         assertEquals(Job.QUEUED, retry.status);
         assertEquals(j.shaB, retry.shaB);
+        assertEquals(Math.max(j.priority, 1), retry.priority, "by default that of the old job, at least a manual one");
+        jobs.cancel(retry.id);
+        assertEquals(2, jobs.retry(j.id, 2).priority, "ahead of the queue when the dialog says so");
     }
 
     /** */
@@ -444,8 +447,9 @@ class PipelineTest {
         w.poll();
         assertEquals(1, db.jobs("active", 10).size(), "nothing new, nothing queued");
 
-        List<Job> halves = jobs.split(seg.id, "halves");
+        List<Job> halves = jobs.split(seg.id, "halves", 2);
         assertEquals(2, halves.size());
+        assertTrue(halves.stream().allMatch(h -> h.priority == 2), "the priority the dialog chose");
         assertEquals(start, halves.get(0).shaA);
         assertEquals(c1, halves.get(0).shaB, "middle of 3 commits = the first one");
         assertEquals(c1, halves.get(1).shaA);

@@ -250,10 +250,11 @@ function jobActions(j) {
 }
 async function moreRun(jobId, retry = false) {
   const s = await api.get(`/api/jobs/${jobId}`);
-  if (!(await confirmLaunch({ title: retry ? `Retry job #${jobId}` : 'Run again', job: s, scenario: s.scenario, type: s.type,
-    shas: [s.shaA, s.shaB], priority: Math.max(s.priority, 1),
-    note: retry ? 'a new job with the same refs and scenario' : 'one more identical run; its result is pooled with the previous runs' }))) return;
-  const j = await api.post(`/api/jobs/${jobId}/retry`, {});
+  const v = await confirmLaunch({ title: retry ? `Retry job #${jobId}` : 'Run again', job: s, scenario: s.scenario, type: s.type,
+    shas: [s.shaA, s.shaB],
+    note: retry ? 'a new job with the same refs and scenario' : 'one more identical run; its result is pooled with the previous runs' });
+  if (!v) return;
+  const j = await api.post(`/api/jobs/${jobId}/retry`, { priority: v.priority });
   toast(`job #${j.id} queued: ${retry ? 'retry' : 'one more run'} of #${jobId}`);
   refresh();
 }
@@ -261,17 +262,20 @@ async function splitJob(jobId, mode) {
   const s = await api.get(`/api/jobs/${jobId}`);
   const cs = (s.segment && s.segment.commits) || [], n = cs.length;
   const halves = mode === 'halves', mid = cs[Math.floor(n / 2) - 1];
-  if (!(await confirmLaunch({ title: halves ? 'Split the segment in halves' : 'Measure every commit of the segment', job: s, scenario: s.scenario,
-    jobs: halves ? 2 : n, shas: halves ? [s.shaA, mid && mid.sha, s.shaB] : [s.shaA, ...cs.map((c) => c.sha)], priority: 1,
-    note: halves ? `2 segments of ${Math.floor(n / 2)} and ${n - Math.floor(n / 2)} commits` : `${n} jobs, each commit against its parent (already queued ones are skipped)` }))) return;
-  const js = await api.post(`/api/jobs/${jobId}/split`, { mode });
+  const v = await confirmLaunch({ title: halves ? 'Split the segment in halves' : 'Measure every commit of the segment', job: s, scenario: s.scenario,
+    jobs: halves ? 2 : n, shas: halves ? [s.shaA, mid && mid.sha, s.shaB] : [s.shaA, ...cs.map((c) => c.sha)],
+    note: halves ? `2 segments of ${Math.floor(n / 2)} and ${n - Math.floor(n / 2)} commits` : `${n} jobs, each commit against its parent (already queued ones are skipped)` });
+  if (!v) return;
+  const js = await api.post(`/api/jobs/${jobId}/split`, { mode, priority: v.priority });
   toast(`${js.length} job(s) queued from the segment`);
   refresh();
 }
 const METRIC_NAMES = { throughput: 'throughput', p99Us: 'p99', serverCpuUsPerOp: 'CPU/op', allocKbPerOp: 'alloc/op', heapAfterGcMb: 'heap after GC' };
-// where a run goes in the queue: the same two choices in every dialog
-const priorityField = () => `<div class="seg-radio"><label><input type="radio" name="prio" value="2" checked><span>ahead of the queue</span></label>
-  <label><input type="radio" name="prio" value="1"><span>as usual</span></label></div>`;
+// where a run goes in the queue: the same two choices in every dialog that queues one, as usual by default. `usual` is the
+// priority of its kind (a manual run 1, an A/A 0); ahead goes before the ordinary manual jobs
+const AHEAD = 2;
+const priorityField = (usual = 1) => `<div class="seg-radio"><label><input type="radio" name="prio" value="${usual}" checked><span>as usual</span></label>
+  <label><input type="radio" name="prio" value="${Math.max(AHEAD, usual + 1)}"><span>ahead of the queue</span></label></div>`;
 const priorityOf = (w) => Number(w.querySelector('[name=prio]:checked').value);
 const metricOption = (k, x) => `${esc(METRIC_NAMES[k])} ${fmt.pct(x.deltaPct)} (${esc(x.verdict)}, ${signalText(x)})`;
 const levelsOf = (n) => Math.ceil(Math.log2(Math.max(2, n)));
@@ -511,18 +515,22 @@ function modal(title, body, ok = 'OK', { open, value, danger } = {}) {
     w.querySelector('[data-yes]').focus();
   });
 }
-// The confirmation of every launch: what is queued, the Δ it re-checks, how long it takes and when it should be done
-// With `choose` ([{name, checked}]) the Scenario row is a set of checkboxes, the estimate follows the choice and the
-// promise resolves to the chosen names (false on cancel). With `scenarios` (names) it covers all of them.
+// The confirmation of every launch: what is queued, the Δ it re-checks, where it goes in the queue, how long it takes and when
+// it should be done. Resolves to { priority, scenarios } (false on cancel): the priority chosen, as usual by default (`priority`
+// is the usual one of its kind). With `choose` ([{name, checked}]) the Scenario row is a set of checkboxes and `scenarios` the
+// chosen names; with `scenarios` (names) it covers all of them. The estimate follows the choices.
 async function confirmLaunch({ title, what, job, note, scenario, scenarios, choose, type = 'abba', jobs = 1, shas = [], extraBuilds = 0, priority = 1, ok = 'Queue' }) {
-  const estimate = async (sc, n) => {
-    const q = new URLSearchParams({ scenario: sc, type, jobs: n, shas: shas.filter(Boolean).join(','), extraBuilds, priority });
+  const estimate = async (sc, n, prio) => {
+    const q = new URLSearchParams({ scenario: sc, type, jobs: n, shas: shas.filter(Boolean).join(','), extraBuilds, priority: prio });
     const e = await api.get(`/api/estimate?${q}`).catch(() => null);
     return e ? `<dt>Takes</dt><dd>~${mins(e.totalSec)} <span class="muted">(${e.jobs > 1 ? `${e.jobs} jobs × ` : ''}${mins(e.runSec)}${e.builds ? ` + ${e.builds} build${e.builds > 1 ? 's' : ''} × ${mins(e.buildSec)}` : ''})</span></dd>
     <dt>Done</dt><dd>${etaStart(e.endAt)} <span class="muted">· starts ${e.ahead ? `after ${e.ahead} job${e.ahead > 1 ? 's' : ''} in the queue, ${etaStart(e.startAt)}` : 'right away'}</span></dd>` : '';
   };
   const picked = choose ? choose.filter((c) => c.checked).map((c) => c.name) : null;
-  const est = picked ? (picked.length ? await estimate(picked[0], picked.length) : '') : await estimate(scenarios ? scenarios.join(',') : scenario, jobs);
+  const chosen = (w) => (choose ? [...w.querySelectorAll('input[name=sc]:checked')].map((i) => i.value) : scenarios || [scenario]);
+  const estimateOf = (list, prio) => (choose ? (list.length ? estimate(list[0], list.length, prio) : Promise.resolve(''))
+    : estimate(scenarios ? scenarios.join(',') : scenario, jobs, prio));
+  const est = await estimateOf(picked || [], priority);
   const dl = job && job.status === 'done' ? deltaLine(job) : '';
   const scenarioRow = choose
     ? `<div class="choose two">${choose.map((c) => `<label><input type="checkbox" name="sc" value="${esc(c.name)}" ${c.checked ? 'checked' : ''}> ${esc(scName(c.name))}${c.note ? ` <span class="muted">${esc(c.note)}</span>` : ''}</label>`).join('')}</div>`
@@ -532,18 +540,18 @@ async function confirmLaunch({ title, what, job, note, scenario, scenarios, choo
     <dt>What</dt><dd>${what || (job ? `${jobTitle(job, false)} <span class="muted">${jobRefsShort(job)}</span>` : '')}${note ? `<div class="muted">${esc(note)}</div>` : ''}</dd>
     <dt>Scenario${choose || scenarios ? 's' : ''}</dt><dd>${scenarioRow}</dd>
     ${dl ? `<dt>Now</dt><dd>${dl}${job.runs > 1 ? ` <span class="muted">×${job.runs}</span>` : ''}</dd>` : ''}
+    <dt>Priority</dt><dd>${priorityField(priority)}</dd>
   </dl><dl class="kv est">${est}</dl>`;
-  if (!choose) return modal(title, body, ok);
-  const chosen = (w) => [...w.querySelectorAll('input[name=sc]:checked')].map((i) => i.value);
   return modal(title, body, ok, {
-    value: chosen,
+    value: (w) => ({ priority: priorityOf(w), scenarios: chosen(w) }),
     open: (w) => {
       const yes = w.querySelector('[data-yes]');
       yes.disabled = !chosen(w).length;
-      w.querySelector('.choose').addEventListener('change', async () => {
+      // the scenarios and the place in the queue both move the estimate
+      w.addEventListener('change', async () => {
         const list = chosen(w);
         yes.disabled = !list.length;
-        w.querySelector('.est').innerHTML = list.length ? await estimate(list[0], list.length) : '';
+        w.querySelector('.est').innerHTML = await estimateOf(list, priorityOf(w));
       });
     },
   });
@@ -1200,12 +1208,12 @@ views.commits = {
       guarded(async () => {
         const scenarios = await api.get('/api/scenarios');
         const subj = b.closest('tr') && b.closest('tr').querySelector('.subject');
-        const list = await confirmLaunch({ title: 'Measure the commit', shas: [b.dataset.parent, b.dataset.run], extraBuilds: b.dataset.parent ? 0 : 1,
+        const v = await confirmLaunch({ title: 'Measure the commit', shas: [b.dataset.parent, b.dataset.run], extraBuilds: b.dataset.parent ? 0 : 1,
           choose: scenarios.map((s) => ({ name: s.name, checked: false })),
           what: `<span class="mono">${fmt.sha(b.dataset.run)}</span> ${esc(subj ? subj.textContent : '')}`, note: 'ABBA against its parent, one job per scenario' });
-        if (!list) return;
-        for (const scenario of list) {
-          const j = await api.post('/api/jobs', { type: 'abba', refA: b.dataset.parent || `${b.dataset.run}~1`, refB: b.dataset.run, scenario, priority: 1 }).catch((err) => toast(`${scenario}: ${err.message}`, true));
+        if (!v) return;
+        for (const scenario of v.scenarios) {
+          const j = await api.post('/api/jobs', { type: 'abba', refA: b.dataset.parent || `${b.dataset.run}~1`, refB: b.dataset.run, scenario, priority: v.priority }).catch((err) => toast(`${scenario}: ${err.message}`, true));
           if (j) toast(`job #${j.id} queued: ${j.label} [${scenario}]`);
         }
         refresh();
@@ -1294,9 +1302,10 @@ views.commit = {
       const r = e.target.closest('button[data-run-sc]');
       if (r) guarded(async () => {
         const d = await api.get(`/api/commits/${encodeURIComponent(location.hash.split('/')[2])}`), c = d.commit || {};
-        if (!(await confirmLaunch({ title: 'Measure the commit', scenario: r.dataset.runSc, shas: [c.parentSha, d.sha], extraBuilds: c.parentSha ? 0 : 1,
-          what: `<span class="mono">${fmt.sha(d.sha)}</span> ${esc(c.subject || '')}`, note: 'ABBA against its parent' }))) return;
-        const j = await api.post('/api/jobs', { type: 'abba', refA: c.parentSha || `${d.sha}~1`, refB: d.sha, scenario: r.dataset.runSc, priority: 1 });
+        const v = await confirmLaunch({ title: 'Measure the commit', scenario: r.dataset.runSc, shas: [c.parentSha, d.sha], extraBuilds: c.parentSha ? 0 : 1,
+          what: `<span class="mono">${fmt.sha(d.sha)}</span> ${esc(c.subject || '')}`, note: 'ABBA against its parent' });
+        if (!v) return;
+        const j = await api.post('/api/jobs', { type: 'abba', refA: c.parentSha || `${d.sha}~1`, refB: d.sha, scenario: r.dataset.runSc, priority: v.priority });
         toast(`job #${j.id} queued: ${j.label}`);
         refresh();
       });
@@ -1355,9 +1364,10 @@ views.noise = {
   },
   bind(root) {
     const queue = async (list) => {
-      if (!(await confirmLaunch({ title: list.length > 1 ? 'A/A calibration: every scenario' : `A/A calibration: ${list[0]}`, scenario: list[0], jobs: list.length, priority: 0,
-        what: `master head against itself: ${list.map((x) => esc(scName(x))).join(', ')}`, note: 'measures the noise floors the thresholds use; one ABBA job per scenario' }))) return;
-      for (const sc of list) await api.post('/api/calibrate', { ref: 'master', scenario: sc }).catch((e) => toast(`${sc}: ${e.message}`, true));
+      const v = await confirmLaunch({ title: list.length > 1 ? 'A/A calibration: every scenario' : `A/A calibration: ${list[0]}`, scenario: list[0], jobs: list.length, priority: 0,
+        what: `master head against itself: ${list.map((x) => esc(scName(x))).join(', ')}`, note: 'measures the noise floors the thresholds use; one ABBA job per scenario' });
+      if (!v) return;
+      for (const sc of list) await api.post('/api/calibrate', { ref: 'master', scenario: sc, priority: v.priority }).catch((e) => toast(`${sc}: ${e.message}`, true));
       toast(`${list.length} A/A job(s) queued`);
       refresh();
     };
@@ -1738,10 +1748,11 @@ views.compare = {
         // PR mode never sends a baseline: the server then compares master vs master + PR
         const pr = this.mode !== 'refs', refs = pr ? [] : [d.base, d.target].filter(Boolean);
         const shas = await Promise.all(refs.map((r) => api.post('/api/resolve', { ref: r }).then((c) => c.sha))); // a wrong ref fails here
-        if (!(await confirmLaunch({ title: pr ? 'Compare PR vs master' : 'Compare refs', scenarios: names, jobs: names.length, shas, extraBuilds: 2 - shas.length, priority: 2,
+        const v = await confirmLaunch({ title: pr ? 'Compare PR vs master' : 'Compare refs', scenarios: names, jobs: names.length, shas, extraBuilds: 2 - shas.length,
           what: pr ? `master vs master + <b>${esc(d.target)}</b>` : `<b>${esc(d.base || 'merge base')}</b> vs <b>${esc(d.target)}</b>`,
-          note: 'debug run: not shown on Dashboard, Timeline or Commits' }))) return;
-        const c = await api.post('/api/comparisons', { base: pr ? '' : d.base, target: d.target, scenarios: names, priority: 2 });
+          note: 'debug run: not shown on Dashboard, Timeline or Commits' });
+        if (!v) return;
+        const c = await api.post('/api/comparisons', { base: pr ? '' : d.base, target: d.target, scenarios: names, priority: v.priority });
         toast(`comparison #${c.id} queued: ${c.label}`);
         location.hash = `#/comparisons/${c.id}`;
       });
@@ -2774,10 +2785,11 @@ views.dashboard = {
   bind(root) {
     const release = async (list) => {
       const r = await api.get(`/api/release?scenario=${encodeURIComponent(list[0])}`).catch(() => ({}));
-      if (!(await confirmLaunch({ title: list.length > 1 ? `Run master vs ${r.tag || 'the release'}: every scenario` : `Run ${scName(list[0])} vs ${r.tag || 'the release'}`,
+      const v = await confirmLaunch({ title: list.length > 1 ? `Run master vs ${r.tag || 'the release'}: every scenario` : `Run ${scName(list[0])} vs ${r.tag || 'the release'}`,
         scenario: list[0], jobs: list.length, shas: [r.tagSha, r.head], extraBuilds: r.head ? 0 : 1,
-        what: `master head vs <b>${esc(r.tag || 'release')}</b>: ${list.map((x) => esc(scName(x))).join(', ')}`, note: 'the dashboard headline; one ABBA job per scenario' }))) return;
-      for (const sc of list) await api.post('/api/release', { scenario: sc }).catch((e) => toast(`${sc}: ${e.message}`, true));
+        what: `master head vs <b>${esc(r.tag || 'release')}</b>: ${list.map((x) => esc(scName(x))).join(', ')}`, note: 'the dashboard headline; one ABBA job per scenario' });
+      if (!v) return;
+      for (const sc of list) await api.post('/api/release', { scenario: sc, priority: v.priority }).catch((e) => toast(`${sc}: ${e.message}`, true));
       toast(`${list.length} release job(s) queued`);
       refresh();
     };
