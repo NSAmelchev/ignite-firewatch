@@ -410,7 +410,7 @@ strength of the signal, commits.
 - **Settings**: on top a summary of the stand: a verdict and a line each for the worker, watcher, disk, memory, JVMs left
   over, builds, noise, stand and automation (`✓`, `!`, `✗`), with Poll now, Kill all and, in the worker line, Close for
   maintenance / Reopen with a confirmation: the dialog shows the state of the stand at the moment of the click (the current
-  job runs to its end, new ones do not start). Below are the sections Automation, Release, Notifications, Limits, Stand,
+  job runs to its end, new ones do not start). Below are the sections Automation, Release, Notifications, Storage, Stand,
   System (builds with their log and jars, and the controller log), Application (the repository, the check of the builds
   as in the wizard, and the ticket keys: `links.tickets`, a table of key, ticket URL and PR URL, in the setting lines
   `KEY=URL [PR_URL]`, by default `IGNITE=https://issues.apache.org/jira/browse/`; the PR of a commit with that key leads to
@@ -420,7 +420,8 @@ strength of the signal, commits.
   after it the hosts and sizes are only shown, while the last Check report and Check again stay. Both checks say next to
   their badge when the report was made.
   Automation: what the stand runs by itself, three cards of one kind. On new commits: off, segments, every commit or a
-  single phase, scenarios, a path filter. Segments, A/A and master vs release live by one rule, `Freshness`, and only its
+  single phase, scenarios, a path filter, and how many auto-run jobs may wait before new commits are skipped
+  (`autorun.maxBacklog`). Segments, A/A and master vs release live by one rule, `Freshness`, and only its
   period is set: Keep fresh, every N days (1 for segments, 7 for the others). Younger than the period, nothing runs. Older,
   it runs when the stand has been idle for 2 hours, at a low priority. Twice the period old, it runs despite the queue,
   ahead of the next steps of bisections. A segment counts its age from its oldest unmeasured commit, A/A and master vs
@@ -439,10 +440,12 @@ strength of the signal, commits.
   Release: what the dashboard compares master with. Empty means the highest X.Y.Z tag, a mask `2.18.*` picks the highest
   one that fits, and any tag, sha or branch can be given. The value is checked when saved; runs against another release
   do not count on the dashboard.
-  The sections switch without asking the server, and unsaved input is not lost. Limits, with an estimate of the space they
-  hold next to each: how many comparisons and finished bisections to keep (0 = all, the default; when a limit goes down,
-  the page asks for a confirmation), the heavy files of the last N jobs, the build cache, the auto-run queue. The history
-  of the branch has no limit: Timeline, repeats and noise thresholds rest on it.
+  The sections switch without asking the server, and unsaved input is not lost.
+  Storage: what the stand keeps, a row per kind of data with how much of it is kept and the space it takes now, the free
+  space and a bar of the shares on top. Results, series and logs of every run are kept always: Timeline, pooled repeats
+  and noise thresholds are built from them. JFR recordings and work directories for the last N jobs; comparisons and
+  ended bisections, all or the newest N (when a limit goes down, the page asks for a confirmation); the build cache up to
+  N GB, the least recently used builds first.
 - **Noise**: a row per scenario: the Δ of the last A/A on ops/s, p99 and CPU/op in separate columns, how many calibrations
   (`2 of 3` while it has no thresholds of its own), the history unfolds. One button makes up A/A where there are fewer than
   three, the other runs all the scenarios.

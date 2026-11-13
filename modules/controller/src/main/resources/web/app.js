@@ -2080,7 +2080,7 @@ const ticketRow = (key = '', l = { url: '', pr: '' }) => `<tr data-ticket><td><i
   <td><input name="url" value="${esc(l.url)}" placeholder="https://issues.apache.org/jira/browse/" autocomplete="off" spellcheck="false"></td>
   <td><input name="pr" value="${esc(l.pr)}" placeholder="${esc(defaultPrUrl() || 'https://github.com/org/repo/pull/')}" autocomplete="off" spellcheck="false"></td>
   <td><button type="button" class="small" data-ticket-remove>Remove</button></td></tr>`;
-const SETTINGS_TABS = [['automation', 'Automation'], ['release', 'Release'], ['notify', 'Notifications'], ['limits', 'Limits'], ['stand', 'Stand'], ['system', 'System'], ['repository', 'Application']];
+const SETTINGS_TABS = [['automation', 'Automation'], ['release', 'Release'], ['notify', 'Notifications'], ['limits', 'Storage'], ['stand', 'Stand'], ['system', 'System'], ['repository', 'Application']];
 // Where the JVMs run: the setup of a new stand and the Stand section of Settings share these fields
 const STAND_MODES = [['local', 'This machine', 'All JVMs run here, next to the application.'],
   ['remote', 'Remote Linux hosts', 'Server nodes and the loader run on these hosts over ssh; commits are still built here.']];
@@ -2368,7 +2368,15 @@ views.settings = {
     const tab = this.tab || SETTINGS_TABS[0][0];
     const autoMode = w.autorunEnabled ? settings['autorun.mode'] : 'off';
     // a limit of records: 0 keeps them all, so the field says "all" and the count next to it is plainly a count
-    const limit = (key, name, hint, all) => `<div class="limit-row"><label for="${key}">${name}</label><input id="${key}" name="${key}" type="number" min="0" value="${all && settings[key] === '0' ? '' : esc(settings[key] ?? '')}" ${all ? 'placeholder="all"' : ''}><span class="muted small-text">${hint}</span></div>`;
+    // a limit: 0 keeps them all, so the field says "all" when it is 0
+    const keepInput = (key, all) => `<input id="${key}" name="${key}" type="number" min="0" value="${all && settings[key] === '0' ? '' : esc(settings[key] ?? '')}" ${all ? 'placeholder="all"' : ''}>`;
+    // Storage: a row per kind of data, how much of it is kept and how much space it takes now; the walk over the runs may fail,
+    // then the runs count as results alone
+    const heavyB = storage ? storage.heavy : 0, lightB = Math.max(0, (storage ? storage.runs : s.runsMb * 1048576) - heavyB), buildsB = s.artifactsMb * 1048576;
+    const usedB = lightB + heavyB + buildsB || 1;
+    const freeText = s.dataFreeMb === s.cacheFreeMb ? `${fmt.num(s.dataFreeMb / 1024, 1)} GB free on the disk of data and cache`
+      : `${fmt.num(s.dataFreeMb / 1024, 1)} GB free for data, ${fmt.num(s.cacheFreeMb / 1024, 1)} GB for the cache`;
+    const storeRow = (title, note, keep, now) => `<tr><td class="what"><b>${title}</b><span class="muted">${note}</span></td><td class="keep">${keep}</td><td class="now">${now}</td></tr>`;
     this.counts = health.counts;
     const chosen = (settings['autorun.scenario'] || '').split(',').map((x) => x.trim()).filter(Boolean);
     this.picked = new Set(chosen);
@@ -2413,6 +2421,8 @@ views.settings = {
             <label>Only commits touching (globs; empty = every commit)</label>
             <textarea name="autorun.pathFilter" rows="2" style="width:100%">${esc(settings['autorun.pathFilter'])}</textarea>
             <div class="form-grid"><label>Poll interval, s <input name="watch.pollSec" type="number" value="${esc(settings['watch.pollSec'])}"></label></div>
+            <div class="backlog-row">Skip new commits while ${keepInput('autorun.maxBacklog')} auto-run jobs wait
+              <span class="muted small-text">· a busy stand does not pile up a backlog; a skipped commit can be run from Commits</span></div>
           </div>
           <div class="actions"><button class="primary">Save</button></div>
         </form>
@@ -2448,14 +2458,23 @@ views.settings = {
       </div></section>
       <section data-tab="limits" ${tab === 'limits' ? '' : 'hidden'}><div class="card">
         <form id="limits">
-          ${limit('retention.keepComparisons', 'Comparisons to keep', `Stored now: ${health.counts.comparisons}${storage ? `, ≈ ${fmt.bytes(storage.comparisons)}` : ''}. With a number, older ones go with their jobs and files, an active one stays.`, true)}
-          ${limit('retention.keepBisects', 'Ended bisects to keep', `Stored now: ${health.counts.bisects}${storage ? `, ≈ ${fmt.bytes(storage.bisects)} in the database` : ''}. With a number, the older records go, their steps stay as ordinary runs.`, true)}
-          ${limit('retention.keepJfrJobs', 'Heavy files: last N jobs', `JFR and work directories of older jobs go · ${storage ? `now ≈ ${fmt.bytes(storage.heavy)} of ${fmt.bytes(storage.runs)} in runs` : `runs take ${fmt.num(s.runsMb)} MB`}. Results, series and logs stay.`)}
-          ${limit('retention.artifactsGb', 'Build cache, GB', `Least recently used builds go above this · now ${fmt.num(s.artifactsMb / 1024, 1)} GB, ${fmt.num(Math.min(s.dataFreeMb, s.cacheFreeMb) / 1024, 1)} GB free on disk.`)}
-          ${limit('autorun.maxBacklog', 'Waiting auto-run jobs', 'A new commit is skipped while this many auto jobs wait.')}
+          <div class="store-head"><h2>What the stand keeps</h2><span class="muted">${freeText}</span></div>
+          <div class="store-bar">${[['runs', lightB], ['heavy', heavyB], ['builds', buildsB]].map(([k, b]) => `<span class="${k}" style="width:${(b * 100 / usedB).toFixed(1)}%"></span>`).join('')}</div>
+          <div class="store-legend"><span><i class="runs"></i>runs ${fmt.bytes(lightB)}</span>${heavyB ? `<span><i class="heavy"></i>JFR and work directories ${fmt.bytes(heavyB)}</span>` : ''}<span><i class="builds"></i>builds ${fmt.bytes(buildsB)}</span></div>
+          <table class="store"><thead><tr><th>What</th><th>Keep</th><th class="num">Takes now</th></tr></thead><tbody>
+            ${storeRow('Results, series and logs of every run', 'Timeline, pooled repeats and noise floors are built from them, so they are never deleted',
+              '<span class="always">always</span>', fmt.bytes(lightB))}
+            ${storeRow('JFR recordings and work directories', 'hot methods and the JFR downloads of a job need them; an older job keeps its results and logs',
+              `for the last ${keepInput('retention.keepJfrJobs')} <span class="unit">jobs</span>`, storage ? fmt.bytes(heavyB) : '–')}
+            ${storeRow('Comparisons', 'with a number, an older one goes with its jobs and files; an active one stays',
+              `${keepInput('retention.keepComparisons', true)} <span class="unit">comparisons</span>`, `${health.counts.comparisons}${storage ? ` <span class="muted">·</span> ${fmt.bytes(storage.comparisons)}` : ''}`)}
+            ${storeRow('Ended bisections', 'with a number, only the older records go: their steps stay runs of the branch',
+              `${keepInput('retention.keepBisects', true)} <span class="unit">bisections</span>`, `${health.counts.bisects}${storage ? ` <span class="muted">·</span> ${fmt.bytes(storage.bisects)}` : ''}`)}
+            ${storeRow('Build cache', 'jars of built commits; the least recently used go first, a later run builds them again',
+              `up to ${keepInput('retention.artifactsGb')} <span class="unit">GB</span>`, fmt.bytes(buildsB))}
+          </tbody></table>
           <div class="actions"><button class="primary">Save</button></div>
         </form>
-        <div class="muted small-text">The history of the branch has no limit: Timeline, repeats and noise floors rest on it.</div>
       </div></section>
       <section data-tab="stand" ${tab === 'stand' ? '' : 'hidden'}><div class="card">
         ${stand.frozen ? `<form id="stand" data-mode="${esc(stand.mode)}">${stepHead(null, 'Hosts', 'fixed by the first finished run', 'hosts',
@@ -2608,7 +2627,7 @@ views.settings = {
         const what = [c && `${plural(c, 'old comparison')} with jobs and files`, b && plural(b, 'old bisect')].filter(Boolean).join(' and ');
         if (what && !(await modal('Delete old records?', `<div>${what} will be deleted. This cannot be undone.</div>`, 'Save and delete'))) return;
         await api.put('/api/settings', d);
-        toast('limits saved');
+        toast('storage limits saved');
         refresh();
       });
     });

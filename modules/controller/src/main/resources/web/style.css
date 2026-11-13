@@ -84,9 +84,6 @@ table.ticket-keys input { width: 100%; font-family: ui-monospace, SFMono-Regular
 .keep-days { display: inline-flex; align-items: center; gap: 5px; margin: 0; font-size: 14px; color: var(--fg); }
 .keep-days input { width: 64px; padding: 2px 6px; }
 label.mode-opt { display: flex; gap: 8px; align-items: baseline; margin: 0; padding: 6px 0; font-size: 14px; color: var(--fg); cursor: pointer; }
-.limit-row { display: grid; grid-template-columns: 200px 90px minmax(0, 1fr); gap: 12px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
-.limit-row label { margin: 0; font-size: 14px; color: var(--fg); }
-.limit-row input { width: 100%; }
 .actions-inline label.inline { display: inline-flex; align-items: center; gap: 4px; margin: 0 8px; font-size: 13px; color: var(--fg); }
 .chev { display: inline-block; width: 1.1em; color: var(--muted); font-size: 14px; line-height: 1; }
 table.commits tr.row-detail td, table.scenario-list tr.row-detail td { background: var(--card); white-space: normal; padding: 8px 12px; }
@@ -556,3 +553,23 @@ tr.files-row td { background: var(--card); padding: 6px 8px 8px; }
 .inline-dl { font-size: 13px; margin-left: 6px; }
 .builds-line { font-size: 13px; margin-top: 4px; }
 .builds-line .sep { color: var(--line); margin: 0 8px; }
+/* Settings → Storage: what the stand keeps, how much of it, how much space it takes */
+.store-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.store-head h2 { margin: 0; font-size: 15px; }
+.store-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--line); max-width: 980px; margin: 4px 0 6px; }
+.store-bar > span { display: block; height: 100%; }
+.store-bar .runs, .store-legend i.runs { background: var(--accent); }
+.store-bar .heavy, .store-legend i.heavy { background: color-mix(in srgb, var(--accent) 45%, var(--bg)); }
+.store-bar .builds, .store-legend i.builds { background: color-mix(in srgb, var(--muted) 45%, var(--bg)); }
+.store-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.store-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+table.store { max-width: 980px; margin-top: 12px; }
+table.store td { padding: 8px; vertical-align: middle; }
+table.store td.what b { display: block; font-weight: 600; }
+table.store td.what .muted { font-size: 12px; }
+table.store td.keep { white-space: nowrap; width: 220px; }
+table.store td.keep input { width: 70px; }
+table.store .unit, table.store .always { color: var(--muted); font-size: 13px; }
+table.store td.now { white-space: nowrap; width: 150px; text-align: right; font-variant-numeric: tabular-nums; }
+.backlog-row { margin-top: 10px; font-size: 14px; }
+.backlog-row input { width: 64px; margin: 0 4px; }
