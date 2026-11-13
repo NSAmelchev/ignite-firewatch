@@ -377,6 +377,7 @@ public final class Watcher implements Runnable {
         m.put("branch", cfg.branch);
         m.put("repoUrl", cfg.repoUrl);
         m.put("mirrorReady", mirror.ready());
+        m.put("fetch", mirror.fetchProgress());
         m.put("polling", polling);
         m.put("head", head);
         m.put("watermark", db.setting(Settings.WATCH_WATERMARK, null));

@@ -1125,7 +1125,7 @@ views.commits = {
         <td class="muted" style="white-space:nowrap" title="${esc(c.committedAt)}">${fmt.date(c.committedAt)}</td><td class="subject" title="${esc(c.subject)}${c.author ? ` (${esc(c.author)})` : ''}">${subjectHtml(c.subject)}</td>
         <td class="dots">${dots(c) || inSegment(c)}</td>
         <td class="row-action"><button class="small" data-run="${c.sha}" data-parent="${c.parentSha || ''}">Run</button></td></tr>`).join('')
-        || `<tr><td colspan="6" class="muted">${this.onlyMeasured ? 'nothing measured one by one here' : 'no commits yet (first fetch in progress?)'}</td></tr>`}</tbody></table>
+        || `<tr><td colspan="6" class="muted">${this.onlyMeasured ? 'nothing measured one by one here' : `no commits yet: they come with the first fetch of the repository, <a href="#/dashboard">Dashboard</a> shows how far it is`}</td></tr>`}</tbody></table>
       <div class="commits-foot">${pages > 1 ? pager : ''}<span class="muted small-text">Run = ABBA of the commit against its parent; the scenarios are chosen in the dialog.</span></div>`;
   },
   bind(root) {
@@ -2559,6 +2559,28 @@ function attentionLine(l, busy) {
 // Dashboard headline: master vs the last release, a row per scenario, what is left to do on top. The colour of a Δ says how bad it
 // is, the mark what is left to do about it: a regression stays red when its commit is found. A click opens what is known about a
 // marked Δ; with nothing known it opens Timeline, coloured by that metric. A group of the legend leads to its lines in Result.
+// A stand before its first fetch is done: the way to its first measurement, the clone with what git says of it. A failed
+// fetch is the one error here: the next poll tries again, the button at once
+function startingCard(w, stand) {
+  const f = w.fetch, failed = !f && !w.polling && w.lastError;
+  const step = (n, state, title, body = '') => `<div class="start-step ${state}"><span class="step-num ${state === 'done' ? 'ok' : state}">${state === 'done' ? '✓' : state === 'bad' ? '✗' : n}</span>
+    <div class="start-body"><b>${title}</b>${body}</div></div>`;
+  const where = stand.mode === 'remote' ? `${plural(stand.hosts.length, 'remote host')} over ssh` : 'this machine';
+  const clone = failed ? `<div class="error">${esc(w.lastError)}</div><div class="muted">The next poll tries again${w.lastPollAt ? ` in ${fmt.len(Math.max(0, (new Date(w.lastPollAt).getTime() + Number(w.pollSec) * 1000 - Date.now()) / 1000))}` : ''}. <button type="button" class="small" data-poll-now>Try now</button></div>`
+    : !f ? '<div class="muted">about to start…</div>'
+    : `<div class="progress"><div style="width:${f.pct || 0}%"></div></div>
+      <div class="muted">${f.stage ? `${esc(f.stage)} ${f.pct} %${f.detail ? ` · ${esc(f.detail)}` : ''}` : 'connecting…'} · ${fmt.dur(f.startedAt)}</div>`;
+  return `<div class="card starting"><div class="step-head"><h2>${w.lastFetchAt ? 'Fetching the new repository' : 'Starting the stand'}</h2>
+      <span class="step-state"><span class="badge ${failed ? 'failed' : 'running'}">${failed ? 'fetch failed' : 'starting'}</span></span></div>
+    <div class="muted">The first fetch copies the repository: a few minutes for Ignite. Nothing is measured before it is done; this page follows it.</div>
+    <div class="start-steps">
+      ${step(1, 'done', 'Stand set up', `<div class="muted">${where}</div>`)}
+      ${step(2, failed ? 'bad' : 'now', 'Clone the repository', `<div class="mono small-text">${esc(w.repoUrl)}</div>${clone}`)}
+      ${step(3, 'next', `Read the history of ${esc(w.branch)} and the release tags`, '<div class="muted">seconds</div>')}
+      ${step(4, 'next', 'Measure', `<div class="muted">${w.autorunEnabled ? `auto-run is on: every new commit of ${esc(w.branch)} gets measured`
+        : 'auto-run is off: runs start from Commits and Compare, or turn it on in Settings → Automation'}</div>`)}
+    </div></div>`;
+}
 function masterCard(rels, a, branch, autorun, open, showCalm) {
   // tag, unreleased commits and coverage come from the main auto-run scenario (the tag is the same for all)
   const r = rels.find((x) => x && x.tag && x.scenario === autorun[0]) || rels.find((x) => x && x.tag) || rels[0];
@@ -2619,9 +2641,14 @@ function masterCard(rels, a, branch, autorun, open, showCalm) {
     </div>`;
 }
 views.dashboard = {
-  poll: 10000,
+  // a starting stand moves by the second, and the page follows it to the end of its first fetch
+  get poll() { return this.starting ? 2000 : 10000; },
+  live() { return this.starting; },
   async render() {
     const [settings, scenarios, health] = await Promise.all([api.get('/api/settings'), api.get('/api/scenarios'), api.get('/api/health')]);
+    // before the first fetch there is nothing to compare or to look at: the page follows the start
+    this.starting = !health.watcher.mirrorReady;
+    if (this.starting) return `<h1>Dashboard</h1>${startingCard(health.watcher, await api.get('/api/stand'))}`;
     const scenario = settings['autorun.scenario'].split(',')[0].trim();
     const autoScenarios = (settings['autorun.scenario'] || '').split(',').map((x) => x.trim()).filter(Boolean);
     // every scenario gets the nightly A/A, so the tile checks all of them, the same as the Noise tab
@@ -2646,10 +2673,11 @@ views.dashboard = {
 
     // noise status: the last A/A of every scenario must stay inside its floor on the verdict metrics
     const verdictKeys = ['throughput', 'p99Us', 'serverCpuUsPerOp'];
-    const noiseIssues = [], calTimes = [];
+    // a scenario without A/A has the default floor: nothing is wrong with it yet, a new stand has only those
+    const noiseIssues = [], noAa = [], calTimes = [];
     for (const x of noises.filter(Boolean)) {
       const last = x.n.calibrations[0];
-      if (!last) { noiseIssues.push(`${scName(x.sc)}: no A/A yet`); continue; }
+      if (!last) { noAa.push(scName(x.sc)); continue; }
       calTimes.push(last.finishedAt);
       const over = verdictKeys.filter((k) => last.deltaPct[k] != null && Math.abs(last.deltaPct[k]) > (x.n.floors[k] ?? Infinity));
       if (over.length) noiseIssues.push(`${scName(x.sc)}: last A/A over the floor on ${over.join(', ')}`);
@@ -2667,7 +2695,8 @@ views.dashboard = {
         ${tile('Queue', health.worker.paused ? '' : health.bisectsDoneAt ? `done ${etaStart(health.bisectsDoneAt)}` : drains ? `drains ${etaStart(drains)}` : '',
           `<div><a href="#/queue">${health.jobs.queued || 0} waiting</a>${health.bisects ? ` · <a href="#/bisects">${plural(health.bisects, 'bisect')}</a>` : ''}</div>`)}
         ${tile('Last commit', head ? fmt.ago(head.committedAt) : '', head ? `<div title="${esc(head.subject)}"><a class="mono" href="#/commits/${head.sha}">${fmt.sha(head.sha)}</a> ${esc(head.subject)}</div>` : '<div>–</div>')}
-        ${tile('<a href="#/noise">Noise</a>', lastCal ? `A/A ${fmt.ago(lastCal)}` : '', `<div>${noiseIssues.length ? `<b class="bad-text" title="${esc(noiseIssues.join('; '))}">check: ${noiseIssues.map((x) => esc(x.split(':')[0])).join(', ')}</b>` : 'ok'}</div>`)}
+        ${tile('<a href="#/noise">Noise</a>', lastCal ? `A/A ${fmt.ago(lastCal)}` : '', `<div>${noiseIssues.length ? `<b class="bad-text" title="${esc(noiseIssues.join('; '))}">check: ${noiseIssues.map((x) => esc(x.split(':')[0])).join(', ')}</b>`
+          : noAa.length ? `${calTimes.length ? 'ok · ' : ''}<span class="muted" title="${esc(`no A/A yet: ${noAa.join(', ')}`)}">${calTimes.length ? `${noAa.length} without A/A` : 'no A/A yet: default floors'}</span>` : 'ok'}</div>`)}
         ${tile('<a href="#/settings">Auto-run</a>', '', `<div>${w.autorunEnabled ? 'on' : '<b>off</b>'}</div>`)}
       </div>`;
 
@@ -2693,6 +2722,7 @@ views.dashboard = {
     root.addEventListener('click', (e) => {
       const b = e.target.closest('button[data-release]');
       if (b) guarded(() => release([b.dataset.release]));
+      if (e.target.closest('button[data-poll-now]')) guarded(async () => { await api.post('/api/watch/poll'); refresh(); });
     });
     bindJobActions(root, this);
     // the matrix unfolds in place: the data is on the page already

@@ -489,6 +489,16 @@ table.check.tools { margin-top: 10px; }
   background: var(--line); color: var(--fg); font-size: 12px; font-weight: 700; }
 .step-num.ok { background: var(--ok); color: var(--bg); }
 .step-num.bad { background: var(--bad); color: var(--bg); }
+.step-num.now { background: var(--accent); color: #fff; }
+/* Dashboard of a stand that is starting: the way to its first measurement */
+.card.starting { max-width: 980px; padding: 12px 16px 14px; }
+.start-steps { margin-top: 10px; }
+.start-step { display: flex; gap: 10px; align-items: flex-start; padding: 5px 0; }
+.start-step .step-num { margin-top: 1px; }
+.start-step.next b { color: var(--muted); font-weight: 600; }
+.start-body { min-width: 0; flex: 1; }
+.start-body .progress { max-width: 420px; margin: 6px 0 4px; }
+.start-body .error { margin-top: 4px; white-space: pre-wrap; }
 .repo-grid { display: grid; grid-template-columns: minmax(0, 1fr) 140px 180px; gap: 8px 12px; margin-top: 8px; }
 .repo-grid label { display: flex; flex-direction: column; gap: 4px; margin: 0; }
 .repo-grid input { width: 100%; }

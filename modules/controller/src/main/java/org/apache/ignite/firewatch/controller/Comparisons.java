@@ -81,7 +81,7 @@ public final class Comparisons {
         }
 
         if (!mirror.ready())
-            throw new IllegalStateException("the git mirror is not ready yet (first fetch in progress)");
+            throw new IllegalStateException("the stand is still cloning the repository: Dashboard shows how far it is");
 
         if (target == null || target.isBlank())
             throw new IllegalArgumentException("target ref is required");

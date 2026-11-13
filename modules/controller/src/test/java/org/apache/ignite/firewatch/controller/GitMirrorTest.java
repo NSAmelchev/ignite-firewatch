@@ -41,6 +41,19 @@ class GitMirrorTest {
         assertFalse(mirror.ready());
         mirror.fetch();
         assertTrue(mirror.ready());
+        assertNull(mirror.fetchProgress(), "no fetch runs");
+    }
+
+    /** What the page shows while the first fetch clones: the last line git rewrote. */
+    @Test void theProgressOfAFetchIsTheLastLineOfGit() {
+        Map<String, Object> p = GitMirror.progressOf("remote: Enumerating objects: 1000, done.\n"
+            + "remote: Counting objects:  50% (5/10)\rremote: Counting objects: 100% (10/10), done.\n"
+            + "Receiving objects:  12% (12/100), 1.00 MiB | 2.00 MiB/s\rReceiving objects:  45% (45/100), 210.50 MiB | 12.00 MiB/s\r");
+        assertEquals(Map.of("stage", "receiving objects", "pct", 45, "detail", "210.50 MiB | 12.00 MiB/s"), p);
+        p = GitMirror.progressOf("Receiving objects: 100% (100/100), 400 MiB | 9 MiB/s, done.\nResolving deltas: 100% (7/7), done.\n");
+        assertEquals("resolving deltas", p.get("stage"));
+        assertNull(p.get("detail"));
+        assertTrue(GitMirror.progressOf("From /x\n * [new branch]      master     -> master\n").isEmpty(), "said nothing of its progress");
     }
 
     /** */

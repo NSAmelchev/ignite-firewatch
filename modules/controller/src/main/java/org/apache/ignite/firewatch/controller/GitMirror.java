@@ -1,11 +1,14 @@
 package org.apache.ignite.firewatch.controller;
 
 import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -31,6 +34,13 @@ public final class GitMirror {
     /** */
     private static final Duration SHORT = Duration.ofMinutes(2);
 
+    /** A progress line of git: {@code Receiving objects:  45% (123/274), 210.50 MiB | 12.00 MiB/s}, also after "remote: ". */
+    private static final Pattern PROGRESS =
+        Pattern.compile("^(?:remote: )?([A-Z][a-z]+(?: [a-z]+)*):\\s+(\\d+)% \\((\\d+)/(\\d+)\\)(.*)$");
+
+    /** What is read of the output of a running fetch for its progress: git rewrites its line with carriage returns. */
+    private static final int PROGRESS_TAIL_BYTES = 8192;
+
     /** */
     private final Path dir;
 
@@ -52,6 +62,12 @@ public final class GitMirror {
     /** */
     private volatile boolean ready;
 
+    /** What the running fetch says, next to the mirror: the page shows its progress while the first fetch clones. */
+    private final Path fetchLog;
+
+    /** */
+    private volatile String fetchStartedAt;
+
     /**
      * Creates a mirror.
      *
@@ -65,6 +81,7 @@ public final class GitMirror {
         this.url = url;
         this.branch = branch;
         this.fetchTimeout = fetchTimeout;
+        fetchLog = dir.resolveSibling(dir.getFileName() + "-fetch.log");
     }
 
     /**
@@ -164,13 +181,37 @@ public final class GitMirror {
         }
     }
 
-    /** */
+    /** Fetches the branches and tags of the remote; {@link #fetchProgress} tells how far it is meanwhile. */
     public synchronized void fetch() throws IOException {
         ensure();
         long t0 = System.nanoTime();
+        fetchStartedAt = Db.now();
 
         try {
-            git(fetchTimeout, "fetch", "--prune", "--quiet", "origin");
+            Files.deleteIfExists(fetchLog);
+            Proc.Handle h = Proc.start(List.of("git", "--git-dir=" + dir, "fetch", "--prune", "--progress", "origin"), null,
+                env(), fetchLog);
+            Integer rc;
+
+            try {
+                rc = h.waitFor(fetchTimeout, null);
+            }
+            catch (InterruptedException e) {
+                h.killTree(Duration.ofSeconds(5));
+                Thread.currentThread().interrupt();
+
+                throw new IOException("git fetch interrupted");
+            }
+
+            if (rc == null) {
+                h.killTree(Duration.ofSeconds(5));
+
+                throw new IOException("git fetch timed out after " + fetchTimeout.toMinutes() + " min: " + said());
+            }
+
+            if (rc != 0)
+                throw new IOException("git fetch failed (exit " + rc + "): " + said());
+
             lastFetchAt = Db.now();
             lastFetchError = null;
             Log.info(String.format("git fetch done in %.1f s", (System.nanoTime() - t0) / 1e9));
@@ -179,6 +220,78 @@ public final class GitMirror {
             lastFetchError = e.getMessage();
 
             throw e;
+        }
+        finally {
+            fetchStartedAt = null;
+        }
+    }
+
+    /**
+     * Tells how far the running fetch is, from what git prints about it.
+     *
+     * @return {@code startedAt}, and {@code stage}, {@code pct}, {@code detail} once git says them; {@code null} when no
+     *      fetch runs.
+     */
+    public Map<String, Object> fetchProgress() {
+        String started = fetchStartedAt;
+
+        if (started == null)
+            return null;
+
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("startedAt", started);
+        m.putAll(progressOf(tail(fetchLog, PROGRESS_TAIL_BYTES)));
+
+        return m;
+    }
+
+    /**
+     * Reads the last progress line of what git printed.
+     *
+     * @param out Output of git.
+     * @return {@code stage}, {@code pct} and {@code detail}; empty before git says any.
+     */
+    static Map<String, Object> progressOf(String out) {
+        List<String> lines = Arrays.asList(out.split("[\r\n]+"));
+        Map<String, Object> m = new LinkedHashMap<>();
+
+        for (int i = lines.size() - 1; i >= 0; i--) {
+            Matcher p = PROGRESS.matcher(lines.get(i).strip());
+
+            if (p.matches()) {
+                m.put("stage", p.group(1).toLowerCase());
+                m.put("pct", Integer.parseInt(p.group(2)));
+                String detail = p.group(5).replaceFirst("^,\\s*", "").replaceFirst(",?\\s*done\\.?$", "").strip();
+                m.put("detail", detail.isEmpty() ? null : detail);
+
+                break;
+            }
+        }
+
+        return m;
+    }
+
+    /** @return What the last fetch said besides its progress: its messages and errors. */
+    private String said() {
+        List<String> msgs = Arrays.stream(tail(fetchLog, 64 * 1024).split("[\r\n]+")).map(String::strip)
+            .filter(l -> !l.isEmpty() && !PROGRESS.matcher(l).matches() && !l.startsWith("* [") && !l.startsWith("- ["))
+            .toList();
+
+        return String.join("\n", msgs.subList(Math.max(0, msgs.size() - 5), msgs.size()));
+    }
+
+    /** @return The end of a file, empty when there is none. */
+    private static String tail(Path file, int maxBytes) {
+        try (RandomAccessFile f = new RandomAccessFile(file.toFile(), "r")) {
+            long len = f.length();
+            byte[] b = new byte[(int)Math.min(len, maxBytes)];
+            f.seek(len - b.length);
+            f.readFully(b);
+
+            return new String(b, StandardCharsets.UTF_8);
+        }
+        catch (IOException e) {
+            return "";
         }
     }
 
