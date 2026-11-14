@@ -350,61 +350,10 @@ result is cached (LRU of 500 entries).
 
 ## API
 
-| Method and path | What |
-|---|---|
-| `GET /api/health` | version, worker, watcher (with `mirrorReady` and `fetch`, the progress of a running fetch), job counters, memory/disk/load, the number of live benchmark JVMs |
-| `GET /api/storage` | how many bytes the runs take, their heavy files, the files of comparisons and the records of bisections: what the limits act on |
-| `GET /api/log?lines=` | the last lines of the controller log |
-| `GET /api/scenarios` | the scenarios of the catalog |
-| `GET /api/plugins` | the plugins that are on, each with its settings, its mirror, its pairs now (or why there are none) and its scenarios, and the jars that could not be read |
-| `GET /api/plugins/{name}` | the page of a plugin: per scenario the last result against the release, the jobs in the queue, a failure since, the history with how many commits each side moved since the run before; the compares |
-| `GET /api/plugins/{name}/scenarios/{id}` | a scenario of the plugin as `harness.jar list --plugin` lists it |
-| `POST /api/plugins/{name}/run` | the release pair against the master pair now: `{scenarios?, priority?}` |
-| `POST /api/plugins/{name}/compare` | `{a: {ignite, ext}, b: {ignite, ext}, split?, scenarios?, priority?}`: an ABBA per scenario, or per scenario and step |
-| `GET /api/scenarios/{name}/describe` | a scenario as `harness.jar list` lists it: id, version, topology, timings, sources |
-| `GET /api/settings`, `PUT /api/settings {key: value}` | settings (validated) |
-| `GET /api/stand`, `PUT /api/stand {mode, hosts, sizes}` | the stand: mode, hosts, sizes, `needsSetup`, `frozen`, the last Check and Measure load; writing it ends the wizard, after the first finished phase it is 409 |
-| `POST /api/stand/check {mode, hosts, sizes}` | Check: the report of the hosts (warnings and errors carry `fix`, how to fix them) and the suggested sizes; 409 while a job runs, while jobs wait and the stand is open, or while another Check runs |
-| `GET /api/app/check` | the last report of the check of the builds (`at`: when it was made) or `null` |
-| `POST /api/app/check {url, branch}` | the check of the builds on the machine of the controller: repository, Java, javac, Maven and its Java, git, disk; without the fields, the saved repository and branch |
-| `POST /api/stand/measure` | Measure load: a `probe` job; 409 once the stand is fixed |
-| `POST /api/stand/sweep` | take off the hosts what killed phases left; 409 as for Check |
-| `GET /api/commits?limit=&scenario=` | the history of the branch with the jobs of every commit (without `compare`) |
-| `GET /api/commits/{sha}` | a commit, all its runs with their role (target, baseline, A/A) and the pooled repeats |
-| `GET /api/jobs?filter=active|history|history-no-steps|all&limit=` | jobs; for `active` also `etaStartAt`, `etaSec` (estimated start and duration), `history-no-steps` without the steps of bisections |
-| `GET /api/search?q=&limit=` | search: a job, a bisection or a comparison by number, commits by sha, PR number, ticket, words of the subject |
-| `POST /api/jobs {type, refA, refB, scenario, priority, label}` | queue a job |
-| `GET /api/jobs/{id}` | a job with its phases and comparison |
-| `POST /api/jobs/{id}/cancel|retry|priority` | control (retry keeps the source, except `auto` → `manual`; `retry {priority?}`: without it the priority of the old job, at least a manual one) |
-| `DELETE /api/jobs/{id}` | delete a finished job with its phases and the directory `runs/<id>` |
-| `GET /api/jobs/{id}/log?lines=` | the tail of the current log (build or phase) |
-| `GET /api/jobs/{id}/series` | the per-second series of every phase of a job in one answer (for the overlaid charts) |
-| `GET /api/noise?scenario=` | the current noise thresholds by metric and the A/A calibrations they come from |
-| `GET /api/runs/{id}/result|series|files|files/{name}` | the files of a phase (`.jfr` goes as an attachment) |
-| `GET /api/jobs/{id}/downloads` | what a job left and how big it is: the zip without JFR and with it (`jfrBytes` = null when retention took them), the log and the jars of the build of each side |
-| `GET /api/jobs/{id}/zip?jfr=0|1` | the zip of a job, streamed: the phases with their logs, results, series and profile, the logs of its builds, JFR on request; the `work/` directories of the nodes never go |
-| `GET /api/trend?scenario=&limit=&refined=` | trend points: the most precise run of a commit, repeats of the same pair pooled (`runs`, `jobIds`); `refined=true` adds the segments a split refined (`refinedBy`) |
-| `POST /api/jobs/{id}/split {mode: halves|commits, priority?}` | split a segment: two halves or every commit against its parent; priority 1 by default |
-| `GET /api/attention` | the reconciliation with what was found: by scenario, the metrics of master vs release with their status and found commits, plus the runs newer than it |
-| `POST /api/bisects {jobId, metric, priority?}` | start an automatic bisection of a segment or of a scenario of a comparison |
-| `GET /api/bisects?scenario=&active=&limit=`, `GET /api/bisects/{id}` | bisections (newest first) and one with its steps, waiting job and estimate; one also has `positions` (the ends of the ranges in commits from the start of the segment) and `commits` for the search map |
-| `POST /api/bisects/{id}/cancel {stopRunning, deleteFinished}`, `POST /api/bisects/{id}/resume` | cancel / continue a stopped one |
-| `POST /api/bisects/{id}/deep {priority?}` | deep search of a bisection that ended without a commit |
-| `DELETE /api/bisects/{id}` | delete a finished bisection: only the record goes, the steps stay runs of the branch and count in later searches |
-| `POST /api/comparisons {base?, target, scenarios: [...], priority?}` | a comparison: an ABBA per scenario; for a PR without base, the branch against the branch + PR (`refs/pull/N/merge`), otherwise target against base or the merge base |
-| `GET /api/comparisons?limit=`, `GET /api/comparisons/{id}` | comparisons (newest first) and one: status, verdict counters, ETA and a row per scenario; one also has `commits` and `bisects` |
-| `POST /api/comparisons/{id}/cancel`, `DELETE /api/comparisons/{id}` | cancel / delete a finished one |
-| `GET /api/jobs/{id}/profile?limit=` | the A/B diff of hot methods |
-| `POST /api/notify/test`, `GET /api/notify/status` | test the notification channel |
-| `POST /api/calibrate {ref?, scenario}` | an A/A calibration |
-| `POST /api/resolve {ref}` | ref → sha and the subject of the commit |
-| `GET /api/builds?limit=&sha=` | builds (with `sha`, the builds of one commit, also with the modules of scenarios); each has `logBytes` and `jarsBytes` when its log and jars can be downloaded |
-| `GET /api/builds/{key}/log`, `GET /api/builds/{key}/jars` | the log of a build (text) and its Ignite jars as one zip; 404 with an explanation when the build cache evicted them |
-| `POST /api/watch/poll|pause|resume` | poll now / auto-run off / on |
-| `POST /api/worker/pause|resume` | "close for maintenance": finish the current job and take no new ones / take them again |
-| `POST /api/kill-all` | kill every JVM of this stand with the marker `ignite.firewatch.run` |
-
-Errors are JSON `{error, status}`: 400 (validation, unknown ref), 404, 409 (the mirror is not ready yet), 500.
+The stand describes its API itself: `GET /api/openapi.json` is an OpenAPI 3.1 document of every operation, what it
+takes and gives, and what it does to the stand (`x-firewatch-effect`: `read`, `queue`, `change`, `destructive`). Its
+paths are the routes of the router, so it never lags behind the code; the descriptions are in `ApiDocs`, and a test fails
+on a route without one. Settings → System links it.
 
 ## UI
 

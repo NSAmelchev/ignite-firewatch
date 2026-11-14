@@ -1682,6 +1682,8 @@ class PipelineTest {
         api.start();
 
         try {
+            theSpecDescribesEveryRoute(api);
+
             String script = Path.of(getClass().getResource("/ui-smoke.mjs").toURI()).toString();
             String appJs = getClass().getResource("/web/app.js").toURI().toString();
             Proc.Result r = Proc.run(List.of("node", script, "http://127.0.0.1:" + api.port(), appJs), null, null, Duration.ofSeconds(60));
@@ -1690,6 +1692,40 @@ class PipelineTest {
         finally {
             api.stop();
         }
+    }
+
+    /**
+     * The OpenAPI document the stand serves has every route of its router, each with what an agent needs, every route
+     * of the catalog is a route, and every reference resolves.
+     */
+    private static void theSpecDescribesEveryRoute(Api api) throws Exception {
+        java.net.http.HttpResponse<String> resp = java.net.http.HttpClient.newHttpClient().send(
+            java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://127.0.0.1:" + api.port()
+                + "/api/openapi.json")).build(), java.net.http.HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, resp.statusCode());
+        com.fasterxml.jackson.databind.JsonNode doc = Json.MAPPER.readTree(resp.body());
+        assertEquals("3.1.0", doc.path("openapi").asText());
+
+        java.util.Set<String> routes = new java.util.TreeSet<>(), ids = new java.util.HashSet<>();
+
+        for (String[] r : api.router().routes()) {
+            routes.add(r[0] + " " + r[1]);
+            com.fasterxml.jackson.databind.JsonNode op = doc.path("paths").path(r[1]).path(r[0].toLowerCase());
+            assertFalse(op.isMissingNode(), r[0] + " " + r[1] + " is not in the document");
+            assertFalse(op.path("summary").asText().isBlank(), r[1] + " has no summary");
+            assertTrue(ids.add(op.path("operationId").asText()), "operationId twice: " + op.path("operationId"));
+            assertTrue(List.of("read", "queue", "change", "destructive").contains(op.path("x-firewatch-effect")
+                .asText()), r[1] + " says nothing of what it does to the stand");
+        }
+
+        assertEquals(routes, new java.util.TreeSet<>(ApiDocs.all().keySet()), "the catalog describes the routes");
+
+        List<String> refs = new ArrayList<>();
+        doc.findValues("$ref").forEach(v -> refs.add(v.asText()));
+        assertFalse(refs.isEmpty());
+
+        for (String ref : refs)
+            assertFalse(doc.at(ref.substring(1)).isMissingNode(), "unresolved " + ref);
     }
 
     /** */

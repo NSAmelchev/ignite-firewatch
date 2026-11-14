@@ -2698,6 +2698,9 @@ views.settings = {
         <tbody>${builds.map((b) => `<tr><td class="mono"><a href="#/commits/${b.sha.split('+')[0]}">${fmt.sha(b.sha)}</a>${b.sha.includes('+') ? ` <span class="muted">${esc(b.sha.slice(b.sha.indexOf('+')))}</span>` : ''}${b.fake ? ' <span class="muted">(fake)</span>' : ''}</td><td>${badge(b.status)}</td>
           <td class="num">${b.durationSec != null ? Math.round(b.durationSec) + ' s' : '–'}</td><td class="num">${fmt.bytes(b.sizeBytes)}</td><td>${fmt.ago(b.startedAt)}</td><td class="error">${esc(b.error || '')}</td>
           <td style="white-space:nowrap">${buildLinks(b)}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">none</td></tr>'}</tbody></table>
+        <h2>API <span class="muted">for scripts and AI agents</span></h2>
+        <div class="small-text"><a href="/api/openapi.json" target="_blank">/api/openapi.json</a> <span class="muted">OpenAPI 3.1: every operation, what it takes and gives,
+          and what it does to the stand (<span class="mono">x-firewatch-effect</span>: read, queue, change, destructive)</span></div>
         <h2>Controller log <span class="muted">${esc(health.version)} · up ${fmt.dur(new Date(Date.now() - health.uptimeSec * 1000).toISOString())} · ${esc(s.jdk)}</span></h2>
         <pre class="log">${esc(log.map((e) => `${e.at} ${e.level} ${e.msg}`).join('\n'))}</pre>
       </section>`;

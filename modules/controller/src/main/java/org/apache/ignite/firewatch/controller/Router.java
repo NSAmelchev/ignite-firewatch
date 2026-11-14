@@ -350,6 +350,15 @@ public final class Router implements HttpHandler {
     private final List<Route> routes = new ArrayList<>();
 
     /**
+     * The routes as they were registered: what the OpenAPI document of the stand is made of, see {@link OpenApi}.
+     *
+     * @return {method, pattern} of each.
+     */
+    List<String[]> routes() {
+        return routes.stream().map(r -> new String[] {r.method, "/" + String.join("/", r.segments)}).toList();
+    }
+
+    /**
      * Registers a GET handler.
      *
      * @param pattern Path pattern.

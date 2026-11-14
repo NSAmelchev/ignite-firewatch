@@ -64,6 +64,12 @@ public final class Api {
     /** None until {@link #plugins(Plugins)}: a stand without plugins has an empty set. */
     private Plugins plugins;
 
+    /** The routes; set by {@link #start()}. */
+    private Router router;
+
+    /** The OpenAPI document, made on its first request. */
+    private volatile Map<String, Object> openApi;
+
     /** */
     private final Notifier notifier;
 
@@ -122,7 +128,9 @@ public final class Api {
             plugins = Plugins.none(db);
 
         Router r = new Router();
+        router = r;
         r.get("/api/health", req -> health());
+        r.get("/api/openapi.json", req -> openApi()); // made of every route of r, once they are all there
         new PluginApi(cfg, db, plugins, jobs, mirror).routes(r);
         r.get("/api/storage", req -> Retention.usage(db, cfg.runsDir()));
         r.get("/api/log", req -> Log.recent(req.queryInt("lines", 100)));
@@ -400,6 +408,29 @@ public final class Api {
         server.createContext("/", this::serveStatic);
         server.start();
         Log.info("listening on http://" + cfg.bindHost + ":" + port());
+    }
+
+    /**
+     * The OpenAPI document of the routes: made once, the routes never change after the start.
+     *
+     * @return The document.
+     */
+    private Map<String, Object> openApi() {
+        Map<String, Object> d = openApi;
+
+        if (d == null)
+            openApi = d = OpenApi.build(router.routes(), Config.version());
+
+        return d;
+    }
+
+    /**
+     * The routes of the API; after {@link #start()}.
+     *
+     * @return Router.
+     */
+    Router router() {
+        return router;
     }
 
     /**
