@@ -597,12 +597,7 @@ function paintWho() {
 // is the usual one of its kind). With `choose` ([{name, checked}]) the Scenario row is a set of checkboxes and `scenarios` the
 // chosen names; with `scenarios` (names) it covers all of them. The estimate follows the choices.
 export async function confirmLaunch({ title, what, job, note, scenario, scenarios, choose, type = 'abba', jobs = 1, shas = [], extraBuilds = 0, priority = 1, ok = 'Queue' }) {
-  const estimate = async (sc, n, prio) => {
-    const q = new URLSearchParams({ scenario: sc, type, jobs: n, shas: shas.filter(Boolean).join(','), extraBuilds, priority: prio });
-    const e = await api.get(`/api/estimate?${q}`).catch(() => null);
-    return e ? `<dt>Takes</dt><dd>~${mins(e.totalSec)} <span class="muted">(${e.jobs > 1 ? `${e.jobs} jobs × ` : ''}${mins(e.runSec)}${e.builds ? ` + ${e.builds} build${e.builds > 1 ? 's' : ''} × ${mins(e.buildSec)}` : ''})</span></dd>
-    <dt>Done</dt><dd>${etaStart(e.endAt)} <span class="muted">· starts ${e.ahead ? `after ${e.ahead} job${e.ahead > 1 ? 's' : ''} in the queue, ${etaStart(e.startAt)}` : 'right away'}</span></dd>` : '';
-  };
+  const estimate = (sc, n, prio) => estimateRows({ scenario: sc, type, jobs: n, shas, extraBuilds, priority: prio });
   const picked = choose ? choose.filter((c) => c.checked).map((c) => c.name) : null;
   const chosen = (w) => (choose ? [...w.querySelectorAll('input[name=sc]:checked')].map((i) => i.value) : scenarios || [scenario]);
   const estimateOf = (list, prio) => (choose ? (list.length ? estimate(list[0], list.length, prio) : Promise.resolve(''))
@@ -1782,79 +1777,215 @@ const comparisonActive = (c) => c.status === 'queued' || c.status === 'running';
 // the status of a comparison is that of its jobs: with all of them measured its bisects can go on for hours
 const comparisonBadge = (c) => badge(c.status === 'done' && c.searching ? 'searching' : c.status);
 
+// How long a launch takes and when it is done, as the rows of a dialog: nothing when the stand cannot tell
+async function estimateRows({ scenario, type = 'abba', jobs = 1, shas = [], extraBuilds = 0, priority = 1 }) {
+  const q = new URLSearchParams({ scenario, type, jobs, shas: shas.filter(Boolean).join(','), extraBuilds, priority });
+  const e = await api.get(`/api/estimate?${q}`).catch(() => null);
+  return e ? `<dt>Takes</dt><dd>~${mins(e.totalSec)} <span class="muted">(${e.jobs > 1 ? `${e.jobs} jobs × ` : ''}${mins(e.runSec)}${e.builds ? ` + ${e.builds} build${e.builds > 1 ? 's' : ''} × ${mins(e.buildSec)}` : ''})</span></dd>
+    <dt>Done</dt><dd>${etaStart(e.endAt)} <span class="muted">· starts ${e.ahead ? `after ${e.ahead} job${e.ahead > 1 ? 's' : ''} in the queue, ${etaStart(e.startAt)}` : 'right away'}</span></dd>` : '';
+}
+// Cancel of a comparison, from its page or its row: what goes and what stays first
+async function cancelComparison(b) {
+  const id = b.dataset.comparisonCancel, q = Number(b.dataset.queued), n = b.dataset.bisects;
+  const bisects = n === 'some' ? 'Its active bisections stop too. ' : Number(n) ? `${plural(Number(n), 'active bisection')} stop${Number(n) === 1 ? 's' : ''} too. ` : '';
+  const body = `<div>${q ? `${plural(q, 'queued job')} leave${q === 1 ? 's' : ''} the queue. ` : ''}${b.dataset.running === '1' ? 'The running job stops at once. ' : ''}${bisects}What is finished stays.</div>`;
+  if (!(await modal(`Cancel comparison #${id}?`, body, 'Cancel comparison', { danger: true }))) return;
+  await api.post(`/api/comparisons/${id}/cancel`);
+  toast(`comparison #${id} cancelled`);
+  refresh();
+}
+const shortRef = (ref) => (/^[0-9a-f]{40}$/i.test(ref || '') ? fmt.sha(ref) : ref || '');
+// a scenario of a comparison folds when nothing in it is to look at, as on the dashboard
+const cmpCalm = (r) => r.job.status === 'done' && r.verdict === 'no-change' && METRIC_COLS.slice(0, 4).every(([k]) => {
+  const m = r.comparison && r.comparison.metrics && r.comparison.metrics[k];
+  return !m || m.deltaPct == null || !deltaClass(k, m.deltaPct, m.thresholdPct, m.verdict);
+});
+// The scenarios of a comparison under its row: the Δ of the dashboard's four metrics, the quiet ones folded
+function comparisonDetail(c, showCalm) {
+  const cols = METRIC_COLS.slice(0, 4), quiet = c.rows.filter(cmpCalm);
+  const cell = (r, k) => {
+    const m = r.comparison && r.comparison.metrics && r.comparison.metrics[k];
+    return m && m.deltaPct != null ? `<td class="num"><a class="rel-delta" href="#/jobs/${r.job.id}" title="threshold ±${fmt.num(m.thresholdPct, 1)}%">${`<span class="dlt ${deltaClass(k, m.deltaPct, m.thresholdPct, m.verdict)}">${fmt.pct(m.deltaPct)}</span>`}<b class="att-mark"></b></a></td>`
+      : '<td class="num muted">–<b class="att-mark"></b></td>';
+  };
+  const rows = c.rows.map((r) => {
+    const calm = cmpCalm(r);
+    return `<tr class="${calm ? 'rel-calm' : ''}" ${calm && !showCalm ? 'hidden' : ''}><td><b>${esc(scName(r.scenario))}</b>${runsMark(r)}${r.job.error ? `<div class="error one-line" title="${esc(r.job.error)}">${esc(r.job.error)}</div>` : ''}</td>
+      ${cols.map(([k]) => cell(r, k)).join('')}<td>${r.job.status === 'done' ? badge(r.verdict) : badge(r.job.status)}</td><td class="row-action" style="opacity:1">${jobLink(r.job)}</td></tr>`;
+  }).join('');
+  return `<table class="release-table cmp-rows"><thead><tr><th>Scenario</th>${cols.map(metricHead).join('')}<th>Verdict</th><th></th></tr></thead>
+    <tbody>${rows}${quiet.length ? calmLine(`data-cmp-calm="${c.id}"`, cols.length + 3, showCalm, `${plural(quiet.length, 'scenario')} without a change`, quiet.map((r) => scName(r.scenario))) : ''}</tbody></table>
+    <div class="small-text"><a href="#/comparisons/${c.id}">Open comparison #${c.id}</a> <span class="muted">· bisects, runs, profile</span></div>`;
+}
+// A row of a comparison: its ends, how far it got and what it found
+function comparisonRow(c, open, showCalm) {
+  const going = comparisonActive(c), jobs = c.rows.map((r) => r.job);
+  const result = going ? `${badge(c.status)} <span class="muted">${c.measured} of ${c.total}${c.doneAt ? ` · ends ${etaStart(c.doneAt)}` : ''}</span> ${compareResult(c)}`
+    : `${c.status !== 'done' ? `${badge(c.status)} ` : c.searching ? `${comparisonBadge(c)} ` : ''}${compareResult(c)}${c.doneAt ? ` <span class="muted">· ends ${etaStart(c.doneAt)}</span>` : ''}`;
+  const act = going || c.searching
+    ? `<button class="small" data-comparison-cancel="${c.id}" data-running="${jobs.some((j) => j.status === 'running') ? 1 : 0}" data-queued="${jobs.filter((j) => j.status === 'queued').length}" data-bisects="${c.searching ? 'some' : 0}">Cancel</button>`
+    : `<button class="small" data-again="${c.id}" title="the same refs and scenarios in the dialog">Again</button>`;
+  const text = [c.label, c.refA, c.refB, c.subjectA, c.subjectB, c.requestedBy, `#${c.id}`, ...c.rows.map((r) => r.scenario)].join(' ').toLowerCase();
+  const subA = /^[0-9a-f]{7,40}$|^merge-base/i.test(c.refA || '') && c.subjectA;
+  return `<tr class="click-row" data-cmp-row="${c.id}" data-text="${esc(text)}"><td class="muted nowrap"><span class="chev">${open ? '▾' : '▸'}</span> #${c.id}</td><td class="nowrap">${fmt.ago(c.createdAt)}</td>
+    <td><b>${esc(shortRef(c.refB))}</b>${prLink(c.refB)}${c.subjectB ? `<div class="muted small-text one-line" title="${esc(c.subjectB)}">${esc(c.subjectB)}</div>` : ''}</td>
+    <td><b>${esc(shortRef(c.refA))}</b>${subA ? `<div class="muted small-text one-line" title="${esc(c.subjectA)}">${esc(c.subjectA)}</div>` : ''}</td>
+    <td class="num">${c.measured < c.total && !going ? `${c.measured} of ${c.total}` : c.total}</td><td>${result}</td><td class="muted">${esc(c.requestedBy || '')}</td>
+    <td class="row-action">${act}</td></tr>
+    <tr class="row-detail" ${open ? '' : 'hidden'}><td colspan="8">${comparisonDetail(c, showCalm)}</td></tr>`;
+}
+// The filter of the list: on what is loaded, a row and its unfolded scenarios together
+function filterComparisons(root, text, open) {
+  const t = text.trim().toLowerCase();
+  root.querySelectorAll('tr[data-cmp-row]').forEach((r) => {
+    const hit = !t || r.dataset.text.includes(t);
+    r.hidden = !hit;
+    r.nextElementSibling.hidden = !hit || !open.has(r.dataset.cmpRow);
+  });
+}
+// a comparison again: a PR merged into the branch is the PR again, a merge base an empty baseline
+const presetOf = (c) => {
+  const pr = /^(pr\/\d+) merged into /.exec(c.refB || ''), scenarios = c.rows.map((r) => r.scenario);
+  return pr ? { mode: 'pr', pr: pr[1], scenarios } : { mode: 'refs', target: c.refB, base: /^merge-base\(/.test(c.refA || '') ? '' : c.refA, scenarios };
+};
+const REF_NOTES = `<details class="ref-notes"><summary class="muted small-text">How refs are resolved</summary>
+  <ul class="muted small-text">
+    <li>Both refs are resolved to commits once, when the comparison is queued: every scenario measures the same two commits.</li>
+    <li><code>pr/N</code> fetches <code>refs/pull/N/head</code>. GitHub links work in every field: <code>…/pull/N</code>, <code>…/pull/N/commits/SHA</code>, <code>…/commit/SHA</code>, <code>…/tree/BRANCH</code>, <code>…/releases/tag/TAG</code>.</li>
+    <li>For a PR, B is GitHub's test merge of the PR into the current branch (<code>refs/pull/N/merge</code>) and A is the branch commit it was merged into: the delta is exactly what merging the PR now would change. It needs an open PR without conflicts.</li>
+    <li>To measure the PR head on its own old base instead, use Ref vs ref with the merge-base or any ref as the baseline.</li>
+    <li>Release tags work too: <code>2.17.0</code> vs <code>2.18.0</code>.</li>
+    <li>Results stay here: they never enter Dashboard, Commits or the noise floors.</li>
+  </ul></details>`;
+// New comparison: what to compare, the scenarios, where in the queue, how long it takes; one dialog. `preset` fills it
+// ({mode, pr, target, base, scenarios}); a ref the stand cannot resolve opens it again as it was
+async function compareDialog(view, preset = {}) {
+  const [scenarios, front] = await Promise.all([api.get('/api/scenarios'), frontPriority(1)]);
+  const branch = appConfig.branch || 'master', last = view.last || {};
+  const st = { mode: preset.mode || last.mode || 'pr', pr: preset.pr ?? last.pr ?? '', target: preset.target ?? last.target ?? '', base: preset.base ?? last.base ?? '' };
+  const picked = new Set(preset.scenarios || [...view.picked]);
+  const input = (name, value, ph) => `<input name="${name}" value="${esc(value)}" placeholder="${esc(ph)}" autocomplete="off" spellcheck="false"><div class="resolved small-text" data-resolved="${name}"></div>`;
+  const repo = repoWeb || 'https://github.com/org/repo';
+  const body = `<div class="cmp-dialog"><dl class="kv">
+    <dt>Compare</dt><dd><div class="seg" role="tablist"><button type="button" data-mode="pr">PR vs ${esc(branch)}</button><button type="button" data-mode="refs">Ref vs ref</button></div></dd>
+    <dt data-for="pr">Pull request</dt><dd data-for="pr">${input('pr', st.pr, `${repo}/pull/13704 or pr/13704`)}
+      <div class="muted small-text">A = current ${esc(branch)}, B = ${esc(branch)} + PR (GitHub's test merge <code>refs/pull/N/merge</code>)</div></dd>
+    <dt data-for="refs">B · target</dt><dd data-for="refs">${input('target', st.target, `2.18.0, a branch, a sha, pr/N, ${repo}/commit/…`)}</dd>
+    <dt data-for="refs">A · baseline</dt><dd data-for="refs">${input('base', st.base, `empty: the parent of a commit of ${branch}, the merge base otherwise`)}</dd>
+    <dt>Scenarios</dt><dd>${scenarioPicker(scenarios, picked, { title: '' })}</dd>
+    <dt>Priority</dt><dd>${priorityField(1, front)}</dd>
+  </dl><dl class="kv est"></dl>${REF_NOTES}</div>`;
+  const shas = {};
+  const read = (w) => Object.fromEntries(['pr', 'target', 'base'].map((n) => [n, w.querySelector(`[name=${n}]`).value.trim()]));
+  const v = await modal('New comparison', body, 'Queue', {
+    asWho: true,
+    open: (w) => {
+      w.querySelector('.modal').classList.add('wide');
+      const yes = w.querySelector('[data-yes]');
+      const show = () => {
+        w.querySelectorAll('.seg [data-mode]').forEach((b) => b.classList.toggle('on', b.dataset.mode === st.mode));
+        w.querySelectorAll('[data-for]').forEach((e) => { e.hidden = e.dataset.for !== st.mode; });
+      };
+      // the button follows every key, the estimate a finished field
+      const gate = () => {
+        const f = read(w), n = picked.size;
+        yes.disabled = !n || !(st.mode === 'pr' ? f.pr : f.target);
+        yes.textContent = n ? `Queue ${plural(n, 'job')}` : 'Queue';
+      };
+      const estimate = async () => {
+        gate();
+        const f = read(w), refs = st.mode === 'pr' ? [] : [f.base && shas.base, shas.target].filter(Boolean), n = picked.size;
+        w.querySelector('.est').innerHTML = n ? await estimateRows({ scenario: [...picked].join(','), jobs: n, shas: refs, extraBuilds: 2 - refs.length, priority: priorityOf(w) }) : '';
+      };
+      // what a ref is, once it is typed in: the commit and its subject, or why there is none
+      const resolve = async (name) => {
+        const ref = w.querySelector(`[name=${name}]`).value.trim(), out = w.querySelector(`[data-resolved=${name}]`);
+        delete shas[name];
+        if (!ref) { out.innerHTML = ''; estimate(); return; }
+        out.innerHTML = '<span class="muted">resolving…</span>';
+        try {
+          const c = await api.post('/api/resolve', { ref: name === 'pr' && /^\d+$/.test(ref) ? `pr/${ref}` : ref });
+          shas[name] = c.sha;
+          out.innerHTML = `→ ${name === 'pr' ? 'head ' : ''}<span class="mono">${fmt.sha(c.sha)}</span> ${esc(c.subject || '')}${c.committedAt ? ` <span class="muted">· ${fmtDay(c.committedAt)}</span>` : ''}`;
+        } catch (e) {
+          out.innerHTML = `<span class="error">${esc(e.message)}</span>`;
+        }
+        estimate();
+      };
+      w.querySelectorAll('.seg [data-mode]').forEach((b) => b.addEventListener('click', () => { st.mode = b.dataset.mode; show(); estimate(); }));
+      ['pr', 'target', 'base'].forEach((n) => {
+        const i = w.querySelector(`[name=${n}]`);
+        i.addEventListener('change', () => resolve(n));
+        if (i.value.trim()) resolve(n);
+      });
+      w.addEventListener('input', (e) => { if (e.target.name in st) gate(); });
+      w.addEventListener('change', (e) => { if (e.target.name === 'prio') estimate(); });
+      bindScenarioPicker(w, picked, { estimate: false, then: estimate });
+      show();
+      estimate();
+    },
+    value: (w) => ({ ...read(w), priority: priorityOf(w) }),
+  });
+  if (!v) return;
+  const names = scenarios.map((s) => s.name).filter((n) => picked.has(n));
+  view.picked = new Set(names);
+  const again = { mode: st.mode, pr: v.pr, target: v.target, base: v.base, scenarios: names };
+  view.last = { mode: st.mode };
+  try {
+    const c = await api.post('/api/comparisons', { base: st.mode === 'pr' ? '' : v.base, target: st.mode === 'pr' ? (/^\d+$/.test(v.pr) ? `pr/${v.pr}` : v.pr) : v.target, scenarios: names, priority: v.priority });
+    toast(`comparison #${c.id} queued: ${c.label}`);
+    view.open.add(String(c.id));
+    refresh(true);
+  } catch (e) {
+    toast(e.message, true);
+    await compareDialog(view, again); // as it was, to fix the ref
+  }
+}
+
 views.compare = {
   poll: 15000,
   live() { return this.active; },
   async render() {
-    const [settings, scenarios, list] = await Promise.all([api.get('/api/settings'), api.get('/api/scenarios'), api.get('/api/comparisons?limit=30')]);
-    const branch = appConfig.branch || 'master';
-    const form = this.formState || { base: '', target: '' };
-    const mode = this.mode || 'pr';
-    this.active = list.some((c) => comparisonActive(c) || c.doneAt);
+    if (!this.open) { this.open = new Set(); this.calmOpen = new Set(); this.limit = 20; this.filter = ''; }
+    const [settings, list] = await Promise.all([api.get('/api/settings'), api.get(`/api/comparisons?limit=${this.limit}`)]);
+    this.list = list;
     this.picked = this.picked || new Set([settings['autorun.scenario'].split(',')[0].trim()]);
-    return `
-      <h1>Compare <span class="muted">PR vs master or any two refs, over a set of scenarios</span></h1>
-      <div class="row">
-        <div class="card" style="flex:3 1 520px">
-          <div class="seg" role="tablist">
-            <button type="button" data-mode="pr" class="${mode === 'pr' ? 'on' : ''}">PR vs ${esc(branch)}</button>
-            <button type="button" data-mode="refs" class="${mode === 'refs' ? 'on' : ''}">Ref vs ref</button>
-          </div>
-          <form id="compare">
-            ${mode === 'pr' ? `
-            <label>Pull request: GitHub link or pr/N</label>
-            <input name="target" value="${esc(form.target)}" placeholder="${esc(repoWeb || 'https://github.com/org/repo')}/pull/13704" required>
-            <div class="muted" style="margin:4px 0 8px">A = current ${esc(branch)}, B = ${esc(branch)} + PR (GitHub's test merge <code>refs/pull/N/merge</code>)</div>` : `
-            <label>Target (B): commit, tag, branch or PR — GitHub link, pr/N, sha</label>
-            <input name="target" value="${esc(form.target)}" placeholder="2.18.0, ${esc(repoWeb || 'https://github.com/org/repo')}/commit/…" required>
-            <label>Baseline (A): commit, branch or tag — empty = parent for a commit already in ${esc(branch)}, merge-base otherwise</label>
-            <input name="base" value="${esc(form.base)}" placeholder="2.17.0, ignite-2.18, a sha, …">`}
-            ${scenarioPicker(scenarios, this.picked)}
-            <div class="actions"><button class="primary"${hint('ABBA')}>${mode === 'pr' ? `Queue ABBA: ${esc(branch)} vs ${esc(branch)} + PR` : 'Queue ABBA: B vs A'}</button></div>
-          </form>
-        </div>
-        <div class="card" style="flex:2 1 340px">
-          <h2 style="margin-top:0">Comparisons</h2>
-          ${list.map((c) => `<div class="cmp-item"><div><a href="#/comparisons/${c.id}"><b>${esc(c.label)}</b></a>${prLink(c.refB)} <span class="muted">#${c.id}</span></div>
-            <div class="cmp-meta">${comparisonActive(c) ? `${badge(c.status)} ${c.measured} of ${c.total}` : c.searching ? comparisonBadge(c) : ''} ${compareResult(c)}
-              <span class="muted" ${c.doneAt ? 'title="its jobs and bisects, one after another"' : ''}>${c.doneAt ? `ends ${etaStart(c.doneAt)}` : fmt.ago(c.finishedAt || c.createdAt)}</span></div></div>`).join('') || '<div class="muted">no comparisons yet</div>'}
-        </div>
-      </div>
-      <details data-notes ${this.notes ? 'open' : ''}><summary class="muted">How refs are resolved</summary>
-        <ul class="muted">
-          <li>Both refs are resolved to commits once, when the comparison is queued: every scenario measures the same two commits.</li>
-          <li><code>pr/N</code> fetches <code>refs/pull/N/head</code>. GitHub links work in both fields: <code>…/pull/N</code>, <code>…/pull/N/commits/SHA</code>, <code>…/commit/SHA</code>, <code>…/tree/BRANCH</code>, <code>…/releases/tag/TAG</code>.</li>
-          <li>For a PR with an empty baseline, B is GitHub's test merge of the PR into the current branch (<code>refs/pull/N/merge</code>) and A is the branch commit it was merged into: the delta is exactly what merging the PR now would change. It needs an open PR without conflicts.</li>
-          <li>To measure the PR head on its own old base instead, put the merge-base or any ref into the baseline field.</li>
-          <li>Release tags work too: <code>2.17.0</code> vs <code>2.18.0</code>.</li>
-          <li>Results stay here: they never enter Dashboard, Commits or the noise floors.</li>
-        </ul>
-      </details>`;
+    this.active = list.some((c) => comparisonActive(c) || c.doneAt);
+    const rows = list.map((c) => comparisonRow(c, this.open.has(String(c.id)), this.calmOpen.has(String(c.id)))).join('');
+    return `<h1>Compare <span class="muted">PR vs master or any two refs, over a set of scenarios: not shown on Dashboard, Timeline or Commits</span></h1>
+      <div class="card">
+        <div class="release-head"><div><span class="release-title">Comparisons</span><span class="muted">newest first</span></div>
+          <div class="release-tools cmp-tools"><input type="search" data-filter value="${esc(this.filter)}" placeholder="filter: PR, ref, scenario, name" aria-label="filter the comparisons"><button class="small primary" data-new>New comparison</button></div></div>
+        ${rows ? `<table class="commits runs-table cmp-list"><thead><tr><th>#</th><th>Queued</th><th>B · target</th><th>A · baseline</th><th class="num">Scenarios</th><th>Result</th><th>By</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+          ${list.length >= this.limit ? `<div class="muted small-text more-line">${list.length} shown · <a href="#" data-more>show 20 more</a></div>` : ''}`
+        : '<div class="muted">No comparison yet: New comparison measures a pull request against master, or any two refs.</div>'}
+      </div>`;
   },
   bind(root) {
-    root.querySelectorAll('.seg button[data-mode]').forEach((b) => b.addEventListener('click', () => { this.mode = b.dataset.mode; refresh(); }));
-    const f = $('#compare', root);
-    root.querySelectorAll('details[data-notes]').forEach((d) => d.addEventListener('toggle', () => { this.notes = d.open; }));
-    bindScenarioPicker(f, this.picked, { builds: 2 });
-    f.addEventListener('input', () => { this.formState = { ...(this.formState || {}), ...Object.fromEntries(new FormData(f)) }; });
-    f.addEventListener('submit', (e) => {
-      e.preventDefault();
-      const d = Object.fromEntries(new FormData(f));
-      guarded(async () => {
-        if (!this.picked.size) { toast('choose at least one scenario', true); return; }
-        const names = [...f.querySelectorAll('[data-sc]')].map((i) => i.dataset.sc).filter((n) => this.picked.has(n));
-        // PR mode never sends a baseline: the server then compares master vs master + PR
-        const pr = this.mode !== 'refs', refs = pr ? [] : [d.base, d.target].filter(Boolean);
-        const shas = await Promise.all(refs.map((r) => api.post('/api/resolve', { ref: r }).then((c) => c.sha))); // a wrong ref fails here
-        const v = await confirmLaunch({ title: pr ? 'Compare PR vs master' : 'Compare refs', scenarios: names, jobs: names.length, shas, extraBuilds: 2 - shas.length,
-          what: pr ? `master vs master + <b>${esc(d.target)}</b>` : `<b>${esc(d.base || 'merge base')}</b> vs <b>${esc(d.target)}</b>`,
-          note: 'debug run: not shown on Dashboard, Timeline or Commits' });
-        if (!v) return;
-        const c = await api.post('/api/comparisons', { base: pr ? '' : d.base, target: d.target, scenarios: names, priority: v.priority });
-        toast(`comparison #${c.id} queued: ${c.label}`);
-        location.hash = `#/comparisons/${c.id}`;
-      });
+    filterComparisons(root, this.filter, this.open);
+    root.addEventListener('click', (e) => {
+      if (e.target.closest('[data-new]')) { guarded(() => compareDialog(this)); return; }
+      const again = e.target.closest('[data-again]');
+      if (again) { guarded(() => compareDialog(this, presetOf(this.list.find((c) => String(c.id) === again.dataset.again)))); return; }
+      const cancel = e.target.closest('[data-comparison-cancel]');
+      if (cancel) { guarded(() => cancelComparison(cancel)); return; }
+      if (e.target.closest('[data-more]')) { e.preventDefault(); this.limit += 20; refresh(); return; }
+      const calm = e.target.closest('[data-cmp-calm]');
+      if (calm) {
+        const id = calm.dataset.cmpCalm, show = !this.calmOpen.has(id);
+        if (show) this.calmOpen.add(id); else this.calmOpen.delete(id);
+        calm.closest('table').querySelectorAll('tr.rel-calm').forEach((t) => { t.hidden = !show; });
+        calm.querySelector('.chev').textContent = show ? '▾' : '▸';
+        return;
+      }
+      const r = e.target.closest('tr[data-cmp-row]');
+      if (!r || e.target.closest('a, button')) return;
+      const open = !this.open.has(r.dataset.cmpRow);
+      if (open) this.open.add(r.dataset.cmpRow); else this.open.delete(r.dataset.cmpRow);
+      unfoldRow(r, open);
     });
+    const f = $('[data-filter]', root);
+    if (f) f.addEventListener('input', () => { this.filter = f.value; filterComparisons(root, this.filter, this.open); });
   },
 };
 
@@ -2007,14 +2138,7 @@ views.comparison = {
       if (b.dataset.more) guarded(() => moreRun(b.dataset.more));
       if (b.dataset.allCols !== undefined) { this.allCols = !this.allCols; refresh(); }
       if (b.dataset.bisectAll) guarded(() => startBisects(b.dataset.bisectAll));
-      if (b.dataset.comparisonCancel) guarded(async () => {
-        const id = b.dataset.comparisonCancel, q = Number(b.dataset.queued), n = Number(b.dataset.bisects);
-        const body = `<div>${q ? `${plural(q, 'queued job')} leave${q === 1 ? 's' : ''} the queue. ` : ''}${b.dataset.running === '1' ? 'The running job stops at once. ' : ''}${n ? `${plural(n, 'active bisection')} stop${n === 1 ? 's' : ''} too. ` : ''}What is finished stays.</div>`;
-        if (!(await modal(`Cancel comparison #${id}?`, body, 'Cancel comparison', { danger: true }))) return;
-        await api.post(`/api/comparisons/${id}/cancel`);
-        toast(`comparison #${id} cancelled`);
-        refresh();
-      });
+      if (b.dataset.comparisonCancel) guarded(() => cancelComparison(b));
       if (b.dataset.comparisonDelete) guarded(async () => {
         const id = b.dataset.comparisonDelete;
         if (!(await modal(`Delete comparison #${id}?`, '<div>Its jobs, their runs and files go too. This cannot be undone.</div>', 'Delete', { danger: true }))) return;
