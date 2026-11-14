@@ -1257,9 +1257,25 @@ public final class Db implements AutoCloseable {
      * @param limit Maximum number of jobs.
      * @return Jobs.
      */
-    public synchronized List<Job> pluginJobs(String plugin, String scenario, String source, boolean done, int limit) {
-        StringBuilder sql = new StringBuilder("SELECT * FROM jobs WHERE plugin = ?");
-        List<Object> args = new ArrayList<>(List.of(plugin));
+    public List<Job> pluginJobs(String plugin, String scenario, String source, boolean done, int limit) {
+        return pluginJobs(plugin, scenario, source, done, Long.MAX_VALUE, limit);
+    }
+
+    /**
+     * Jobs of a plugin older than a job, newest first.
+     *
+     * @param plugin Plugin name.
+     * @param scenario Scenario of the plugin, or {@code null} for all.
+     * @param source Job source, or {@code null} for all.
+     * @param done Whether only finished jobs.
+     * @param before Id the jobs are older than.
+     * @param limit Maximum number of jobs.
+     * @return Jobs.
+     */
+    public synchronized List<Job> pluginJobs(String plugin, String scenario, String source, boolean done, long before,
+        int limit) {
+        StringBuilder sql = new StringBuilder("SELECT * FROM jobs WHERE plugin = ? AND id < ?");
+        List<Object> args = new ArrayList<>(List.of(plugin, before));
 
         if (scenario != null) {
             sql.append(" AND scenario = ?");

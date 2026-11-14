@@ -501,22 +501,25 @@ strength of the signal, commits.
   others on a button, one legend for all with the values of the chart under the cursor. Files (logs, JFR). On a remote
   stand there is also a Layout block: which JVM is on which host, what that machine is, the CPU, GC and heap of each.
 - **Plugins** (`#/plugins`, only when a plugin is on; its code is `plugins.js`, loaded only then; with one plugin the
-  section is its page, with several a card per plugin). The page of a plugin (`#/plugin?name=…`) is a dashboard and
-  Compare under it, as the page Compare is:
-  - its two pairs (or why there are none), Run now and Settings;
-  - a row per scenario: master against the release now, when, the history of Δ ops/s run by run; a pair that does not
-    build is incompatible. A click unfolds the row: every run with the commits each side moved since the run before
-    (linked to the diff), and the scenario as the page Scenarios shows it;
-  - Compare: two pairs and the scenarios on the left, the requests on the right with the Δ of each side per scenario.
-    compare on a row (its release pair against its master pair) and on a run of the history (the run before against it)
-    fill the form in;
+  section is its page, with several the card of each). The page of a plugin (`#/plugin?name=…`), top to bottom:
+  - the card of master against the release, as the one of the dashboard: the two pairs (or why there are none), on the
+    right Settings and Run all with how the plugin runs and when the extension was fetched; a row per scenario with the
+    Δ of the same four metrics and the verdict, Compare and Run on the hovered row, the rows without a change folded. A
+    pair that does not build is incompatible, the error under its row. The name of a scenario leads to it on Scenarios;
+  - Comparisons: a row per request (its ends, scenarios, result, who), newest first; a click unfolds the step of each
+    side per scenario, so the side that moved stands out. New comparison opens a dialog: the two pairs, the steps they
+    make, the scenarios grouped as on Compare (by the first word of the id, plus those not settled on the card). Again on
+    a row and Compare on a row of the card fill it in;
+  - History: the runs against the release of all scenarios, newest first, with the commits each side moved since the
+    run before of the same scenario (linked to the diff); Compare with the run before fills the dialog in;
   - Settings, a dialog: the release (recent tags of the extension offered), the Ignite of the release, Keep fresh; the
     repository read-only, from the configuration or the jar.
 
   A job of a plugin carries its name in Queue and its pairs on its page.
 - **Scenarios**: the scenarios of the harness (Java classes): servers, client and threads, warmup/measurement, version and
   the sources of the class and its base classes from `harness.jar` (`harness.jar list`, read at the start of the
-  controller). Below them the scenarios of each plugin that is on, from its jar.
+  controller). Below them the scenarios of each plugin that is on, from its jar; `#/scenarios?open=<plugin>/<id>` opens
+  one.
 
 Everything that queues jobs (Run again, Retry, split, Measure the commit, A/A, Compare, master vs release, Bisect and
 deep search) shows a dialog first: what is queued, how long it takes, when it ends, and Priority: "as usual" (the default:

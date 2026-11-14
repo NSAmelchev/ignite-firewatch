@@ -536,10 +536,14 @@ final class ApiDocs {
                 + "mirror, pairs (release and master: igniteRef, igniteSha, extRef, extSha) or pairsError, scenarios; "
                 + "errors")));
         list.add(new Op("GET /api/plugins/{name}", "getPlugin", "Plugins", Effect.READ,
-            "A plugin: per scenario its last result against the release and its history")
-            .returns(any("what GET /api/plugins says of it, and rows: scenario, active, last, failed, history (job, "
-                + "igniteMoved, extMoved); comparisons: the jobs of Compare by request (a, b, createdAt, status, jobs, "
-                + "scenarios: per scenario the job of each step, ignite and ext); tags: recent tags of the extension")));
+            "A plugin: per scenario its last result against the release, its runs and its requests of Compare")
+            .query("comparisons", INTEGER, "how many requests of Compare", 10)
+            .query("runs", INTEGER, "how many runs against the release", 10)
+            .returns(any("what GET /api/plugins says of it, and rows: scenario, active, last, failed; runs: the runs "
+                + "against the release of all scenarios, newest first (job, prev, igniteMoved, extMoved: from the run "
+                + "before of the same scenario), runsMore; comparisons: the jobs of Compare by request (a, b, refsA, "
+                + "refsB, createdAt, status, jobs, scenarios: per scenario the job of each step, ignite and ext), "
+                + "comparisonsMore; tags: recent tags of the extension")));
         list.add(new Op("GET /api/plugins/{name}/scenarios/{scenario}", "describePluginScenario", "Plugins",
             Effect.READ, "A scenario of a plugin as the harness lists it").returns(any("the scenario with its sources")));
         list.add(new Op("POST /api/plugins/{name}/run", "runPlugin", "Plugins", Effect.QUEUE,

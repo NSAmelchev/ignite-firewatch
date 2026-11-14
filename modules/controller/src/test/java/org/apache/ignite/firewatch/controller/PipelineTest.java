@@ -768,6 +768,41 @@ class PipelineTest {
         assertEquals(List.of(j.shaA, j.extShaA, j.shaB, j.extShaB, p.name),
             List.of(again.shaA, again.extShaA, again.shaB, again.extShaB, again.plugin), "a retry keeps the pairs");
         assertThrows(IllegalArgumentException.class, () -> jobs.retry(j.id), "the same pairs are queued already");
+
+        runner.runJob(again);
+        PluginApi api = new PluginApi(cfg, db, plugins, jobs, mirror);
+        List<Map<String, Object>> hist = runsOf(api.overview(p, 10, 10));
+        assertEquals(List.of(again.id, j.id), hist.stream().map(h -> ((Job)h.get("job")).id).toList(), "newest first");
+        assertEquals(j.id, ((Map<?, ?>)hist.get(0).get("prev")).get("id"), "the run before of the same scenario");
+        assertEquals(List.of(0, 0), List.of(hist.get(0).get("igniteMoved"), hist.get(0).get("extMoved")));
+        assertNull(hist.get(1).get("prev"), "the first run has none");
+        Map<String, Object> page = api.overview(p, 10, 1);
+        assertEquals(1, runsOf(page).size());
+        assertEquals(true, page.get("runsMore"));
+        assertEquals(false, api.overview(p, 10, 2).get("runsMore"));
+    }
+
+    /** A request of Compare goes in whole or not at all: a step already in the queue refuses all of it. */
+    @Test void aCompareOfPairsQueuesAllOfItOrNothing() throws Exception {
+        Plugins plugins = plugin();
+        Plugins.Plugin p = plugins.get("spring-data");
+        p.mirror.fetch();
+        PluginApi api = new PluginApi(cfg, db, plugins, jobs, mirror);
+        com.fasterxml.jackson.databind.JsonNode body = Json.MAPPER.readTree("{\"a\": {\"ignite\": \"2.17.0\", "
+            + "\"ext\": \"ext-1.0\"}, \"b\": {\"ignite\": \"master\", \"ext\": \"master\"}}");
+
+        List<Job> first = api.compare(p, body);
+        assertEquals(2, first.size(), "Ignite, then the extension");
+        assertTrue(jobs.cancel(first.get(0).id));
+        int queued = db.pluginJobs(p.name, null, null, false, 100).size();
+        assertThrows(IllegalArgumentException.class, () -> api.compare(p, body), "the step of the extension waits");
+        assertEquals(queued, db.pluginJobs(p.name, null, null, false, 100).size(), "the step of Ignite is not alone");
+    }
+
+    /** */
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> runsOf(Map<String, Object> page) {
+        return (List<Map<String, Object>>)page.get("runs");
     }
 
     /**

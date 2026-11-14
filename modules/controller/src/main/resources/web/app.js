@@ -188,7 +188,7 @@ const valDelta = (key, v, digits, d, verdict, threshold, main) => {
   return `${val} <span class="dlt ${cls}" title="${esc(title)}">${fmt.pct(d)}</span>`;
 };
 // the metric columns shared by Dashboard and Commits: [key, header, digits]
-const METRIC_COLS = [['throughput', 'ops/s', 0], ['p99Us', 'p99 µs', 0], ['serverCpuUsPerOp', 'CPU µs/op', 2], ['allocKbPerOp', 'alloc KB/op', 2],
+export const METRIC_COLS = [['throughput', 'ops/s', 0], ['p99Us', 'p99 µs', 0], ['serverCpuUsPerOp', 'CPU µs/op', 2], ['allocKbPerOp', 'alloc KB/op', 2],
   ['serverStartMs', 'start ms', 0], ['preloadMs', 'preload ms', 0]];
 const runsMark = (p) => (p.runs > 1 ? ` <span class="runs" title="pooled over jobs ${p.jobIds.map((i) => `#${i}`).join(', ')}">×${p.runs}</span>` : '');
 // "one more run" = retry of the job: same pair, same scenario; its result is pooled with the previous runs
@@ -306,15 +306,15 @@ const METRIC_NAMES = { throughput: 'throughput', p99Us: 'p99', serverCpuUsPerOp:
 // where a run goes in the queue: the same two choices in every dialog that queues one, as usual by default. `usual` is the
 // priority of its kind (a manual run 1, an A/A 0); ahead of the queue is `front`, which frontPriority() finds
 const AHEAD = 2;
-const priorityField = (usual, front) => `<div class="seg-radio"><label><input type="radio" name="prio" value="${usual}" checked><span>as usual</span></label>
+export const priorityField = (usual, front) => `<div class="seg-radio"><label><input type="radio" name="prio" value="${usual}" checked><span>as usual</span></label>
   <label title="right after the running job: priority ${front}, above every waiting one"><input type="radio" name="prio" value="${front}"><span>ahead of the queue</span></label></div>`;
 // ahead of the queue goes before every job waiting now, the steps of bisections started ahead too: one above the highest
 // priority queued (the queue runs the highest first, the oldest of equal ones first), at least AHEAD
-async function frontPriority(usual = 1) {
+export async function frontPriority(usual = 1) {
   const active = await api.get('/api/jobs?filter=active&limit=500').catch(() => []);
   return Math.max(AHEAD, usual + 1, ...active.filter((j) => j.status === 'queued').map((j) => j.priority + 1));
 }
-const priorityOf = (w) => Number(w.querySelector('[name=prio]:checked').value);
+export const priorityOf = (w) => Number(w.querySelector('[name=prio]:checked').value);
 const metricOption = (k, x) => `${esc(METRIC_NAMES[k])} ${fmt.pct(x.deltaPct)} (${esc(x.verdict)}, ${signalText(x)})`;
 const levelsOf = (n) => Math.ceil(Math.log2(Math.max(2, n)));
 const DEEP_RUNS = 4;
@@ -646,7 +646,7 @@ const etaStart = (iso) => {
 };
 // how long the running job should still take, seconds: nothing once it runs over its estimate
 const timeLeft = (j) => (j.startedAt && j.etaSec ? Math.max(0, Date.parse(j.startedAt) / 1000 + j.etaSec - Date.now() / 1000) : 0);
-const metricHead = ([k, h]) => `<th class="num"${hint(k)}>${h}</th>`;
+export const metricHead = ([k, h]) => `<th class="num"${hint(k)}>${h}</th>`;
 const metricHeads = () => METRIC_COLS.map(metricHead).join('') + '<th>Verdict</th>';
 
 let toastTimer;
@@ -1134,7 +1134,7 @@ function workerTile(j) {
 }
 
 // A table folds what needs no eyes, and says so: a green row that names what is inside and unfolds it
-const calmLine = (attr, cols, open, text, names) => `<tr class="calm-row" ${attr}><td colspan="${cols}"><span class="chev">${open ? '▾' : '▸'}</span>
+export const calmLine = (attr, cols, open, text, names) => `<tr class="calm-row" ${attr}><td colspan="${cols}"><span class="chev">${open ? '▾' : '▸'}</span>
   <b>✓ ${esc(text)}</b> <span class="muted">${names.map(esc).join(' · ')}</span></td></tr>`;
 // Timeline: card of the clicked block — what it measured, the 4 metrics with phase values, and its commits
 function blockCard(j, queue) {
@@ -1724,27 +1724,32 @@ views.timeline = {
 };
 
 // Scenario groups of the multi-select, a chip toggles all of a group. They follow the ids and the topology, so a new
-// scenario joins them by itself; one that fits no family is listed under Other.
+// scenario joins them by itself; one that fits no family is listed under Other. `own` families replace those of the
+// harness, `extra` chips ([{name, scenarios}]) come right after All.
 const SC_FAMILIES = [['Put/get', (s) => s.name.startsWith('putget')], ['Transactions', (s) => s.name.startsWith('tx')],
   ['SQL H2', (s) => s.name.startsWith('sql-h2')], ['SQL Calcite', (s) => s.name.startsWith('sql-calcite')]];
-function scenarioGroups(list) {
-  const known = (s) => SC_FAMILIES.some(([, f]) => f(s));
-  const families = [...SC_FAMILIES, ['Other', (s) => !known(s)]].map(([name, f]) => ({ name, scenarios: list.filter(f) })).filter((g) => g.scenarios.length);
+function scenarioGroups(list, { own = SC_FAMILIES, extra = [] } = {}) {
+  const known = (s) => own.some(([, f]) => f(s));
+  const families = [...own, ['Other', (s) => !known(s)]].map(([name, f]) => ({ name, scenarios: list.filter(f) })).filter((g) => g.scenarios.length);
   const topology = [['1 server', (s) => s.servers === 1], ['2+ servers', (s) => s.servers > 1]].map(([name, f]) => ({ name, scenarios: list.filter(f) })).filter((g) => g.scenarios.length);
-  return { families, chips: [{ name: 'All', scenarios: list }, ...families, ...topology] };
+  return { families, chips: [{ name: 'All', scenarios: list }, ...extra.filter((g) => g.scenarios.length), ...families, ...topology] };
 }
+// the families of the scenarios of a plugin: the first word of the id, calcite-point and calcite-range under Calcite
+export const familiesByWord = (list) => [...new Set(list.map((s) => s.name.split('-')[0]))]
+  .map((w) => [w.charAt(0).toUpperCase() + w.slice(1), (s) => s.name.split('-')[0] === w]);
 const pickedAll = (names, picked) => names.every((n) => picked.has(n));
-function scenarioPicker(list, picked) {
-  const { families, chips } = scenarioGroups(list);
-  return `<label>Scenarios <span data-picked>${picked.size} chosen</span> <span data-time></span></label>
+export function scenarioPicker(list, picked, { title = 'Scenarios', ...groups } = {}) {
+  const { families, chips } = scenarioGroups(list, groups);
+  return `<label>${title} <span data-picked>${picked.size} chosen</span> <span data-time></span></label>
     <div class="chips">${chips.map((c) => { const names = c.scenarios.map((s) => s.name); return `<button type="button" class="chip ${pickedAll(names, picked) ? 'on' : ''}" data-preset="${esc(names.join(','))}">${esc(c.name)} <span class="muted">${names.length}</span></button>`; }).join('')}</div>
     <div class="sc-groups">${families.map((g) => `<div><div class="sc-group">${esc(g.name)}</div>${g.scenarios.map((s) => `<label class="sc-item" title="${esc(s.description)}"><input type="checkbox" data-sc="${esc(s.name)}" ${picked.has(s.name) ? 'checked' : ''}> ${esc(scName(s.name))}</label>`).join('')}</div>`).join('')}</div>`;
 }
 // the picker keeps the set up to date: a chip toggles all of its group. Next to it stands how long the choice takes:
-// a job per scenario plus `builds` new builds, "a run" of a schedule when `per` says so
-function bindScenarioPicker(form, picked, { builds = 0, per = '' } = {}) {
+// a job per scenario plus `builds` new builds, "a run" of a schedule when `per` says so; `then` follows every change
+export function bindScenarioPicker(form, picked, { builds = 0, per = '', estimate = true, then = () => {} } = {}) {
   const time = async () => {
     const names = [...picked], out = $('[data-time]', form);
+    if (!estimate) return;
     const q = new URLSearchParams({ scenario: names.join(','), type: 'abba', jobs: names.length, shas: '', extraBuilds: builds, priority: 2 });
     const e = names.length ? await api.get(`/api/estimate?${q}`).catch(() => null) : null;
     out.textContent = e ? `· ≈ ${mins(e.totalSec)}${per ? ` ${per}` : ''}` : '';
@@ -1755,6 +1760,7 @@ function bindScenarioPicker(form, picked, { builds = 0, per = '' } = {}) {
     form.querySelectorAll('[data-sc]').forEach((i) => { i.checked = picked.has(i.dataset.sc); });
     form.querySelectorAll('[data-preset]').forEach((b) => b.classList.toggle('on', pickedAll(b.dataset.preset.split(','), picked)));
     $('[data-picked]', form).textContent = `${picked.size} chosen`;
+    then();
   };
   form.addEventListener('click', (e) => {
     const p = e.target.closest('[data-preset]');
@@ -2094,6 +2100,9 @@ views.scenarios = {
     const pluginDescribed = await Promise.all(plugins.plugins.map((p) => Promise.all(p.scenarios.map((sc) =>
       describe(`/api/plugins/${encodeURIComponent(p.name)}/scenarios/${encodeURIComponent(sc.name)}`, sc.name)))));
     if (!this.open) this.open = new Set(); // all folded at first; opened rows stay open across re-renders
+    // a link to one scenario (#/scenarios?open=plugin/name) unfolds it, once per link
+    const want = new URLSearchParams(location.hash.split('?')[1] || '').get('open');
+    if (want && this.opened !== location.hash) { this.opened = location.hash; this.open.add(want); this.reveal = want; }
     const row = (d, key = d.name) => {
       const open = this.open.has(key);
       if (d.error) return `<tr><td colspan="2" class="error">${esc(d.name)}: ${esc(d.error)}</td></tr>`;
@@ -2114,6 +2123,9 @@ views.scenarios = {
       if (open) this.open.add(n); else this.open.delete(n);
       unfoldRow(r, open);
     });
+    const r = this.reveal && root.querySelector(`tr[data-scenario="${CSS.escape(this.reveal)}"]`);
+    this.reveal = null;
+    if (r) setTimeout(() => r.scrollIntoView({ block: 'start' }), 0); // after the page opens from its top
   },
 };
 

@@ -1,8 +1,9 @@
 // The section of the plugins: Ignite together with an extension of another repository, the master of both against
 // their last release. app.js loads this module only on a stand whose configuration names plugins.
 import {
-  api, esc, fmt, badge, jobLink, toast, guarded, views, refresh, confirmLaunch, deltaLine, deltaClass, jobRefsShort,
-  scenarioDetail, unfoldRow, modal,
+  api, esc, fmt, badge, jobLink, toast, guarded, views, refresh, confirmLaunch, deltaClass, modal, plural, unfoldRow,
+  METRIC_COLS, metricHead, calmLine, priorityField, priorityOf, frontPriority, scenarioPicker, bindScenarioPicker,
+  familiesByWord,
 } from './app.js';
 
 const query = () => new URLSearchParams(location.hash.split('?')[1] || '');
@@ -19,149 +20,230 @@ const commitLink = (repo, sha) => {
 const moved = (repo, from, to, n) => {
   if (n == null) return '<span class="muted">?</span>';
   if (!n) return '<span class="muted">no change</span>';
-  const g = github(repo), t = `${n} commit${n === 1 ? '' : 's'}`;
+  const g = github(repo), t = plural(n, 'commit');
   return g ? `<a href="${g}/compare/${esc(from)}...${esc(to)}" target="_blank">${t}</a>` : t;
 };
 // a ref with its commit; the ref alone when it is the sha
 const refSha = (repo, ref, sha) => `${ref && !sha.startsWith(ref) ? `${esc(ref)} ` : ''}${commitLink(repo, sha)}`;
 const pairHtml = (p, pair) => `Ignite ${refSha(p.igniteRepo, pair.igniteRef, pair.igniteSha)}
   <span class="muted">+</span> ${esc(p.title)} ${refSha(p.repo, pair.extRef, pair.extSha)}`;
-// the two pairs, or why there are none yet
-function pairsBlock(p) {
-  if (!p.pairs) {
-    const unset = !p.settings.release;
-    return `<div class="card notice small-text">${unset ? 'The release of the extension is not set: the plugin does not run by itself.'
-      : esc(p.pairsError || 'the pairs are unknown')} <a href="${pluginUrl(p.name, { tab: 'settings' })}" data-settings>${unset ? 'Set the release' : 'Settings'}</a></div>`;
-  }
-  return `<dl class="kv plugin-pairs"><dt>Release</dt><dd>${pairHtml(p, p.pairs.release)}</dd>
-    <dt>Master</dt><dd>${pairHtml(p, p.pairs.master)}</dd></dl>
-    <div class="muted small-text">${p.mirror.lastFetchAt ? `${esc(repoName(p.repo))} fetched ${fmt.ago(p.mirror.lastFetchAt)}` : 'not fetched yet'}${p.mirror.lastFetchError ? ` · <span class="error">${esc(p.mirror.lastFetchError)}</span>` : ''}
-      · runs ${p.settings.mode === 'keep' ? `when master moved, at most every ${p.settings.keepDays === 1 ? 'day' : `${p.settings.keepDays} days`}` : 'only by hand'}</div>`;
-}
-// Δ throughput against the release over the runs, oldest on the left: a jump between two runs is where to look
-function spark(history) {
-  const pts = history.slice().reverse().map((h) => {
-    const m = h.job.comparison && h.job.comparison.metrics && h.job.comparison.metrics.throughput;
-    return m && m.deltaPct != null ? { d: m.deltaPct, t: m.thresholdPct, id: h.job.id, at: h.job.finishedAt } : null;
-  }).filter(Boolean);
-  if (pts.length < 2) return pts.length ? '' : '<span class="muted">–</span>';
-  const w = 120, h = 24, lim = Math.max(2, ...pts.map((p) => Math.abs(p.d)));
-  const x = (i) => 2 + (i * (w - 4)) / (pts.length - 1), y = (d) => h / 2 - (d / lim) * (h / 2 - 2);
-  return `<svg class="plugin-spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="Δ ops/s against the release, run by run">
-    <line x1="0" x2="${w}" y1="${h / 2}" y2="${h / 2}" class="spark-zero"/>
-    <polyline points="${pts.map((p, i) => `${x(i).toFixed(1)},${y(p.d).toFixed(1)}`).join(' ')}" class="spark-line"/>
-    ${pts.map((p, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(p.d).toFixed(1)}" r="2.2" class="${Math.abs(p.d) > p.t ? (p.d < 0 ? 'spark-bad' : 'spark-good') : 'spark-dot'}"><title>${fmt.pct(p.d)} · job #${p.id} · ${esc(fmt.date(p.at))}</title></circle>`).join('')}
-  </svg>`;
-}
-// a pair that does not build or run since the last result
-const failedLine = (f) => (!f ? '' : `<div class="error small-text">${/^build of /.test(f.error || '') ? 'incompatible: ' : 'failed: '}${esc((f.error || '').slice(0, 160))} ${jobLink(f)}</div>`);
-const activeChip = (list) => list.map((j) => ` <a href="#/jobs/${j.id}">${badge(j.status)}</a>`).join('');
-// the pairs of a run for Compare: its release pair against its master pair, or the master pair of `from` against its own
-const pairsOf = (j, from) => ({
-  a: from ? { ignite: short(from.shaB), ext: short(from.extShaB) } : { ignite: short(j.shaA), ext: short(j.extShaA) },
-  b: { ignite: short(j.shaB), ext: short(j.extShaB) },
-});
+const MOVED = new Set(['regression', 'improvement']);
+const cols = () => METRIC_COLS.slice(0, 4); // the columns of the dashboard
+const metricOf = (j, k) => j && j.comparison && j.comparison.metrics && j.comparison.metrics[k];
+const chip = (j, k) => {
+  const m = metricOf(j, k);
+  return m && m.deltaPct != null ? `<span class="dlt ${deltaClass(k, m.deltaPct, m.thresholdPct, m.verdict)}">${fmt.pct(m.deltaPct)}</span>` : '';
+};
+const whenOf = (r) => (r.last ? fmt.ago(r.last.finishedAt) : '');
+// a row with nothing to look at folds, as on the dashboard: measured, nothing queued or failed since, no Δ marked
+const calm = (r) => r.last && !r.active.length && !r.failed && !MOVED.has(r.last.verdict)
+  && cols().every(([k]) => { const m = metricOf(r.last, k); return !m || m.deltaPct == null || !deltaClass(k, m.deltaPct, m.thresholdPct, m.verdict); });
+// what the dashboard of a plugin would look at: a Δ, a failure
+const unsettled = (p) => p.rows.filter((r) => r.failed || (r.last && MOVED.has(r.last.verdict))).map((r) => r.scenario);
 
-// The row of a scenario: where master stands against the release now; `open` unfolds its history and description
-function scenarioRow(p, r, open) {
-  const last = r.last;
-  return `<tr${open == null ? '' : ` class="click-row" data-scenario="${esc(r.scenario)}"`}>
-    <td>${open == null ? '' : `<span class="chev">${open ? '▾' : '▸'}</span> `}<b>${esc(r.scenario)}</b>${activeChip(r.active)}${failedLine(r.failed)}</td>
-    <td>${last ? `${deltaLine(last)} ${jobLink(last)}` : '<span class="muted">not measured yet</span>'}</td>
-    <td>${last ? `${fmt.ago(last.finishedAt)}<div class="muted small-text">${jobRefsShort(last)}</div>` : ''}</td>
-    <td>${spark(r.history)}</td>
-    <td class="row-action">${open == null ? `<a class="small-link" href="${pluginUrl(p.name)}">history</a>`
-    : last ? `<a class="small-link" href="#plugin-compare" data-compare="${last.id}" title="its release pair against its master pair, one side at a time">compare</a>` : ''}</td></tr>`;
+// The row of a scenario: its master pair against the release pair, as a row of the dashboard
+function releaseRow(p, r, usual, showCalm, width) {
+  const j = r.last, f = r.failed, sc = p.scenarios.find((s) => s.name === r.scenario) || {}, folds = calm(r);
+  const cell = (k) => {
+    const m = metricOf(j, k);
+    if (!m || m.deltaPct == null) return '<td class="num muted">–<b class="att-mark"></b></td>';
+    return `<td class="num"><a class="rel-delta" href="#/jobs/${j.id}" title="threshold ±${fmt.num(m.thresholdPct, 1)}%${m.verdict && m.verdict !== 'no-change' ? ` · ${esc(m.verdict)}` : ''} · open the job">${chip(j, k)}<b class="att-mark"></b></a></td>`;
+  };
+  const when = !j ? '<span class="muted">not measured</span>' : whenOf(r) === usual ? '' : `<span class="muted">${whenOf(r)}</span>`;
+  const act = r.active.length ? r.active.map((x) => `${jobLink(x)} ${badge(x.status)}`).join(' ')
+    : p.pairs ? `<button class="small" data-compare-sc="${esc(r.scenario)}" title="the release pair against the master pair, one side at a time">Compare</button> <button class="small" data-run-sc="${esc(r.scenario)}">Run</button>` : '';
+  const verdict = f ? `<a href="#/jobs/${f.id}">${badge('failed')}</a>` : j ? `<a href="#/jobs/${j.id}">${badge(j.verdict)}</a>` : '';
+  const why = f ? `<tr class="att-detail"><td colspan="${width}"><span class="error small-text">${/^build of /.test(f.error || '') ? 'incompatible' : 'failed'} ${fmt.ago(f.finishedAt || f.createdAt)}: ${esc((f.error || '').slice(0, 240))} · ${jobLink(f)}</span></td></tr>` : '';
+  return `<tr class="${folds ? 'rel-calm' : ''}" ${folds && !showCalm ? 'hidden' : ''}><td><a class="sc-link" href="#/scenarios?open=${encodeURIComponent(`${p.name}/${r.scenario}`)}" title="${esc(sc.description || '')} · open on Scenarios"><b>${esc(r.scenario)}</b></a></td>
+    ${cols().map(([k]) => cell(k)).join('')}<td>${verdict}</td><td>${when}</td><td class="row-action">${act}</td></tr>${why}`;
 }
-// History of a scenario: every run against the release, newest first, with how far each side moved since the run before
-function historyTable(p, r) {
-  if (!r.history.length) return '<div class="muted">No run against the release yet.</div>';
-  return `<table><thead><tr><th>Run</th><th>When</th><th>Master pair</th><th>Ignite moved</th><th>${esc(p.title)} moved</th><th>Master vs release</th><th></th></tr></thead><tbody>
-    ${r.history.map((h, i) => {
-    const j = h.job, prev = r.history[i + 1] && r.history[i + 1].job;
-    return `<tr><td>${jobLink(j)}</td><td>${esc(fmt.date(j.finishedAt))}</td>
-      <td>${commitLink(p.igniteRepo, j.shaB)} + ${commitLink(p.repo, j.extShaB)}</td>
-      <td>${prev ? moved(p.igniteRepo, prev.shaB, j.shaB, h.igniteMoved) : ''}</td><td>${prev ? moved(p.repo, prev.extShaB, j.extShaB, h.extMoved) : ''}</td>
-      <td>${deltaLine(j)}</td>
-      <td class="row-action">${prev ? `<a class="small-link" href="#plugin-compare" data-compare="${j.id}" data-from="${prev.id}" title="the master pair of the run before against this one, one side at a time">compare with the run before</a>` : ''}</td></tr>`;
-  }).join('')}</tbody></table>`;
-}
-// the card of a plugin on the list of several: its pairs and where master stands
-function card(p) {
-  return `<div class="card plugin-card">
-    <div class="plugin-head"><h2><a href="${pluginUrl(p.name)}">${esc(p.title)}</a></h2>
-      <span class="muted">${esc(repoName(p.repo))} · ${esc(p.module)}</span>
-      <span class="plugin-actions">${p.pairs ? `<button class="small" data-run="${esc(p.name)}">Run now</button>` : ''}</span></div>
-    ${pairsBlock(p)}
-    <table class="plugin-rows"><thead><tr><th>Scenario</th><th>Master vs release</th><th>Measured</th><th title="Δ ops/s against the release, run by run">History</th><th></th></tr></thead>
-    <tbody>${p.rows.map((r) => scenarioRow(p, r, null)).join('')}</tbody></table>
+// The card of a plugin, as the one of master on the dashboard: the master pair against the release pair, a row per
+// scenario; on the right how it runs and when the extension was fetched
+function releaseCard(p, showCalm) {
+  const width = cols().length + 4, s = p.settings;
+  // most rows were measured together: the head says when, a row only when it differs
+  const times = p.rows.map(whenOf).filter(Boolean);
+  const usual = times.sort((x, y) => times.filter((t) => t === y).length - times.filter((t) => t === x).length)[0];
+  const quiet = p.rows.filter(calm);
+  const pairs = p.pairs ? `<dl class="kv plugin-pairs"><dt>Master</dt><dd>${pairHtml(p, p.pairs.master)}</dd><dt>Release</dt><dd>${pairHtml(p, p.pairs.release)}</dd></dl>`
+    : `<div class="notice small-text">${s.release ? esc(p.pairsError || 'the pairs are unknown') : 'The release of the extension is not set: the plugin does not run by itself.'}
+      <a href="${pluginUrl(p.name, { tab: 'settings' })}" data-settings>${s.release ? 'Settings' : 'Set the release'}</a></div>`;
+  const how = !s.release ? 'does not run: no release set' : s.mode === 'keep'
+    ? `runs when a master moves, at most ${s.keepDays === 1 ? 'once a day' : `every ${s.keepDays} days`}` : 'runs only by hand';
+  const fetched = p.mirror.lastFetchAt ? `${esc(p.title)} fetched ${fmt.ago(p.mirror.lastFetchAt)}` : `${esc(p.title)} not fetched yet`;
+  return `<div class="card release" data-plugin="${esc(p.name)}">
+    <div class="release-head plugin-release-head">
+      <div><span class="release-title">master vs ${esc(p.pairs ? p.pairs.release.extRef : 'release')}</span>${usual ? `<span class="muted">measured ${usual}</span>` : ''}${pairs}</div>
+      <div class="release-side"><div class="release-tools"><button class="small" data-settings>Settings</button>${p.pairs ? '<button class="small" data-run-all>Run all</button>' : ''}</div>
+        <div class="muted small-text">${how}<br>${fetched}${p.mirror.lastFetchError ? `<br><span class="error">${esc(p.mirror.lastFetchError)}</span>` : ''}</div></div>
+    </div>
+    <table class="release-table"><thead><tr><th>Scenario</th>${cols().map(metricHead).join('')}<th>Verdict</th><th></th><th></th></tr></thead>
+      <tbody>${p.rows.map((r) => releaseRow(p, r, usual, showCalm, width)).join('')}${quiet.length ? calmLine(`data-rel-calm="${esc(p.name)}"`, width, showCalm,
+    `${plural(quiet.length, 'scenario')} without a change`, quiet.map((r) => r.scenario)) : ''}</tbody></table>
   </div>`;
 }
-// Run now: the release pair against the master pair, for the chosen scenarios
-async function runNow(p) {
-  const v = await confirmLaunch({ title: `Run ${p.title} now`, what: `master pair vs release pair<div class="muted small-text">${pairHtml(p, p.pairs.master)}<br>vs ${pairHtml(p, p.pairs.release)}</div>`,
-    choose: p.scenarios.map((s) => ({ name: s.name, checked: true })), type: 'abba' });
+// Run all, or Run of a row: the release pair against the master pair
+async function runNow(p, names) {
+  const all = names.length > 1;
+  const v = await confirmLaunch({ title: all ? `Run ${p.title}: master vs release` : `Run ${names[0]}: master vs release`,
+    what: `master pair vs release pair<div class="muted small-text">${pairHtml(p, p.pairs.master)}<br>vs ${pairHtml(p, p.pairs.release)}</div>`,
+    ...(all ? { choose: p.scenarios.map((s) => ({ name: s.name, checked: true })) } : { scenarios: names }), jobs: names.length });
   if (!v) return;
   const jobs = await api.post(`/api/plugins/${encodeURIComponent(p.name)}/run`, { scenarios: v.scenarios, priority: v.priority });
-  toast(`${jobs.length} job${jobs.length === 1 ? '' : 's'} queued`);
+  toast(`${plural(jobs.length, 'job')} queued`);
   refresh();
 }
-const bindRun = (root, list) => root.addEventListener('click', (e) => {
-  const b = e.target.closest('button[data-run]');
-  if (b) guarded(() => runNow(list.find((p) => p.name === b.dataset.run)));
+// what a card does: its buttons, the fold of its quiet rows; `open` holds the cards whose quiet rows are shown
+const bindCards = (root, list, open) => root.addEventListener('click', (e) => {
+  const card = e.target.closest('[data-plugin]'), p = card && list.find((x) => x.name === card.dataset.plugin);
+  if (!p) return;
+  if (e.target.closest('[data-settings]')) { e.preventDefault(); guarded(() => openSettings(p)); return; }
+  if (e.target.closest('[data-run-all]')) { guarded(() => runNow(p, p.scenarios.map((s) => s.name))); return; }
+  const run = e.target.closest('[data-run-sc]');
+  if (run) { guarded(() => runNow(p, [run.dataset.runSc])); return; }
+  const cmp = e.target.closest('[data-compare-sc]');
+  if (cmp) { guarded(() => compareDialog(p, { scenarios: [cmp.dataset.compareSc] })); return; }
+  if (e.target.closest('[data-rel-calm]')) {
+    const show = !open.has(p.name);
+    if (show) open.add(p.name); else open.delete(p.name);
+    card.querySelectorAll('tr.rel-calm').forEach((t) => { t.hidden = !show; });
+    card.querySelector('[data-rel-calm] .chev').textContent = show ? '▾' : '▸';
+  }
 });
 
 views.plugins = {
   poll: 15000,
+  calmOpen: new Set(),
   live() { return this.single ? views.plugin.live() : true; },
   async render() {
     const list = await api.get('/api/plugins');
     this.single = list.plugins.length === 1 && !list.errors.length; // one plugin: its page is the section
     if (this.single) return views.plugin.render({ name: list.plugins[0].name });
-    this.pages = await Promise.all(list.plugins.map((p) => api.get(`/api/plugins/${encodeURIComponent(p.name)}`)));
+    this.pages = await Promise.all(list.plugins.map((p) => api.get(`/api/plugins/${encodeURIComponent(p.name)}?comparisons=1&runs=1`)));
     return `<h1>Plugins <span class="muted">Ignite together with an extension of another repository: master of both against their last release</span></h1>
       ${list.errors.length ? `<div class="card error">Not loaded: ${list.errors.map(esc).join('<br>')}</div>` : ''}
-      ${this.pages.map(card).join('') || '<div class="card muted">No plugin is on: the configuration names none.</div>'}
+      ${this.pages.map((p) => `<h2><a href="${pluginUrl(p.name)}">${esc(p.title)}</a> <span class="muted">${esc(p.description || '')}</span></h2>${releaseCard(p, this.calmOpen.has(p.name))}`).join('')
+      || '<div class="card muted">No plugin is on: the configuration names none.</div>'}
       <div class="muted small-text">Both sides of a pair move, so a result says how the two masters do together, not which commit moved them: nothing is bisected, Compare on the page of a plugin narrows it down.</div>`;
   },
   bind(root) {
     if (this.single) views.plugin.bind(root);
-    else bindRun(root, this.pages);
+    else bindCards(root, this.pages, this.calmOpen);
   },
 };
 
-// The Δ ops/s of a step of Compare, or where the job is
-function stepResult(j) {
-  if (j.status !== 'done') return `${badge(j.status)} ${jobLink(j)}`;
-  const m = j.comparison && j.comparison.metrics && j.comparison.metrics.throughput;
-  return m && m.deltaPct != null ? `<span class="dlt ${deltaClass('throughput', m.deltaPct, m.thresholdPct, m.verdict)}">${fmt.pct(m.deltaPct)}</span> ${jobLink(j)}`
-    : jobLink(j);
+// A step of a request of Compare: its Δ ops/s and verdict, or where its job is
+function stepCell(j) {
+  if (!j) return '<span class="muted">did not move</span>';
+  if (j.status !== 'done') return `${badge(j.status)} ${jobLink(j)}${j.error ? ` <span class="muted" title="${esc(j.error)}">${esc(j.error.slice(0, 60))}</span>` : ''}`;
+  return `${chip(j, 'throughput')} ${badge(j.verdict)} ${jobLink(j)}`;
 }
-// one request of Compare: its pairs, per scenario the Δ of each side, so the side that moved stands out
-function comparisonItem(p, c) {
-  const steps = c.scenarios.flatMap((s) => [s.ignite, s.ext, s.both]).filter(Boolean);
-  const done = steps.filter((j) => j.status === 'done').length;
-  const verdicts = [['regression', 'regression'], ['improvement', 'improvement'], ['no-change', 'no change']]
-    .map(([v, w]) => [steps.filter((j) => j.verdict === v).length, v, w]).filter(([n]) => n)
-    .map(([n, v, w]) => `<span class="badge ${v}">${n} ${w}</span>`).join(' ');
-  const side = (name, j) => (j ? `${name} ${stepResult(j)}` : `<span class="muted">${name} did not move</span>`);
-  return `<div class="cmp-item"><div><b>${esc(c.a)} → ${esc(c.b)}</b></div>
-    <div class="cmp-meta">${c.status === 'done' ? verdicts || badge('done') : `${badge(c.status)} ${done} of ${steps.length}`} <span class="muted">${fmt.ago(c.createdAt)}</span></div>
-    ${c.scenarios.map((s) => `<div class="small-text cmp-steps">${esc(s.scenario)}: ${s.both ? `both ${stepResult(s.both)}`
-    : `${side('Ignite', s.ignite)} · ${side(esc(p.title), s.ext)}`}</div>`).join('')}</div>`;
+// The requests of Compare, newest first: a row per request, unfolded into the step of each side per scenario, so the
+// side that moved stands out
+function comparisonsCard(p, open) {
+  const rows = p.comparisons.map((c) => {
+    const key = String(c.jobs[0]), steps = c.scenarios.flatMap((s) => [s.ignite, s.ext, s.both]).filter(Boolean);
+    const done = steps.filter((j) => j.status === 'done');
+    const ig = c.scenarios.some((s) => s.ignite), ex = c.scenarios.some((s) => s.ext), both = c.scenarios.some((s) => s.both);
+    const verdicts = [['regression', 'regression'], ['improvement', 'improvement'], ['no-change', 'no change']]
+      .map(([v, w]) => [done.filter((j) => j.verdict === v).length, v, w]).filter(([n]) => n)
+      .map(([n, v, w]) => `<span class="badge ${v}">${n} ${w}</span>`).join(' ');
+    const still = both ? '' : !ex ? `<span class="muted">${esc(p.title)} did not move</span>` : !ig ? '<span class="muted">Ignite did not move</span>' : '';
+    const result = c.status === 'queued' || c.status === 'running' ? `${badge(c.status)} <span class="muted">${done.length} of ${plural(steps.length, 'step')}</span>`
+      : `${c.status === 'failed' ? badge('failed') : ''} ${verdicts} ${still}`;
+    const a = c.refsA || {}, b = c.refsB || {};
+    const heads = [ig && `<th>Step 1: Ignite ${esc(a.ignite)} → ${esc(b.ignite)} <span class="muted">· ${esc(p.title)} ${esc(a.ext)} on both sides</span></th>`,
+      ex && `<th>Step ${ig ? 2 : 1}: ${esc(p.title)} ${esc(a.ext)} → ${esc(b.ext)} <span class="muted">· Ignite ${esc(b.ignite)} on both sides</span></th>`,
+      both && '<th>Both sides at once</th>'].filter(Boolean);
+    const detail = `<table><thead><tr><th>Scenario</th>${heads.join('')}</tr></thead><tbody>${c.scenarios.map((s) => `<tr><td>${esc(s.scenario)}</td>
+      ${ig ? `<td>${stepCell(s.ignite)}</td>` : ''}${ex ? `<td>${stepCell(s.ext)}</td>` : ''}${both ? `<td>${stepCell(s.both)}</td>` : ''}</tr>`).join('')}</tbody></table>`;
+    const isOpen = open.has(key);
+    return `<tr class="click-row" data-cmp="${key}"><td><span class="chev">${isOpen ? '▾' : '▸'}</span> ${fmt.ago(c.createdAt)}</td><td>${esc(c.a)}</td><td>${esc(c.b)}</td>
+      <td class="num">${c.scenarios.length}</td><td>${result}</td><td class="muted">${esc((steps[0] && steps[0].requestedBy) || '')}</td>
+      <td class="row-action"><button class="small" data-again="${key}" title="these pairs and scenarios in the dialog">Again</button></td></tr>
+      <tr class="row-detail" ${isOpen ? '' : 'hidden'}><td colspan="7">${detail}</td></tr>`;
+  }).join('');
+  return `<div class="card">
+    <div class="release-head"><div><span class="release-title">Comparisons</span><span class="muted">two pairs, one side at a time: Ignite first, then ${esc(p.title)}</span></div>
+      <div class="release-tools"><button class="small primary" data-new-cmp>New comparison</button></div></div>
+    ${rows ? `<table class="commits runs-table plugin-cmp"><thead><tr><th>Queued</th><th>A · baseline</th><th>B · target</th><th class="num">Scenarios</th><th>Result</th><th>By</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+      ${p.comparisonsMore ? `<div class="muted small-text more-line">${p.comparisons.length} shown · <a href="#" data-more-cmp>show 10 more</a></div>` : ''}`
+    : '<div class="muted">No comparison yet: New comparison puts two pairs side by side and says which side moved.</div>'}
+  </div>`;
 }
-// Compare: two pairs, refs of both repositories; it goes one side at a time, Ignite first
-function compareForm(p, form, picked) {
-  const field = (side, k, label, ph) => `<label>${label}<input name="${side}.${k}" value="${esc(form[side][k] || '')}" placeholder="${esc(ph)}" autocomplete="off" spellcheck="false" required></label>`;
-  const ig = 'a tag, a branch or a sha of Ignite', ex = `a tag, a branch or a sha of ${repoName(p.repo)}`;
-  return `<form class="plugin-compare">
-    <div class="pair-form"><div><h3>A <span class="muted">baseline</span></h3>${field('a', 'ignite', 'Ignite', ig)}${field('a', 'ext', esc(p.title), ex)}</div>
-      <div><h3>B <span class="muted">target</span></h3>${field('b', 'ignite', 'Ignite', ig)}${field('b', 'ext', esc(p.title), ex)}</div></div>
-    <label>Scenarios <span data-picked>${picked.size} chosen</span></label>
-    <div class="sc-groups"><div>${p.scenarios.map((s) => `<label class="sc-item" title="${esc(s.description || '')}"><input type="checkbox" data-sc="${esc(s.name)}" ${picked.has(s.name) ? 'checked' : ''}> ${esc(s.name)}</label>`).join('')}</div></div>
-    <div class="muted small-text">Step 1: the Ignite of A → of B, the ${esc(p.title)} of A on both sides. Step 2: the ${esc(p.title)} of A → of B, the Ignite of B on both sides. A step that changes nothing is left out; nothing is bisected.</div>
-    <div class="actions"><button class="primary">Queue ABBA: B vs A</button></div>
-  </form>`;
+// History: the runs against the release of every scenario, newest first, with how far each side moved since the run
+// before of the same scenario
+function historyCard(p) {
+  if (!p.runs.length) return '';
+  const rows = p.runs.map((h) => {
+    const j = h.job, prev = h.prev;
+    return `<tr><td>${jobLink(j)}</td><td>${esc(j.scenario)}</td><td>${fmt.ago(j.finishedAt)}</td>
+      <td>${commitLink(p.igniteRepo, j.shaB)} + ${commitLink(p.repo, j.extShaB)}</td>
+      <td>${prev ? moved(p.igniteRepo, prev.shaB, j.shaB, h.igniteMoved) : ''}</td><td>${prev ? moved(p.repo, prev.extShaB, j.extShaB, h.extMoved) : ''}</td>
+      <td class="num">${chip(j, 'throughput')}</td><td>${badge(j.verdict)}</td>
+      <td class="row-action">${prev ? `<button class="small" data-since="${j.id}" title="the master pair of the run before against this one, one side at a time">Compare with the run before</button>` : ''}</td></tr>`;
+  }).join('');
+  return `<div class="card">
+    <div class="release-head"><div><span class="release-title">History</span><span class="muted">runs of master against the release, newest first</span></div></div>
+    <table class="commits runs-table plugin-runs"><thead><tr><th>Job</th><th>Scenario</th><th>Finished</th><th>Master pair</th><th>Ignite moved</th><th>${esc(p.title)} moved</th><th class="num">ops/s</th><th>Verdict</th><th></th></tr></thead>
+      <tbody>${rows}</tbody></table>
+    ${p.runsMore ? `<div class="muted small-text more-line">${p.runs.length} shown · <a href="#" data-more-runs>show 20 more</a></div>` : ''}
+  </div>`;
+}
+
+// The steps a request queues: Ignite first with the extension of A, then the extension with the Ignite of B. The refs
+// are compared as typed: two names of one commit are told apart only by the stand, which leaves that step out
+function stepsOf(p, a, b) {
+  const out = [];
+  if (a.ignite !== b.ignite) out.push(`Ignite ${esc(a.ignite)} → ${esc(b.ignite)} <span class="muted">· ${esc(p.title)} ${esc(a.ext)} on both sides</span>`);
+  if (a.ext !== b.ext) out.push(`${esc(p.title)} ${esc(a.ext)} → ${esc(b.ext)} <span class="muted">· Ignite ${esc(b.ignite)} on both sides</span>`);
+  return out;
+}
+// New comparison: two pairs and the scenarios; `preset` fills the pairs ({ignite, ext} each) and the scenarios
+async function compareDialog(p, preset = {}) {
+  const rel = p.pairs ? p.pairs.release : {}, mas = p.pairs ? p.pairs.master : {};
+  const a = preset.a || { ignite: rel.igniteRef || '', ext: rel.extRef || '' }, b = preset.b || { ignite: mas.igniteRef || '', ext: mas.extRef || '' };
+  const loose = unsettled(p);
+  const picked = new Set(preset.scenarios || (loose.length ? loose : p.scenarios.map((s) => s.name)));
+  const front = await frontPriority(1);
+  const field = (side, k, label, value, list, ph) => `<label>${label}<input name="${side}.${k}" value="${esc(value)}" list="${list}" placeholder="${esc(ph)}" autocomplete="off" spellcheck="false"></label>`;
+  const pair = (side, v) => `<div class="pair-in">${field(side, 'ignite', 'Ignite', v.ignite, 'pc-ignite', 'a tag, a branch, a sha, pr/N')}${field(side, 'ext', esc(p.title), v.ext, 'pc-ext', `a tag, a branch or a sha of ${repoName(p.repo)}`)}</div>`;
+  const options = (list) => [...new Set(list.filter(Boolean))].map((x) => `<option value="${esc(x)}">`).join('');
+  const body = `<div class="plugin-cmp-form">
+    <datalist id="pc-ignite">${options(['master', rel.igniteRef, a.ignite])}</datalist><datalist id="pc-ext">${options([p.branch, ...(p.tags || [])])}</datalist>
+    <dl class="kv"><dt>A · baseline</dt><dd>${pair('a', a)}</dd><dt>B · target</dt><dd>${pair('b', b)}</dd>
+      <dt>Steps</dt><dd data-steps></dd>
+      <dt>Scenarios</dt><dd>${scenarioPicker(p.scenarios, picked, { title: '', own: familiesByWord(p.scenarios), extra: [{ name: 'Not settled', scenarios: p.scenarios.filter((s) => loose.includes(s.name)) }] })}</dd>
+      <dt>Priority</dt><dd>${priorityField(1, front)}</dd><dt>Jobs</dt><dd data-jobs></dd></dl></div>`;
+  const read = (w) => {
+    const v = (n) => w.querySelector(`[name="${n}"]`).value.trim();
+    return { a: { ignite: v('a.ignite'), ext: v('a.ext') }, b: { ignite: v('b.ignite'), ext: v('b.ext') } };
+  };
+  const v = await modal(`New comparison of ${esc(p.title)}`, body, 'Queue', {
+    asWho: true,
+    open: (w) => {
+      const yes = w.querySelector('[data-yes]');
+      const sync = () => {
+        const { a: pa, b: pb } = read(w), filled = pa.ignite && pa.ext && pb.ignite && pb.ext, steps = filled ? stepsOf(p, pa, pb) : [];
+        w.querySelector('[data-steps]').innerHTML = !filled ? '<span class="muted">both refs of both pairs</span>'
+          : steps.length ? `${steps.map((s, i) => `<div>${i + 1}. ${s}</div>`).join('')}<div class="muted small-text">a side that does not move gets no step</div>`
+          : '<span class="error">the two pairs are the same</span>';
+        const n = picked.size * steps.length;
+        w.querySelector('[data-jobs]').innerHTML = n ? `${n} <span class="muted">(${plural(picked.size, 'scenario')} × ${plural(steps.length, 'step')}, ABBA each)</span>` : '<span class="muted">–</span>';
+        yes.disabled = !n;
+        yes.textContent = n ? `Queue ${plural(n, 'job')}` : 'Queue';
+      };
+      w.addEventListener('input', sync);
+      bindScenarioPicker(w, picked, { estimate: false, then: sync });
+      sync();
+    },
+    value: (w) => ({ ...read(w), priority: priorityOf(w) }),
+  });
+  if (!v) return;
+  const names = p.scenarios.map((s) => s.name).filter((n) => picked.has(n));
+  const jobs = await api.post(`/api/plugins/${encodeURIComponent(p.name)}/compare`, { a: v.a, b: v.b, scenarios: names, priority: v.priority });
+  toast(`${plural(jobs.length, 'job')} queued`);
+  refresh(true);
 }
 // Settings: the release the master pair is compared with, how often; the repository is the configuration's
 function settingsBody(p) {
@@ -197,93 +279,56 @@ async function openSettings(p) {
 
 views.plugin = {
   poll: 15000,
-  live() { return this.active; }, // while its jobs run; what the form holds stays across re-renders
+  calmOpen: new Set(),
+  live() { return this.active; }, // while its jobs run; what is unfolded and how much is shown stays across re-renders
   async render(params) {
-    const q = query(), name = (params && params.name) || q.get('name');
-    if (name !== this.name) { this.name = name; this.form = null; this.picked = null; this.open = new Set(); this.described = new Map(); }
-    const [list, p] = await Promise.all([api.get('/api/plugins'), api.get(`/api/plugins/${encodeURIComponent(name)}`)]);
+    const name = (params && params.name) || query().get('name');
+    if (name !== this.name) { this.name = name; this.cmpOpen = new Set(); this.nCmp = 10; this.nRuns = 10; }
+    const [list, p] = await Promise.all([api.get('/api/plugins'),
+      api.get(`/api/plugins/${encodeURIComponent(name)}?comparisons=${this.nCmp}&runs=${this.nRuns}`)]);
     this.p = p;
-    if (!this.form) {
-      const rel = p.pairs ? p.pairs.release : {}, mas = p.pairs ? p.pairs.master : {};
-      this.form = { a: { ignite: rel.igniteRef || '', ext: rel.extRef || '' }, b: { ignite: mas.igniteRef || '', ext: mas.extRef || '' } };
-    }
-    if (!this.picked) this.picked = new Set(p.scenarios.map((s) => s.name));
-    if (q.get('job') && q.get('job') !== this.prefilled) { // an older link to Compare a run
-      this.prefilled = q.get('job');
-      const j = await api.get(`/api/jobs/${q.get('job')}`).catch(() => null);
-      if (j) this.form = pairsOf(j);
-    }
-    await Promise.all([...this.open].filter((n) => !this.described.has(n)).map((n) => api.get(`/api/plugins/${encodeURIComponent(name)}/scenarios/${encodeURIComponent(n)}`)
-      .then((d) => this.described.set(n, d)).catch((e) => this.described.set(n, { error: e.message }))));
     this.active = p.rows.some((r) => r.active.length) || p.comparisons.some((c) => c.status === 'queued' || c.status === 'running');
-    const about = (n) => { const d = this.described.get(n); return !d ? '' : d.error ? `<div class="error">${esc(d.error)}</div>` : scenarioDetail(d); };
-    const rows = p.rows.map((r) => {
-      const open = this.open.has(r.scenario);
-      return `${scenarioRow(p, r, open)}<tr class="row-detail" ${open ? '' : 'hidden'}><td colspan="5">${historyTable(p, r)}${about(r.scenario)}</td></tr>`;
-    }).join('');
     return `<h1>${list.plugins.length > 1 ? '<a href="#/plugins">Plugins</a> / ' : ''}${esc(p.title)} <span class="muted">${esc(p.description || '')}</span></h1>
-      <div class="plugin-head"><span class="muted">${esc(repoName(p.repo))} · ${esc(p.module)}</span>
-        <span class="plugin-actions">${p.pairs ? `<button class="small primary" data-run="${esc(p.name)}">Run now</button>` : ''}<button class="small" data-settings>Settings</button></span></div>
-      ${pairsBlock(p)}
-      <div class="card plugin-card"><table class="plugin-rows"><thead><tr><th>Scenario</th><th>Master vs release</th><th>Measured</th><th title="Δ ops/s against the release, run by run">History</th><th></th></tr></thead>
-        <tbody>${rows}</tbody></table></div>
-      <h2 id="plugin-compare">Compare <span class="muted">two pairs, one side at a time: Ignite first, then ${esc(p.title)}</span></h2>
-      <div class="row">
-        <div class="card" style="flex:3 1 520px">${compareForm(p, this.form, this.picked)}</div>
-        <div class="card" style="flex:2 1 340px"><h2 style="margin-top:0">Comparisons</h2>
-          ${p.comparisons.map((c) => comparisonItem(p, c)).join('') || '<div class="muted">no comparisons yet</div>'}</div>
-      </div>`;
+      ${releaseCard(p, this.calmOpen.has(p.name))}
+      ${comparisonsCard(p, this.cmpOpen)}
+      ${historyCard(p)}`;
   },
   bind(root) {
     const p = this.p;
-    bindRun(root, [p]);
+    bindCards(root, [p], this.calmOpen);
     root.addEventListener('click', (e) => {
-      if (e.target.closest('[data-settings]')) { e.preventDefault(); guarded(() => openSettings(p)); return; }
-      const c = e.target.closest('[data-compare]');
-      if (c) {
-        e.preventDefault();
-        guarded(async () => {
-          const [j, from] = await Promise.all([api.get(`/api/jobs/${c.dataset.compare}`), c.dataset.from ? api.get(`/api/jobs/${c.dataset.from}`) : null]);
-          this.form = pairsOf(j, from);
-          this.picked = new Set([j.scenario]);
-          await refresh(true);
-          document.getElementById('plugin-compare').scrollIntoView({ behavior: 'smooth' });
-        });
+      if (e.target.closest('[data-new-cmp]')) { guarded(() => compareDialog(p)); return; }
+      const again = e.target.closest('[data-again]');
+      if (again) {
+        const c = p.comparisons.find((x) => String(x.jobs[0]) === again.dataset.again);
+        guarded(() => compareDialog(p, { a: c.refsA, b: c.refsB, scenarios: c.scenarios.map((s) => s.scenario) }));
         return;
       }
-      const r = e.target.closest('tr[data-scenario]');
+      const since = e.target.closest('[data-since]');
+      if (since) {
+        const h = p.runs.find((x) => String(x.job.id) === since.dataset.since), j = h.job;
+        guarded(() => compareDialog(p, { a: { ignite: short(h.prev.shaB), ext: short(h.prev.extShaB) }, b: { ignite: short(j.shaB), ext: short(j.extShaB) }, scenarios: [j.scenario] }));
+        return;
+      }
+      if (e.target.closest('[data-more-cmp]')) { e.preventDefault(); this.nCmp += 10; refresh(); return; }
+      if (e.target.closest('[data-more-runs]')) { e.preventDefault(); this.nRuns += 20; refresh(); return; }
+      const r = e.target.closest('tr[data-cmp]');
       if (!r || e.target.closest('a, button')) return;
-      const n = r.dataset.scenario, open = !this.open.has(n);
-      if (open) this.open.add(n); else this.open.delete(n);
-      if (open && !this.described.has(n)) refresh(true); // its description comes with the next render
-      else unfoldRow(r, open);
+      const open = !this.cmpOpen.has(r.dataset.cmp);
+      if (open) this.cmpOpen.add(r.dataset.cmp); else this.cmpOpen.delete(r.dataset.cmp);
+      unfoldRow(r, open);
     });
-    const cmp = root.querySelector('form.plugin-compare');
-    const read = () => { const f = new FormData(cmp), pair = (s) => ({ ignite: f.get(`${s}.ignite`).trim(), ext: f.get(`${s}.ext`).trim() }); return { a: pair('a'), b: pair('b') }; };
-    cmp.addEventListener('input', () => { this.form = read(); });
-    cmp.addEventListener('change', (e) => {
-      const n = e.target.dataset.sc;
-      if (!n) return;
-      if (e.target.checked) this.picked.add(n); else this.picked.delete(n);
-      cmp.querySelector('[data-picked]').textContent = `${this.picked.size} chosen`;
-    });
-    cmp.addEventListener('submit', (e) => guarded(async () => {
-      e.preventDefault();
-      const { a, b } = read(), names = p.scenarios.map((s) => s.name).filter((n) => this.picked.has(n));
-      if (!names.length) { toast('choose at least one scenario', true); return; }
-      const v = await confirmLaunch({ title: `Compare pairs of ${p.title}`, ok: 'Queue', scenarios: names, jobs: names.length * 2,
-        what: `B ${esc(b.ignite)} + ${esc(b.ext)} vs A ${esc(a.ignite)} + ${esc(a.ext)}<div class="muted small-text">one side at a time: Ignite first, then ${esc(p.title)}</div>` });
-      if (!v) return;
-      const jobs = await api.post(`/api/plugins/${encodeURIComponent(p.name)}/compare`, { a, b, scenarios: names, priority: v.priority });
-      toast(`${jobs.length} job${jobs.length === 1 ? '' : 's'} queued`);
-      refresh(true);
-    }));
-    // an older link: Compare scrolls to it, Settings opens its dialog, once per link
-    const tab = query().get('tab');
-    if (tab && this.handled !== location.hash) {
+    // an older link: Compare opens the dialog (with the pairs of a run), Settings its dialog, once per link
+    const q = query();
+    if ((q.get('tab') || q.get('job')) && this.handled !== location.hash) {
       this.handled = location.hash;
-      if (tab === 'compare') setTimeout(() => document.getElementById('plugin-compare').scrollIntoView(), 0);
-      if (tab === 'settings') guarded(() => openSettings(p));
+      if (q.get('tab') === 'settings') guarded(() => openSettings(p));
+      else if (q.get('job')) {
+        guarded(async () => {
+          const j = await api.get(`/api/jobs/${q.get('job')}`);
+          await compareDialog(p, { a: { ignite: short(j.shaA), ext: short(j.extShaA) }, b: { ignite: short(j.shaB), ext: short(j.extShaB) }, scenarios: [j.scenario] });
+        });
+      } else if (q.get('tab') === 'compare') guarded(() => compareDialog(p));
     }
   },
 };

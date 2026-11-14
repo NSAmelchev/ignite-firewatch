@@ -49,6 +49,8 @@ class PluginComparisonsTest {
         assertEquals(1, out.size());
         assertEquals("2.17.0 + ext-1.0", out.get(0).get("a"));
         assertEquals("master i2 + master e2", out.get(0).get("b"));
+        assertEquals(Map.of("ignite", "2.17.0", "ext", "ext-1.0"), out.get(0).get("refsA"), "what Compare again asks for");
+        assertEquals(Map.of("ignite", "master", "ext", "master"), out.get(0).get("refsB"));
         assertEquals(List.of("point", "range"), rows(out.get(0)).stream().map(r -> r.get("scenario")).toList());
         Map<String, Object> point = rows(out.get(0)).get(0);
         assertEquals(1L, ((Job)point.get(PluginApi.IGNITE)).id);
@@ -68,6 +70,13 @@ class PluginComparisonsTest {
         assertEquals("master i2 + ext-1.0", out.get(0).get("b"), "the extension did not move: B is the end of the "
             + "Ignite step");
         assertNull(rows(out.get(0)).get(0).get(PluginApi.EXT));
+        assertEquals(Map.of("ignite", "master", "ext", "ext-1.0"), out.get(0).get("refsB"));
+    }
+
+    /** A label that does not name the refs: Compare again asks for the shas. */
+    @Test void aLabelWithoutRefsGivesTheShas() {
+        assertEquals(Map.of("ignite", "1234567890", "ext", "abcdefabcd"),
+            PluginApi.refs("1234567890ab", "1234567890abcdef", "abcdefabcdef"));
     }
 
     /** A compare of an older stand moved both sides in one job. */

@@ -190,10 +190,13 @@ tr.verdict-metric td { background: color-mix(in srgb, var(--accent) 5%, transpar
 tbody tr:hover > td { background: color-mix(in srgb, var(--accent) 6%, transparent); }
 /* Commits: the Run button only on the hovered (or keyboard-focused) row, no visual noise otherwise */
 td.row-action { white-space: nowrap; width: 1%; }
-table.commit-list td.row-action button, table.release-table td.row-action button, table.comparison-rows td.row-action button, .res-open button { visibility: hidden; }
+table.commit-list td.row-action button, table.release-table td.row-action button, table.comparison-rows td.row-action button,
+table.plugin-cmp td.row-action button, table.plugin-runs td.row-action button, .res-open button { visibility: hidden; }
 table.commit-list tr:hover td.row-action button, table.commit-list tr:focus-within td.row-action button,
 table.release-table tr:hover td.row-action button, table.release-table tr:focus-within td.row-action button,
-table.comparison-rows tr:hover td.row-action button, table.comparison-rows tr:focus-within td.row-action button, .res-open:hover button, .res-open:focus-within button { visibility: visible; }
+table.comparison-rows tr:hover td.row-action button, table.comparison-rows tr:focus-within td.row-action button,
+table.plugin-cmp tr:hover td.row-action button, table.plugin-cmp tr:focus-within td.row-action button,
+table.plugin-runs tr:hover td.row-action button, table.plugin-runs tr:focus-within td.row-action button, .res-open:hover button, .res-open:focus-within button { visibility: visible; }
 /* dashboard stand tiles */
 .tiles { display: grid; grid-template-columns: minmax(280px, 2fr) minmax(220px, 1.4fr) minmax(200px, 1.6fr) repeat(2, minmax(120px, .8fr)); gap: 10px; }
 @media (max-width: 1100px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -599,27 +602,25 @@ input.bad, input.bad:focus { border-color: var(--bad); outline-color: var(--bad)
 .by-name { display: inline-block; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .by-name.mine { font-weight: 600; }
 
-/* Plugins: a card per plugin, its two pairs, a row per scenario with the history of its Δ */
-.plugin-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
-.plugin-head h2 { margin: 0; }
-.plugin-head h2 a { color: var(--fg); text-decoration: none; }
-.plugin-actions { margin-left: auto; display: flex; gap: 10px; align-items: baseline; }
-.plugin-pairs { margin: 4px 0 2px; }
+/* Plugins: the card of master against the release as on the dashboard, the requests of Compare, the runs */
+.plugin-release-head { align-items: flex-start; }
+.release-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; text-align: right; }
+.plugin-pairs { margin: 6px 0 2px; }
 .plugin-pairs dd { overflow-wrap: anywhere; }
-.plugin-rows { margin-top: 10px; }
-.plugin-spark .spark-zero { stroke: var(--line); stroke-width: 1; }
-.plugin-spark .spark-line { fill: none; stroke: var(--muted); stroke-width: 1.2; }
-.plugin-spark .spark-dot { fill: var(--muted); }
-.plugin-spark .spark-bad { fill: var(--bad); }
-.plugin-spark .spark-good { fill: var(--ok); }
-.pair-form { display: flex; gap: 24px; flex-wrap: wrap; }
-.pair-form > div { flex: 1 1 280px; min-width: 0; }
-.pair-form h3 { margin: 0 0 4px; }
-.pair-form input, .plugin-settings input:not([type=radio]):not([type=number]) { width: 100%; }
-.plugin-compare .sc-groups { margin-bottom: 8px; }
-.plugin-rows tr.row-detail td { background: var(--card); white-space: normal; padding: 8px 12px; }
-.plugin-rows tr.row-detail table { margin-bottom: 8px; }
-.cmp-steps { margin-top: 2px; }
+.release-head .notice { color: var(--warn); margin-top: 6px; }
+a.sc-link { color: inherit; text-decoration: none; }
+a.sc-link:hover b { text-decoration: underline; }
+table.plugin-cmp, table.plugin-runs { margin-top: 8px; }
+table.plugin-cmp tr.row-detail > td { background: var(--bg); white-space: normal; padding: 6px 12px 10px 28px; }
+table.plugin-cmp tr.row-detail table td, table.plugin-cmp tr.row-detail table th { padding: 3px 10px 3px 0; }
+table.plugin-cmp tr.row-detail table td:first-child { white-space: nowrap; }
+table.plugin-cmp .dlt, table.plugin-runs .dlt { margin: 0; }
+.more-line { margin-top: 6px; }
+.pair-in { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 8px; }
+.pair-in label { margin: 0; font-size: 12px; color: var(--muted); }
+.pair-in input { width: 100%; margin-top: 2px; }
+.plugin-cmp-form .chips { margin-bottom: 4px; }
+.plugin-settings input:not([type=radio]):not([type=number]) { width: 100%; }
 .plugin-settings .mode-row { margin-top: 12px; }
 .plugin-source { margin-top: 12px; }
 .plugin-source dd { overflow-wrap: anywhere; }

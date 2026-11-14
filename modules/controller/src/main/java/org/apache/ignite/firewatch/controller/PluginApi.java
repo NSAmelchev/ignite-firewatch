@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -15,8 +16,11 @@ import com.fasterxml.jackson.databind.JsonNode;
  * shows no section.
  */
 final class PluginApi {
-    /** Runs a plugin page shows in its history. */
-    private static final int HISTORY = 30;
+    /** Runs and requests of Compare a plugin page shows at first; "show more" asks for more. */
+    private static final int PAGE = 10;
+
+    /** Most a page asks for. */
+    private static final int MAX_PAGE = 500;
 
     /** Tags of the extension a page offers for its release. */
     private static final int TAGS = 15;
@@ -77,7 +81,9 @@ final class PluginApi {
 
             return Map.of("plugins", list, "errors", plugins.errors());
         });
-        r.get("/api/plugins/{name}", req -> overview(plugins.require(req.param("name"))));
+        r.get("/api/plugins/{name}", req -> overview(plugins.require(req.param("name")),
+            Math.min(MAX_PAGE, Math.max(1, req.queryInt("comparisons", PAGE))),
+            Math.min(MAX_PAGE, Math.max(1, req.queryInt("runs", PAGE)))));
         r.get("/api/plugins/{name}/scenarios/{scenario}", req -> {
             Scenarios.Info sc = plugins.require(req.param("name")).scenarios.get(req.param("scenario"));
 
@@ -143,42 +149,64 @@ final class PluginApi {
     }
 
     /**
-     * The page of a plugin: per scenario its last result against the release, a run in the queue, a failure since, and
-     * its history with how far each side moved from the run before.
+     * The page of a plugin: per scenario its last result against the release, a run in the queue and a failure since;
+     * the runs against the release of all scenarios, newest first, with how far each side moved from the run before of
+     * the same scenario; the requests of Compare.
+     *
+     * @param p Plugin.
+     * @param requests Requests of Compare to show.
+     * @param runs Runs against the release to show.
+     * @return What the page shows.
      */
-    private Map<String, Object> overview(Plugins.Plugin p) {
+    Map<String, Object> overview(Plugins.Plugin p, int requests, int runs) {
         Map<String, Object> m = view(p);
         List<Map<String, Object>> rows = new ArrayList<>();
 
         for (Scenarios.Info sc : p.scenarios.list()) {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("scenario", sc.name);
-            List<Job> all = db.pluginJobs(p.name, sc.name, null, false, 50);
-            row.put("active", all.stream().filter(Job::active).toList());
-            List<Job> done = db.pluginJobs(p.name, sc.name, JobService.SRC_PLUGIN, true, HISTORY);
+            List<Job> all = db.pluginJobs(p.name, sc.name, JobService.SRC_PLUGIN, false, 50);
+            row.put("active", all.stream().filter(Job::active).toList()); // a step of Compare is under Comparisons
+            List<Job> done = db.pluginJobs(p.name, sc.name, JobService.SRC_PLUGIN, true, 1);
             Job last = done.isEmpty() ? null : done.get(0);
             row.put("last", last);
             // a pair that does not build or run since the last result: incompatible until something moves
-            row.put("failed", all.stream().filter(j -> JobService.SRC_PLUGIN.equals(j.source)
-                && Job.FAILED.equals(j.status) && (last == null || j.id > last.id)).findFirst().orElse(null));
-            List<Map<String, Object>> hist = new ArrayList<>();
-
-            for (int i = 0; i < done.size(); i++) {
-                Job j = done.get(i), prev = i + 1 < done.size() ? done.get(i + 1) : null;
-                Map<String, Object> h = new LinkedHashMap<>();
-                h.put("job", j);
-                h.put("igniteMoved", prev == null ? null : moved(ignite, prev.shaB, j.shaB));
-                h.put("extMoved", prev == null ? null : moved(p.mirror, prev.extShaB, j.extShaB));
-                hist.add(h);
-            }
-
-            row.put("history", hist);
+            row.put("failed", all.stream().filter(j -> Job.FAILED.equals(j.status) && (last == null || j.id > last.id))
+                .findFirst().orElse(null));
             rows.add(row);
         }
 
         m.put("rows", rows);
-        m.put("comparisons", comparisons(db.pluginJobs(p.name, null, JobService.SRC_PLUGIN_COMPARE, false,
-            4 * HISTORY)));
+        List<Job> done = db.pluginJobs(p.name, null, JobService.SRC_PLUGIN, true, runs + 1);
+        List<Map<String, Object>> hist = new ArrayList<>();
+
+        for (Job j : done.subList(0, Math.min(runs, done.size()))) {
+            List<Job> before = db.pluginJobs(p.name, j.scenario, JobService.SRC_PLUGIN, true, j.id, 1);
+            Job prev = before.isEmpty() ? null : before.get(0);
+            Map<String, Object> h = new LinkedHashMap<>();
+            h.put("job", j);
+
+            if (prev != null) {
+                Map<String, Object> pr = new LinkedHashMap<>();
+                pr.put("id", prev.id);
+                pr.put("shaB", prev.shaB);
+                pr.put("extShaB", prev.extShaB);
+                h.put("prev", pr);
+            }
+
+            h.put("igniteMoved", prev == null ? null : moved(ignite, prev.shaB, j.shaB));
+            h.put("extMoved", prev == null ? null : moved(p.mirror, prev.extShaB, j.extShaB));
+            hist.add(h);
+        }
+
+        m.put("runs", hist);
+        m.put("runsMore", done.size() > runs);
+        // a request has a job per scenario and step at most: the jobs of one request more tell whether there is one
+        int steps = 2 * Math.max(1, p.scenarios.list().size());
+        List<Map<String, Object>> cmp = comparisons(db.pluginJobs(p.name, null, JobService.SRC_PLUGIN_COMPARE, false,
+            (requests + 1) * steps));
+        m.put("comparisons", new ArrayList<>(cmp.subList(0, Math.min(requests, cmp.size()))));
+        m.put("comparisonsMore", cmp.size() > requests);
         m.put("tags", tags(p));
 
         return m;
@@ -310,8 +338,12 @@ final class PluginApi {
             }
 
             Map<String, Object> m = new LinkedHashMap<>();
-            m.put("a", sides(firstStep)[1]); // a step that changes nothing is not queued: A of the first, B of the last
-            m.put("b", sides(lastStep)[0]);
+            String a = sides(firstStep)[1], b = sides(lastStep)[0];
+            m.put("a", a); // a step that changes nothing is not queued: A of the first, B of the last
+            m.put("b", b);
+            // a side that did not move is the same on both: what Compare again asks for
+            m.put("refsA", refs(a, aIgnite != null ? aIgnite : bIgnite, aExt));
+            m.put("refsB", refs(b, bIgnite, bExt != null ? bExt : aExt));
             m.put("createdAt", jobs.get(0).createdAt);
             m.put("status", jobs.stream().anyMatch(j -> Job.RUNNING.equals(j.status)) ? Job.RUNNING
                 : jobs.stream().anyMatch(Job::active) ? Job.QUEUED
@@ -332,6 +364,25 @@ final class PluginApi {
             return new String[] {Job.shortSha(j.shaB), Job.shortSha(j.shaA)};
 
         return new String[] {l.substring(colon < 0 || colon > vs ? 0 : colon + 2, vs), l.substring(vs + 4)};
+    }
+
+    /**
+     * The refs of a side of a label, "master 1a2b3c4d5e + ignite-spring-data-ext-3.1.0": a ref is the first word of its
+     * part (a ref has no spaces); the shas when the label says otherwise.
+     *
+     * @param side Side of a label.
+     * @param igniteSha Ignite of the side.
+     * @param extSha Extension of the side.
+     * @return {ignite, ext}.
+     */
+    static Map<String, String> refs(String side, String igniteSha, String extSha) {
+        String[] parts = side.split(" \\+ ");
+
+        if (parts.length != 2 || parts[0].isBlank() || parts[1].isBlank())
+            return Map.of("ignite", Objects.toString(Job.shortSha(igniteSha), ""), "ext",
+                Objects.toString(Job.shortSha(extSha), ""));
+
+        return Map.of("ignite", parts[0].trim().split(" ")[0], "ext", parts[1].trim().split(" ")[0]);
     }
 
     /** {@code null} is not known yet: anything fits it. */
@@ -360,7 +411,7 @@ final class PluginApi {
      * one side at a time, so the result says which side moved: Ignite first (the extension of A on both sides), then
      * the extension (the Ignite of B on both sides); a step that changes nothing is left out.
      */
-    private List<Job> compare(Plugins.Plugin p, JsonNode b) throws IOException {
+    List<Job> compare(Plugins.Plugin p, JsonNode b) throws IOException {
         PluginSchedule.Pair a = pair(p, b.path("a")), bb = pair(p, b.path("b"));
         List<String> names = names(b);
         int priority = Router.Req.integer(b, "priority", 1);
@@ -376,18 +427,27 @@ final class PluginApi {
         if (steps.isEmpty())
             throw new IllegalArgumentException("the two pairs are the same");
 
+        List<Scenarios.Info> chosen = p.scenarios.list().stream()
+            .filter(sc -> names.isEmpty() || names.contains(sc.name)).toList();
+
+        if (chosen.isEmpty())
+            throw new IllegalArgumentException("no scenario of " + p.name + " chosen");
+
+        // all of a request or nothing: a step already in the queue would leave the others a request of their own
+        for (Scenarios.Info sc : chosen) {
+            for (PluginSchedule.Pair[] s : steps) {
+                if (db.activePluginJob(p.name, sc.name, s[0].igniteSha(), s[0].extSha(), s[1].igniteSha(),
+                    s[1].extSha()) != null)
+                    throw new IllegalArgumentException(sc.name + ": an identical job is already queued or running");
+            }
+        }
+
         List<Job> out = new ArrayList<>();
 
-        for (Scenarios.Info sc : p.scenarios.list()) {
-            if (!names.isEmpty() && !names.contains(sc.name))
-                continue;
-
+        for (Scenarios.Info sc : chosen) {
             for (PluginSchedule.Pair[] s : steps)
                 out.add(PluginSchedule.queue(jobs, p, sc, s[0], s[1], JobService.SRC_PLUGIN_COMPARE, priority));
         }
-
-        if (out.isEmpty())
-            throw new IllegalArgumentException("no scenario of " + p.name + " chosen");
 
         return out;
     }
