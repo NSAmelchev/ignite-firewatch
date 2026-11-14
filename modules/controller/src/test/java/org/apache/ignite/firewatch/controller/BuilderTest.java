@@ -28,16 +28,45 @@ class BuilderTest {
         assertFalse(Builder.mavenCommon(c).contains("-s"), "the settings.xml of Maven itself by default");
         Path settings = Files.writeString(tmp.resolve("settings.xml"), "<settings/>");
         c.mavenSettings = Config.mavenSettings(settings.toString());
-        c.mavenArgs = Config.words("  -o   -Dmaven.repo.local=/other ");
+        c.mavenArgs = Config.words("  -o   -Dcheckstyle.skip=false ");
         List<String> cmd = Builder.mavenCommon(c);
         assertEquals(List.of(c.mvnExe, "-B", "-ntp", "-s", settings.toAbsolutePath().toString()), cmd.subList(0, 5));
-        assertEquals(List.of("-o", "-Dmaven.repo.local=/other"), cmd.subList(cmd.size() - 2, cmd.size()),
+        assertEquals(List.of("-o", "-Dcheckstyle.skip=false"), cmd.subList(cmd.size() - 2, cmd.size()),
             "the last ones, so they can override");
-        assertEquals(c.mvnExe + " -s " + settings.toAbsolutePath() + " -o -Dmaven.repo.local=/other", c.mavenText());
+        assertEquals(c.mvnExe + " -s " + settings.toAbsolutePath() + " -o -Dcheckstyle.skip=false", c.mavenText());
         assertThrows(IllegalStateException.class, () -> Config.mavenSettings(tmp.resolve("missing.xml").toString()),
             "a wrong path stops the start, not every build");
         assertNull(Config.mavenSettings(" "));
         assertEquals(List.of(), Config.words(""));
+    }
+
+    /** */
+    @Test void theRepositoryOfTheArgumentsIsTheOneOfMavenAndOfTheApplication() {
+        Config c = new Config();
+        c.cacheDir = tmp.resolve("cache");
+        assertEquals(tmp.resolve("cache/m2"), c.m2Dir());
+        assertEquals(List.of(Config.REPO_LOCAL + tmp.resolve("cache/m2")), repoLocal(Builder.mavenCommon(c)));
+
+        // a repository of the arguments replaces the one of the cache
+        Path filled = tmp.resolve("filled");
+        c.mavenArgs = Config.words(
+            "-Dmaven.repo.local=/first -o -Dmaven.repo.local=" + filled + " -Dmaven.repo.local=");
+        assertEquals(filled, c.m2Dir(), "the last one that names a directory, as Maven takes it");
+        List<String> cmd = Builder.mavenCommon(c);
+        assertEquals(List.of(Config.REPO_LOCAL + filled), repoLocal(cmd), "once: two would send Maven and us apart");
+        assertEquals("-o", cmd.get(cmd.size() - 1));
+
+        // where the install of core puts ignite-tools, so that no empty jar goes over it
+        Path ignite = filled.resolve("org/apache/ignite");
+        assertEquals(ignite.resolve("ignite-tools/2.20.0-SNAPSHOT/ignite-tools-2.20.0-SNAPSHOT.jar"),
+            Builder.inRepo(c, "ignite-tools", "2.20.0-SNAPSHOT", ""));
+        assertEquals(ignite.resolve("ignite-core/2.20.0-SNAPSHOT/ignite-core-2.20.0-SNAPSHOT-tests.jar"),
+            Builder.inRepo(c, "ignite-core", "2.20.0-SNAPSHOT", "tests"));
+    }
+
+    /** */
+    private static List<String> repoLocal(List<String> cmd) {
+        return cmd.stream().filter(Config::repoLocal).toList();
     }
 
     /** */

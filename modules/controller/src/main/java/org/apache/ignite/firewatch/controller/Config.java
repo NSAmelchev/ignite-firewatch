@@ -20,6 +20,9 @@ public final class Config {
     /** The properties file, relative to the working directory; {@code IGNITE_FIREWATCH_CONFIG} names another one. */
     static final String CONFIG_FILE = "config/ignite-firewatch.properties";
 
+    /** The option of Maven that names its local repository. */
+    static final String REPO_LOCAL = "-Dmaven.repo.local=";
+
     /** What the properties file says, read once. */
     private static Properties file;
 
@@ -56,7 +59,10 @@ public final class Config {
     /** The settings.xml of every build of Ignite ({@code -s}): mirrors, proxies, credentials; null for the default. */
     public Path mavenSettings;
 
-    /** More arguments of every mvn call of a build, after those of the application. */
+    /**
+     * More arguments of every mvn call of a build, after those of the application; {@code -Dmaven.repo.local} here
+     * replaces the repository of the cache, see {@link #m2Dir()}.
+     */
     public List<String> mavenArgs = List.of();
 
     /** */
@@ -297,12 +303,31 @@ public final class Config {
     }
 
     /**
-     * Returns the local Maven repository directory.
+     * Returns the local Maven repository of the builds, where they install: the last {@code -Dmaven.repo.local} of
+     * {@code maven.args}, else {@code m2} of the cache. A relative path starts in the working directory of the
+     * application. A repository of {@code -Dmaven.repo.local.tail} is only read by Maven and is not this one.
      *
      * @return Maven repository directory.
      */
     public Path m2Dir() {
+        for (int i = mavenArgs.size() - 1; i >= 0; i--) {
+            String arg = mavenArgs.get(i);
+
+            if (repoLocal(arg) && arg.length() > REPO_LOCAL.length())
+                return Path.of(arg.substring(REPO_LOCAL.length()));
+        }
+
         return cacheDir.resolve("m2");
+    }
+
+    /**
+     * Tells whether an argument of Maven names its local repository.
+     *
+     * @param arg Argument.
+     * @return Whether it is {@code -Dmaven.repo.local}.
+     */
+    static boolean repoLocal(String arg) {
+        return arg.startsWith(REPO_LOCAL);
     }
 
     /**

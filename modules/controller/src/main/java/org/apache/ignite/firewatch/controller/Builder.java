@@ -337,11 +337,31 @@ public final class Builder {
         if (cfg.mavenSettings != null)
             c.addAll(List.of("-s", cfg.mavenSettings.toString()));
 
-        c.addAll(List.of("-Dmaven.repo.local=" + cfg.m2Dir().toAbsolutePath(), "-Dmaven.test.skip=true", "-DskipTests",
+        // one local repository for Maven and for the application, which looks for the jars there itself: m2Dir()
+        // already answers with the one of maven.args, so the option is not repeated after it
+        c.addAll(List.of(Config.REPO_LOCAL + cfg.m2Dir().toAbsolutePath(), "-Dmaven.test.skip=true", "-DskipTests",
             "-Dmaven.javadoc.skip=true", "-Dmaven.source.skip=true", "-Dcheckstyle.skip=true", "-Denforcer.skip=true"));
-        c.addAll(cfg.mavenArgs);
+
+        for (String arg : cfg.mavenArgs) {
+            if (!Config.repoLocal(arg))
+                c.add(arg);
+        }
 
         return List.copyOf(c);
+    }
+
+    /**
+     * Gets the place of an Ignite artifact in the local repository of the builds.
+     *
+     * @param cfg Configuration.
+     * @param artifactId Artifact.
+     * @param version Version.
+     * @param classifier Classifier, empty for the main jar.
+     * @return Jar file, which may not exist.
+     */
+    static Path inRepo(Config cfg, String artifactId, String version, String classifier) {
+        return cfg.m2Dir().resolve("org/apache/ignite").resolve(artifactId).resolve(version)
+            .resolve(artifactId + "-" + version + (classifier.isEmpty() ? "" : "-" + classifier) + ".jar");
     }
 
     /**
@@ -363,10 +383,9 @@ public final class Builder {
 
         for (String[] a : testOnlyArtifacts(work, modules)) {
             String artifactId = a[0], classifier = a[1];
-            Path inRepo = cfg.m2Dir().resolve("org/apache/ignite").resolve(artifactId).resolve(version)
-                .resolve(artifactId + "-" + version + (classifier.isEmpty() ? "" : "-" + classifier) + ".jar");
-
-            if (Files.exists(inRepo))
+            // never over a real jar: ignite-tools is also a dependency of surefire, which loads a class of it even
+            // when the tests are skipped, and the install of core has just put it there
+            if (Files.exists(inRepo(cfg, artifactId, version, classifier)))
                 continue;
 
             List<String> fake = new ArrayList<>(common);

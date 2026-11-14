@@ -46,7 +46,7 @@ and the image sets the paths and the port.
 | `IGNITE_FIREWATCH_JAVA`, `IGNITE_FIREWATCH_MVN` | java of the current JVM, `mvn` | executables for the child processes |
 | `IGNITE_FIREWATCH_MAVEN_HEAP_MB` | `1536` | `-Xmx` of Maven when it builds a commit |
 | `IGNITE_FIREWATCH_MAVEN_SETTINGS` | empty | settings.xml for every build (`-s`): mirrors, proxies, credentials; a relative path starts in the directory of the application |
-| `IGNITE_FIREWATCH_MAVEN_ARGS` | empty | more arguments of every mvn call, space-separated, after the application's own (for example `-o`, `-gs FILE`, `-Dkey=value`) |
+| `IGNITE_FIREWATCH_MAVEN_ARGS` | empty | more arguments of every mvn call, space-separated, after the application's own (for example `-o`, `-gs FILE`, `-Dkey=value`); `-o -Dmaven.repo.local.tail=/absolute/DIR` adds a repository filled where the network is, which Maven 3.9+ only reads; `-Dmaven.repo.local=DIR` replaces `m2` of the cache |
 | `IGNITE_FIREWATCH_BUILD_TIMEOUT_MIN`, `IGNITE_FIREWATCH_FETCH_TIMEOUT_MIN` | `25`, `30` | timeouts of a build and of `git fetch` |
 | `IGNITE_FIREWATCH_HARNESS_HEAP_MB` | `128` | heap of the harness launcher JVM (nodes and loader follow the scenario) |
 | `IGNITE_FIREWATCH_PHASE_GRACE_SEC` | `120` | margin over the harness's own worst case, after which a phase counts as hung |
