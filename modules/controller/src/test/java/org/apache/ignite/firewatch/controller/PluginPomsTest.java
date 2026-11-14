@@ -39,6 +39,13 @@ class PluginPomsTest {
 
         assertEquals("2.20.0-SNAPSHOT", PluginPoms.igniteParent(springData("2.20.0-SNAPSHOT")::get,
             "modules/spring-data-ext/spring-data").version(), "master builds against the snapshot of Ignite");
+
+        Map<String, String> fork = springData("2.18.0-fork-1");
+        fork.computeIfPresent("parent-internal/pom.xml", (k, v) -> v.replace("<groupId>org.apache.ignite</groupId>\n"
+            + "    <artifactId>ignite-parent</artifactId>", "<groupId>org.example.ignite</groupId>\n"
+            + "    <artifactId>ignite-parent</artifactId>"));
+        assertEquals("2.18.0-fork-1", PluginPoms.igniteParent(fork::get, "modules/spring-data-ext/spring-data")
+            .version(), "a build of Ignite of another group");
     }
 
     /** */

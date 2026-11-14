@@ -23,8 +23,13 @@
         <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-        <!-- Release the harness is compiled against. At run time it uses the jars of the commit under test. -->
+        <!-- Release the harness is compiled against. At run time it uses the jars of the commit under test. A build of
+             Ignite published under another group (a fork, a distribution) is the group and the version of that build:
+             -Dignite.groupId=... -Dignite.version=... -->
+        <ignite.groupId>org.apache.ignite</ignite.groupId>
         <ignite.version>2.18.0</ignite.version>
+        <!-- The code style of this project: the rules of Apache Ignite, whatever build of Ignite the harness takes. -->
+        <checkstyle.ignite.version>2.18.0</checkstyle.ignite.version>
         <jackson.version>2.22.4</jackson.version>
         <hdrhistogram.version>2.2.2</hdrhistogram.version>
         <sqlite.version>3.53.4.0</sqlite.version>
@@ -39,7 +44,7 @@
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>org.apache.ignite</groupId>
+                <groupId>${ignite.groupId}</groupId>
                 <artifactId>ignite-core</artifactId>
                 <version>${ignite.version}</version>
             </dependency>
@@ -108,7 +113,7 @@
                     <dependency>
                         <groupId>org.apache.ignite</groupId>
                         <artifactId>ignite-checkstyle</artifactId>
-                        <version>${ignite.version}</version>
+                        <version>${checkstyle.ignite.version}</version>
                     </dependency>
                 </dependencies>
                 <configuration>

@@ -14,8 +14,11 @@ mvn -q package                     # needs JDK 17
 The result is `modules/harness/target/harness.jar` (shaded: Jackson and HdrHistogram are relocated, Ignite is not in it).
 What a scenario is written against (`@Bench`, `Scenario`, `Session`, `Env`, `Scale`) is the module `modules/harness-api`:
 the harness carries it, the jar of a plugin compiles against it (see Plugins below).
-The harness is compiled against the `ignite-core` release of `pom.xml` (`ignite.version`) and runs with the jars of any
-2.x commit: it uses only public API that has been stable for long.
+The harness is compiled against the `ignite-core` release of `pom.xml` (`ignite.groupId`, `ignite.version`) and runs with
+the jars of any 2.x commit: it uses only public API that has been stable for long. A build of Ignite published under
+another group (a fork, a distribution) is `-Dignite.groupId=... -Dignite.version=...`, and the same as `IGNITE_GROUP_ID`
+and `IGNITE_VERSION` of `dev-libs.sh`. The code style is checked by `ignite-checkstyle` of Apache
+(`checkstyle.ignite.version`) whatever Ignite the harness takes.
 
 ## Ignite jars
 

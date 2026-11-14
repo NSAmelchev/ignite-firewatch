@@ -1,7 +1,6 @@
 package org.apache.ignite.firewatch.controller;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -13,11 +12,8 @@ import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Properties;
 import java.util.Set;
 import java.util.TreeSet;
-import java.util.jar.JarEntry;
-import java.util.jar.JarFile;
 import java.util.stream.Stream;
 
 import org.w3c.dom.Element;
@@ -72,7 +68,7 @@ final class PluginBuild implements Builder.Extension {
 
             ignitePoms(step);
             List<Path> poms = poms(ext);
-            checkIgniteDeps(ext.resolve(p.module).resolve("pom.xml"), poms, Builder.modulesOf(key));
+            checkIgniteDeps(ext.resolve(p.module).resolve("pom.xml"), poms, Builder.modulesOf(key), step.group);
             step.emptyTestJars(ext, reactorOf(ext.resolve(p.module).resolve("pom.xml"), poms));
             // -nsu: the extension may name the snapshot repository of Apache, whose Ignite of another commit must not
             // replace the one of this build
@@ -114,7 +110,7 @@ final class PluginBuild implements Builder.Extension {
         List<String> dirs = new ArrayList<>();
 
         for (String[] a : new String[][] {{"parent", PluginPoms.PARENT}, {"modules/bom", "ignite-bom"}}) {
-            Path pom = cfg.m2Dir().resolve("org/apache/ignite").resolve(a[1]).resolve(step.version)
+            Path pom = cfg.m2Dir().resolve(step.group.replace('.', '/')).resolve(a[1]).resolve(step.version)
                 .resolve(a[1] + "-" + step.version + ".pom");
 
             if (!Files.exists(pom) && Files.isRegularFile(step.ignite.resolve(a[0]).resolve("pom.xml")))
@@ -187,8 +183,10 @@ final class PluginBuild implements Builder.Extension {
      * @param modulePom Pom of the module of the extension.
      * @param poms Every pom of its repository: their artifacts are built with it.
      * @param modules Modules of Ignite this build has.
+     * @param group Group of the Ignite of this build.
      */
-    static void checkIgniteDeps(Path modulePom, List<Path> poms, List<String> modules) throws IOException {
+    static void checkIgniteDeps(Path modulePom, List<Path> poms, List<String> modules, String group)
+        throws IOException {
         Set<String> own = new TreeSet<>();
 
         for (Path pom : poms)
@@ -201,7 +199,7 @@ final class PluginBuild implements Builder.Extension {
                 String grp = Builder.childText(d, "groupId"), a = Builder.childText(d, "artifactId");
 
                 if ("test".equals(Builder.childText(d, "scope")) || a == null || !a.startsWith("ignite-")
-                    || !(PluginPoms.GROUP.equals(grp) || "${project.groupId}".equals(grp)))
+                    || !(group.equals(grp) || "${project.groupId}".equals(grp)))
                     continue;
 
                 if (a.equals("ignite-core") || own.contains(a) || modules.contains(a.substring("ignite-".length())))
@@ -237,7 +235,7 @@ final class PluginBuild implements Builder.Extension {
         Map<String, String> have = new HashMap<>();
 
         for (Path jar : jars(libs)) {
-            String[] c = coordinates(jar);
+            String[] c = Builder.coordinates(jar);
 
             if (c != null)
                 have.put(c[0] + ":" + c[1], c[2]);
@@ -252,7 +250,7 @@ final class PluginBuild implements Builder.Extension {
             if (Files.exists(to))
                 continue; // the same file: the same artifact at the same version
 
-            String[] c = coordinates(jar);
+            String[] c = Builder.coordinates(jar);
 
             if (c != null) {
                 String ga = c[0] + ":" + c[1], v = have.get(ga);
@@ -277,36 +275,6 @@ final class PluginBuild implements Builder.Extension {
     private static List<Path> jars(Path dir) throws IOException {
         try (Stream<Path> s = Files.list(dir)) {
             return s.filter(f -> f.getFileName().toString().endsWith(".jar")).sorted().toList();
-        }
-    }
-
-    /**
-     * What Maven put into a jar about itself: {groupId, artifactId, version}; null when the jar does not say, or says it
-     * of several (a shaded jar).
-     *
-     * @param jar Jar.
-     * @return Coordinates, or {@code null}.
-     */
-    static String[] coordinates(Path jar) {
-        try (JarFile f = new JarFile(jar.toFile())) {
-            List<JarEntry> props = f.stream().filter(e -> e.getName().startsWith("META-INF/maven/")
-                && e.getName().endsWith("/pom.properties")).toList();
-
-            if (props.size() != 1)
-                return null;
-
-            Properties p = new Properties();
-
-            try (InputStream in = f.getInputStream(props.get(0))) {
-                p.load(in);
-            }
-
-            String g = p.getProperty("groupId"), a = p.getProperty("artifactId"), v = p.getProperty("version");
-
-            return g == null || a == null || v == null ? null : new String[] {g, a, v};
-        }
-        catch (IOException e) {
-            return null;
         }
     }
 

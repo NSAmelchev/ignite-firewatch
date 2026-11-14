@@ -30,7 +30,7 @@
             <scope>provided</scope>
         </dependency>
         <dependency>
-            <groupId>org.apache.ignite</groupId>
+            <groupId>${ignite.groupId}</groupId>
             <artifactId>ignite-core</artifactId>
             <scope>provided</scope>
         </dependency>

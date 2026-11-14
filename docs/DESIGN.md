@@ -24,7 +24,7 @@ deployment), and the module READMEs: [modules/controller/README.md](../modules/c
 | Decision | Why |
 |---|---|
 | Harness on Java 17 and the Ignite public API | The API has been stable for years. Yardstick left the main repository and is heavy to build; JMH does not provide cluster load |
-| The harness compiles against a release (`ignite.version`, 2.18.0) and runs with the commit's jars | one load code for all commits; a breaking commit gives a clear phase error, not a controller crash |
+| The harness compiles against a release (`ignite.groupId`, `ignite.version`: Apache Ignite 2.18.0, or a build of another group) and runs with the commit's jars | one load code for all commits; a breaking commit gives a clear phase error, not a controller crash |
 | The controller is in Java too | one toolchain and one image |
 | HTTP on `jdk.httpserver` with a small `Router`, Jackson, SQLite (`sqlite-jdbc`), git via CLI | the controller fits in `-Xmx128m`, the memory goes to Maven and the benchmark JVMs |
 | UI: static files without a build step, ES modules, vendored uPlot | no separate frontend toolchain |

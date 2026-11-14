@@ -65,9 +65,9 @@ class PluginBuildTest {
     /** */
     @Test void aJarSaysWhatItIsWhenMavenBuiltIt() throws IOException {
         Path j = jar(tmp, "org.springframework", "spring-core", "6.2.0");
-        assertEquals(List.of("org.springframework", "spring-core", "6.2.0"), List.of(PluginBuild.coordinates(j)));
+        assertEquals(List.of("org.springframework", "spring-core", "6.2.0"), List.of(Builder.coordinates(j)));
         Files.writeString(tmp.resolve("x.jar"), "not a jar");
-        assertNull(PluginBuild.coordinates(tmp.resolve("x.jar")));
+        assertNull(Builder.coordinates(tmp.resolve("x.jar")));
     }
 
     /** Maven builds the module with what it needs of its repository, and their parents: their test scope counts. */
@@ -108,9 +108,13 @@ class PluginBuildTest {
         Files.writeString(commons, "<project><artifactId>ignite-spring-data-commons</artifactId></project>");
         List<Path> poms = List.of(module, commons);
 
-        assertDoesNotThrow(() -> PluginBuild.checkIgniteDeps(module, poms, List.of("calcite", "indexing")));
-        IOException e = assertThrows(IOException.class, () -> PluginBuild.checkIgniteDeps(module, poms, List.of()));
+        assertDoesNotThrow(() -> PluginBuild.checkIgniteDeps(module, poms, List.of("calcite", "indexing"),
+            Builder.GROUP));
+        IOException e = assertThrows(IOException.class,
+            () -> PluginBuild.checkIgniteDeps(module, poms, List.of(), Builder.GROUP));
         assertTrue(e.getMessage().contains("add \"indexing\" to modules of the scenario"), e.getMessage());
         assertFalse(e.getMessage().contains("spring"), "test scope and the own modules of the extension are fine");
+        assertDoesNotThrow(() -> PluginBuild.checkIgniteDeps(module, poms, List.of(), "org.example.ignite"),
+            "a build of another group: Ignite artifacts of Apache are not its own");
     }
 }

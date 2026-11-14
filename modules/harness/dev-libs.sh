@@ -3,6 +3,8 @@
 # into modules/harness/target/dev-libs, so the harness can run locally without building Apache Ignite, and the same plus
 # ignite-indexing and ignite-calcite into modules/harness/target/dev-libs-sql for the sql-* scenarios (IGNITE_FIREWATCH_FAKE_BUILD uses both).
 # Usage: modules/harness/dev-libs.sh [output-dir]
+# The group and the version are ignite.groupId and ignite.version of pom.xml; IGNITE_GROUP_ID and IGNITE_VERSION take another
+# build of Ignite (a fork, a distribution), as -Dignite.groupId and -Dignite.version do for the build of the harness.
 set -euo pipefail
 cd "$(dirname "$0")"
 OUT="${1:-target/dev-libs}"
@@ -11,8 +13,9 @@ OUT="$(cd "$(dirname "$OUT")" && pwd)/$(basename "$OUT")"
 OUT_SQL="$OUT-sql"
 # both sets from throwaway poms: no build of this project is needed, and in the harness pom the modules' Jackson would
 # lose to the harness's own
-V=$(sed -n 's:.*<ignite.version>\(.*\)</ignite.version>.*:\1:p' ../../pom.xml)
-dep() { echo "<dependency><groupId>org.apache.ignite</groupId><artifactId>$1</artifactId><version>$V</version></dependency>"; }
+V=${IGNITE_VERSION:-$(sed -n 's:.*<ignite.version>\(.*\)</ignite.version>.*:\1:p' ../../pom.xml)}
+G=${IGNITE_GROUP_ID:-$(sed -n 's:.*<ignite.groupId>\(.*\)</ignite.groupId>.*:\1:p' ../../pom.xml)}
+dep() { echo "<dependency><groupId>$G</groupId><artifactId>$1</artifactId><version>$V</version></dependency>"; }
 libs() { # name, output dir, artifacts
   local p="target/$1-pom"; mkdir -p "$p"
   echo "<project><modelVersion>4.0.0</modelVersion><groupId>local</groupId><artifactId>$1</artifactId><version>1</version>

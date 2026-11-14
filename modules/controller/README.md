@@ -306,6 +306,11 @@ with `plugin`) are those of the extension next to them, and `runs.ext_sha` says 
   trend, Commits, a commit, the matrix, Noise and Release are of jobs without a plugin. The queue is shared. The threshold
   is the default floor: a plugin has no A/A of its own yet.
 
+**The group of a build.** The modules of a scenario and the extension of a plugin are of the group of the `ignite-core`
+just built, as its `pom.properties` says (`org.apache.ignite`, or the group of a fork): the empty test jars, the place of
+an artifact in `m2` and the Ignite dependencies of the poms are taken in that group. The `ignite-parent` of an extension is
+found by its artifactId in any group.
+
 **The build of a pair.** The key is `<sha>[+modules]@<plugin>-<sha of the extension>`. After Ignite and the modules of the
 scenario are installed, `PluginBuild` exports the extension next to the work tree of Ignite, sets the version of
 `ignite-parent` in its chain of poms to the version of the Ignite just built (the extension always builds against the

@@ -11,15 +11,13 @@ import org.w3c.dom.Element;
 
 /**
  * The poms of an extension of a plugin. An extension of ignite-extensions has no version of Ignite of its own: the
- * chain of its parents ends in {@code org.apache.ignite:ignite-parent}, and the version of that parent is the Ignite it
+ * chain of its parents ends in {@code ignite-parent} (of {@code org.apache.ignite}, or of the group of another build of
+ * Ignite), and the version of that parent is the Ignite it
  * builds against ({@code 2.17.0} on a release tag, {@code 2.20.0-SNAPSHOT} on master). The release pair of a plugin
  * takes that version as the tag of Ignite; a build sets it to the version of the Ignite it has just built, so the
  * extension always builds against exactly the Ignite of its pair.
  */
 final class PluginPoms {
-    /** */
-    static final String GROUP = "org.apache.ignite";
-
     /** */
     static final String PARENT = "ignite-parent";
 
@@ -79,8 +77,7 @@ final class PluginPoms {
 
             Element parent = parents.get(0);
 
-            if (GROUP.equals(Builder.childText(parent, "groupId"))
-                && PARENT.equals(Builder.childText(parent, "artifactId"))) {
+            if (PARENT.equals(Builder.childText(parent, "artifactId"))) {
                 String v = Builder.childText(parent, "version");
 
                 if (v == null || v.isEmpty() || v.contains("${"))
@@ -97,7 +94,7 @@ final class PluginPoms {
             path = resolve(path, rel == null ? "../pom.xml" : rel);
         }
 
-        throw new IOException("the poms of " + module + " never name " + GROUP + ":" + PARENT
+        throw new IOException("the poms of " + module + " never name " + PARENT
             + ": the version of Ignite the extension builds against is unknown");
     }
 

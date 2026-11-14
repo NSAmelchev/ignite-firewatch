@@ -62,6 +62,8 @@ class BuilderTest {
             Builder.inRepo(c, "ignite-tools", "2.20.0-SNAPSHOT", ""));
         assertEquals(ignite.resolve("ignite-core/2.20.0-SNAPSHOT/ignite-core-2.20.0-SNAPSHOT-tests.jar"),
             Builder.inRepo(c, "ignite-core", "2.20.0-SNAPSHOT", "tests"));
+        assertEquals(filled.resolve("org/example/ignite/ignite-core/2.18.0-fork-1/ignite-core-2.18.0-fork-1.jar"),
+            Builder.inRepo(c, "org.example.ignite", "ignite-core", "2.18.0-fork-1", ""), "a build of another group");
     }
 
     /** */
@@ -125,6 +127,13 @@ class BuilderTest {
             .stream().map(a -> a[0] + ":" + a[1]).toList();
         assertEquals(List.of("ignite-core:tests", "ignite-tools:", "ignite-clients:"), got,
             "built modules come from the reactor; profiles and other groups are left alone");
+
+        // a build of Ignite under another group: its own artifacts are those of that group, Apache's are not
+        assertEquals(List.of("ignite-core:tests", "ignite-tools:", "ignite-clients:"),
+            Builder.testOnlyArtifacts(tmp, List.of("calcite", "indexing"), "org.example.ignite").stream()
+                .map(a -> a[0] + ":" + a[1]).toList(), "${project.groupId} is the group of the build");
+        assertEquals(List.of(), Builder.testOnlyArtifacts(tmp, List.of("indexing"), "org.example.ignite"),
+            "org.apache.ignite is another group there");
     }
 
     /** */

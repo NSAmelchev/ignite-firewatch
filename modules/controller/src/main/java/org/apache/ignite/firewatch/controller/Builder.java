@@ -36,6 +36,12 @@ public final class Builder {
     /** */
     private static final Pattern MODULE = Pattern.compile("[a-z][a-z0-9-]*");
 
+    /**
+     * The group of Apache Ignite. A build of another group (a fork, a distribution) is built all the same: the group of
+     * a build is the one its ignite-core says, see {@link #coordinates}.
+     */
+    static final String GROUP = "org.apache.ignite";
+
     /** The part of a key that names the extension of a plugin: {@code @<plugin>-<sha of the extension>}. */
     private static final Pattern PLUGIN_PART = Pattern.compile("@([a-z][a-z0-9-]*)-([0-9a-f]{40})$");
 
@@ -73,6 +79,9 @@ public final class Builder {
         /** The version Ignite was built at, the one the extension is built against. */
         final String version;
 
+        /** The group of the Ignite of this build. */
+        final String group;
+
         /** */
         final Path libs;
 
@@ -92,11 +101,12 @@ public final class Builder {
         private final BooleanSupplier cancelled;
 
         /** */
-        private Step(Path ignite, Path tmp, String version, Path libs, Path log, List<String> common,
+        private Step(Path ignite, Path tmp, String version, String group, Path libs, Path log, List<String> common,
             Map<String, String> env, Duration timeout, BooleanSupplier cancelled) {
             this.ignite = ignite;
             this.tmp = tmp;
             this.version = version;
+            this.group = group;
             this.libs = libs;
             this.log = log;
             this.common = common;
@@ -126,7 +136,8 @@ public final class Builder {
          * @param poms The poms of the build.
          */
         void emptyTestJars(Path dir, List<Path> poms) throws IOException, InterruptedException {
-            Builder.this.emptyTestJars(testOnlyArtifacts(poms), version, dir, tmp, common, env, log, cancelled);
+            Builder.this.emptyTestJars(testOnlyArtifacts(poms, group), group, version, dir, tmp, common, env, log,
+                cancelled);
         }
 
         /** Throws {@link CancelledException} if the job was cancelled. */
@@ -477,16 +488,18 @@ public final class Builder {
             throw new IOException("ignite-core jar not found in " + target);
 
         Files.copy(core, libs.resolve(core.getFileName()), StandardCopyOption.REPLACE_EXISTING);
-        Files.writeString(log, "copied " + core.getFileName() + " to " + libs + "\n",
+        String[] coords = coordinates(core);
+        String grp = coords == null ? GROUP : coords[0]; // the modules and the extension are of the group of core
+        Files.writeString(log, "copied " + core.getFileName() + " (" + grp + ") to " + libs + "\n",
             java.nio.file.StandardOpenOption.APPEND);
 
         List<String> modules = modulesOf(key);
 
         if (!modules.isEmpty())
-            buildModules(modules, ver, work, tmp, common, env, log, libs, timeout, cancelled);
+            buildModules(modules, ver, grp, work, tmp, common, env, log, libs, timeout, cancelled);
 
         if (pluginOf(key) != null)
-            extensionOf(key).build(key, new Step(work, tmp, ver, libs, log, common, env, timeout, cancelled));
+            extensionOf(key).build(key, new Step(work, tmp, ver, grp, libs, log, common, env, timeout, cancelled));
     }
 
     /** */
@@ -535,22 +548,67 @@ public final class Builder {
      * @return Jar file, which may not exist.
      */
     static Path inRepo(Config cfg, String artifactId, String version, String classifier) {
-        return cfg.m2Dir().resolve("org/apache/ignite").resolve(artifactId).resolve(version)
+        return inRepo(cfg, GROUP, artifactId, version, classifier);
+    }
+
+    /**
+     * Gets the place of an artifact of a group in the local repository of the builds.
+     *
+     * @param cfg Configuration.
+     * @param group Group.
+     * @param artifactId Artifact.
+     * @param version Version.
+     * @param classifier Classifier, empty for the main jar.
+     * @return Jar file, which may not exist.
+     */
+    static Path inRepo(Config cfg, String group, String artifactId, String version, String classifier) {
+        return cfg.m2Dir().resolve(group.replace('.', '/')).resolve(artifactId).resolve(version)
             .resolve(artifactId + "-" + version + (classifier.isEmpty() ? "" : "-" + classifier) + ".jar");
+    }
+
+    /**
+     * What Maven put into a jar about itself: {groupId, artifactId, version}; null when the jar does not say, or says it
+     * of several (a shaded jar).
+     *
+     * @param jar Jar.
+     * @return Coordinates, or {@code null}.
+     */
+    static String[] coordinates(Path jar) {
+        try (java.util.jar.JarFile f = new java.util.jar.JarFile(jar.toFile())) {
+            List<java.util.jar.JarEntry> props = f.stream().filter(e -> e.getName().startsWith("META-INF/maven/")
+                && e.getName().endsWith("/pom.properties")).toList();
+
+            if (props.size() != 1)
+                return null;
+
+            java.util.Properties p = new java.util.Properties();
+
+            try (java.io.InputStream in = f.getInputStream(props.get(0))) {
+                p.load(in);
+            }
+
+            String g = p.getProperty("groupId"), a = p.getProperty("artifactId"), v = p.getProperty("version");
+
+            return g == null || a == null || v == null ? null : new String[] {g, a, v};
+        }
+        catch (IOException e) {
+            return null;
+        }
     }
 
     /**
      * The extra modules of a scenario on top of the installed core: their jars and runtime dependencies into
      * {@code libs}.
      */
-    private void buildModules(List<String> modules, String version, Path work, Path tmp, List<String> common,
+    private void buildModules(List<String> modules, String version, String group, Path work, Path tmp,
+        List<String> common,
         Map<String, String> env, Path log, Path libs, Duration timeout, BooleanSupplier cancelled)
         throws IOException, InterruptedException {
         // -Dmaven.test.skip does not compile the tests, but Maven still resolves the test-scope dependencies of the
         // modules, and some are never built here (ignite-core:tests; ignite-clients of calcite before 2.18): an empty
         // jar under each missing name lets Maven resolve it, cheaper than building them; test scope never reaches the
         // runtime classpath copied below
-        emptyTestJars(testOnlyArtifacts(work, modules), version, work, tmp, common, env, log, cancelled);
+        emptyTestJars(testOnlyArtifacts(work, modules, group), group, version, work, tmp, common, env, log, cancelled);
 
         List<String> install = new ArrayList<>(common);
         install.addAll(List.of("-pl", String.join(",", modules.stream().map(x -> "modules/" + x).toList()), "install"));
@@ -580,8 +638,9 @@ public final class Builder {
     }
 
     /** Installs an empty jar under each of {@code artifacts} the local repository lacks, at {@code version}. */
-    private void emptyTestJars(List<String[]> artifacts, String version, Path dir, Path tmp, List<String> common,
-        Map<String, String> env, Path log, BooleanSupplier cancelled) throws IOException, InterruptedException {
+    private void emptyTestJars(List<String[]> artifacts, String group, String version, Path dir, Path tmp,
+        List<String> common, Map<String, String> env, Path log, BooleanSupplier cancelled)
+        throws IOException, InterruptedException {
         Path empty = tmp.resolve("empty.jar");
 
         try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(empty), new Manifest())) {
@@ -592,12 +651,12 @@ public final class Builder {
             String artifactId = a[0], classifier = a[1];
             // never over a real jar: ignite-tools is also a dependency of surefire, which loads a class of it even
             // when the tests are skipped, and the install of core has just put it there
-            if (Files.exists(inRepo(cfg, artifactId, version, classifier)))
+            if (Files.exists(inRepo(cfg, group, artifactId, version, classifier)))
                 continue;
 
             List<String> fake = new ArrayList<>(common);
             fake.addAll(List.of("install:install-file", "-Dfile=" + empty.toAbsolutePath(),
-                "-DgroupId=org.apache.ignite", "-DartifactId=" + artifactId, "-Dversion=" + version,
+                "-DgroupId=" + group, "-DartifactId=" + artifactId, "-Dversion=" + version,
                 "-Dpackaging=jar"));
 
             if (!classifier.isEmpty())
@@ -614,12 +673,17 @@ public final class Builder {
      * left out (Maven takes them from the reactor).
      */
     static List<String[]> testOnlyArtifacts(Path work, List<String> modules) throws IOException {
+        return testOnlyArtifacts(work, modules, GROUP);
+    }
+
+    /** The same for a build of {@code group}. */
+    static List<String[]> testOnlyArtifacts(Path work, List<String> modules, String group) throws IOException {
         List<Path> poms = new ArrayList<>();
 
         for (String module : modules)
             poms.add(work.resolve("modules").resolve(module).resolve("pom.xml"));
 
-        return testOnlyArtifacts(poms);
+        return testOnlyArtifacts(poms, group);
     }
 
     /**
@@ -627,9 +691,10 @@ public final class Builder {
      * of the poms themselves are left out.
      *
      * @param pomFiles Poms.
+     * @param group Group of the Ignite of the build.
      * @return {artifactId, classifier} of each.
      */
-    static List<String[]> testOnlyArtifacts(List<Path> pomFiles) throws IOException {
+    static List<String[]> testOnlyArtifacts(List<Path> pomFiles, String group) throws IOException {
         List<org.w3c.dom.Element> poms = new ArrayList<>();
         Set<String> reactor = new TreeSet<>();
 
@@ -648,7 +713,7 @@ public final class Builder {
                     String grp = childText(d, "groupId"), artifact = childText(d, "artifactId");
 
                     if (!"test".equals(childText(d, "scope")) || artifact == null || !artifact.startsWith("ignite-")
-                        || !("org.apache.ignite".equals(grp) || "${project.groupId}".equals(grp)))
+                        || !(group.equals(grp) || "${project.groupId}".equals(grp)))
                         continue;
 
                     String classifier = childText(d, "classifier");
