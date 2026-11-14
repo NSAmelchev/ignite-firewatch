@@ -81,6 +81,24 @@ class BuilderTest {
         assertThrows(IllegalArgumentException.class, () -> Builder.key(sha, List.of("../core")));
     }
 
+    /** A pair of a plugin: Ignite with its modules, then the extension built against it. */
+    @Test void theKeyOfAPairNamesTheExtensionAfterIgnite() {
+        String sha = "1a2b3c4d5e6f7a8b9c0d1a2b3c4d5e6f7a8b9c0d", ext = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
+        String key = Builder.key(sha, List.of("indexing", "calcite"), "spring-data", ext);
+        assertEquals(sha + "+calcite+indexing@spring-data-" + ext, key);
+        assertEquals(sha, Builder.shaOf(key));
+        assertEquals(List.of("calcite", "indexing"), Builder.modulesOf(key));
+        assertEquals(List.of("spring-data", ext), List.of(Builder.pluginOf(key)));
+        assertEquals("1a2b3c4d5e+calcite+indexing @spring-data 9f8e7d6c5b", Builder.label(key));
+        assertEquals(sha + "@spring-data-" + ext, Builder.key(sha, List.of(), "spring-data", ext));
+        assertEquals(sha, Builder.shaOf(sha + "@spring-data-" + ext));
+        assertEquals(List.of(), Builder.modulesOf(sha + "@spring-data-" + ext));
+        assertEquals(sha, Builder.key(sha, List.of(), null, null), "no plugin: the key of Ignite");
+        assertNull(Builder.pluginOf(sha + "+calcite"));
+        assertThrows(IllegalArgumentException.class, () -> Builder.key(sha, List.of(), "spring-data", "master"));
+        assertTrue(Downloads.KEY.matcher(key).matches(), "the jars of a pair can be downloaded");
+    }
+
     /** */
     @Test void testScopeIgniteArtifactsOfTheModulesAreListedForEmptyJars() throws Exception {
         // the poms of a March 2026 commit: calcite still needs ignite-clients in its tests

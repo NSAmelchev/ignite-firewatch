@@ -36,6 +36,105 @@ public final class Builder {
     /** */
     private static final Pattern MODULE = Pattern.compile("[a-z][a-z0-9-]*");
 
+    /** The part of a key that names the extension of a plugin: {@code @<plugin>-<sha of the extension>}. */
+    private static final Pattern PLUGIN_PART = Pattern.compile("@([a-z][a-z0-9-]*)-([0-9a-f]{40})$");
+
+    /**
+     * What a plugin builds after Ignite, see {@link PluginBuild}. Ignite knows nothing of it but this: a key with
+     * {@code @<plugin>-<sha>} is finished by the extension, which runs with the steps of the build of Ignite.
+     */
+    interface Extension {
+        /**
+         * Builds the extension of the key against the Ignite just installed and adds its jars to the libs.
+         *
+         * @param key Build key.
+         * @param step The build of Ignite, to run Maven the same way.
+         */
+        void build(String key, Step step) throws IOException, InterruptedException;
+
+        /**
+         * FAKE_BUILD: adds the release jars of the extension to the libs instead.
+         *
+         * @param key Build key.
+         * @param libs Libs directory.
+         * @param log Build log.
+         */
+        void fake(String key, Path libs, Path log) throws IOException;
+    }
+
+    /** The build of Ignite as an {@link Extension} sees it: where it is, its version, and Maven the way it runs. */
+    final class Step {
+        /** The work tree of Ignite. */
+        final Path ignite;
+
+        /** For temporary files. */
+        final Path tmp;
+
+        /** The version Ignite was built at, the one the extension is built against. */
+        final String version;
+
+        /** */
+        final Path libs;
+
+        /** */
+        final Path log;
+
+        /** */
+        private final List<String> common;
+
+        /** */
+        private final Map<String, String> env;
+
+        /** */
+        private final Duration timeout;
+
+        /** */
+        private final BooleanSupplier cancelled;
+
+        /** */
+        private Step(Path ignite, Path tmp, String version, Path libs, Path log, List<String> common,
+            Map<String, String> env, Duration timeout, BooleanSupplier cancelled) {
+            this.ignite = ignite;
+            this.tmp = tmp;
+            this.version = version;
+            this.libs = libs;
+            this.log = log;
+            this.common = common;
+            this.env = env;
+            this.timeout = timeout;
+            this.cancelled = cancelled;
+        }
+
+        /**
+         * Runs Maven in {@code dir} with the options of every build, then {@code args}.
+         *
+         * @param name What the step does, for the log.
+         * @param dir Directory.
+         * @param args Goals and options.
+         */
+        void mvn(String name, Path dir, List<String> args) throws IOException, InterruptedException {
+            List<String> cmd = new ArrayList<>(common);
+            cmd.addAll(args);
+            runStep(name, cmd, dir, env, log, timeout, cancelled);
+        }
+
+        /**
+         * Installs an empty jar under each Ignite artifact the poms want in test scope and the local repository lacks,
+         * as for the modules of Ignite: Maven resolves test scope even when it skips the tests.
+         *
+         * @param dir Directory to run Maven in.
+         * @param poms The poms of the build.
+         */
+        void emptyTestJars(Path dir, List<Path> poms) throws IOException, InterruptedException {
+            Builder.this.emptyTestJars(testOnlyArtifacts(poms), version, dir, tmp, common, env, log, cancelled);
+        }
+
+        /** Throws {@link CancelledException} if the job was cancelled. */
+        void checkCancelled() {
+            Builder.checkCancelled(cancelled);
+        }
+    }
+
     /** */
     private final Config cfg;
 
@@ -47,6 +146,9 @@ public final class Builder {
 
     /** Start of this controller: a build that failed before it (an older stand) may be fixed now. */
     private final String startedAt = Db.now();
+
+    /** Builds the extension of a key with a plugin part; null on a stand without plugins. */
+    private volatile Extension extension;
 
     /**
      * Creates a builder.
@@ -85,35 +187,92 @@ public final class Builder {
         return sha + "+" + String.join("+", sorted);
     }
 
+    /**
+     * Build key of a pair of a plugin: Ignite with the modules of the scenario, then {@code @<plugin>-<sha>} of the
+     * extension built against it.
+     *
+     * @param sha Commit of Ignite.
+     * @param modules Modules the scenario needs.
+     * @param plugin Plugin name, or {@code null} for a scenario of the harness.
+     * @param extSha Commit of the extension.
+     * @return Build key.
+     */
+    public static String key(String sha, Collection<String> modules, String plugin, String extSha) {
+        if (plugin == null)
+            return key(sha, modules);
+
+        if (extSha == null || !extSha.matches("[0-9a-f]{40}"))
+            throw new IllegalArgumentException("not a full sha of the extension: " + extSha);
+
+        return key(sha, modules) + "@" + plugin + "-" + extSha;
+    }
+
+    /** The key without its plugin part. */
+    private static String ignitePart(String key) {
+        int at = key.indexOf('@');
+
+        return at < 0 ? key : key.substring(0, at);
+    }
+
     /** */
     static String shaOf(String key) {
-        int i = key.indexOf('+');
+        String k = ignitePart(key);
+        int i = k.indexOf('+');
 
-        return i < 0 ? key : key.substring(0, i);
+        return i < 0 ? k : k.substring(0, i);
     }
 
     /** */
     static List<String> modulesOf(String key) {
-        int i = key.indexOf('+');
+        String k = ignitePart(key);
+        int i = k.indexOf('+');
 
-        return i < 0 ? List.of() : List.of(key.substring(i + 1).split("\\+"));
+        return i < 0 ? List.of() : List.of(k.substring(i + 1).split("\\+"));
     }
 
     /**
-     * "1a2b3c4d5e" or "1a2b3c4d5e+calcite+indexing" for logs and stages.
+     * The plugin part of a key.
+     *
+     * @param key Build key.
+     * @return {plugin, sha of the extension}, or {@code null} for a build of Ignite alone.
+     */
+    static String[] pluginOf(String key) {
+        Matcher m = PLUGIN_PART.matcher(key);
+
+        return m.find() ? new String[] {m.group(1), m.group(2)} : null;
+    }
+
+    /**
+     * "1a2b3c4d5e", "1a2b3c4d5e+calcite+indexing" or "1a2b3c4d5e+calcite+indexing @spring-data 9f8e7d6c5b" for logs
+     * and stages.
      *
      * @param key Build key.
      * @return Short label.
      */
     public static String label(String key) {
-        int i = key.indexOf('+');
+        String k = ignitePart(key);
+        int i = k.indexOf('+');
+        String[] p = pluginOf(key);
 
-        return Job.shortSha(shaOf(key)) + (i < 0 ? "" : key.substring(i));
+        return Job.shortSha(shaOf(key)) + (i < 0 ? "" : k.substring(i))
+            + (p == null ? "" : " @" + p[0] + " " + Job.shortSha(p[1]));
     }
 
-    /** Maven's work tree: no '+' in the path, FMPP (the Calcite parser generation) reads it as an operator. */
+    /**
+     * Sets what builds the extension of a plugin.
+     *
+     * @param e Extension builder.
+     */
+    void extension(Extension e) {
+        extension = e;
+    }
+
+    /**
+     * Maven's work tree: no '+' in the path, FMPP (the Calcite parser generation) reads it as an operator; no '@'
+     * either, which resource filtering takes for a delimiter.
+     */
     private Path workDir(String key) {
-        return cfg.workDir().resolve(key.replace('+', '-'));
+        return cfg.workDir().resolve(key.replace('+', '-').replace('@', '_'));
     }
 
     /**
@@ -259,6 +418,9 @@ public final class Builder {
 
         Files.writeString(log, "FAKE_BUILD: copied release jars from " + src + " for " + key + "\n");
 
+        if (pluginOf(key) != null)
+            extensionOf(key).fake(key, libs, log);
+
         try {
             Thread.sleep(500);
         }
@@ -322,6 +484,19 @@ public final class Builder {
 
         if (!modules.isEmpty())
             buildModules(modules, ver, work, tmp, common, env, log, libs, timeout, cancelled);
+
+        if (pluginOf(key) != null)
+            extensionOf(key).build(key, new Step(work, tmp, ver, libs, log, common, env, timeout, cancelled));
+    }
+
+    /** */
+    private Extension extensionOf(String key) throws IOException {
+        Extension e = extension;
+
+        if (e == null)
+            throw new IOException("no plugins on this stand to build " + label(key));
+
+        return e;
     }
 
     /**
@@ -375,30 +550,7 @@ public final class Builder {
         // modules, and some are never built here (ignite-core:tests; ignite-clients of calcite before 2.18): an empty
         // jar under each missing name lets Maven resolve it, cheaper than building them; test scope never reaches the
         // runtime classpath copied below
-        Path empty = tmp.resolve("empty.jar");
-
-        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(empty), new Manifest())) {
-            // nothing but the manifest
-        }
-
-        for (String[] a : testOnlyArtifacts(work, modules)) {
-            String artifactId = a[0], classifier = a[1];
-            // never over a real jar: ignite-tools is also a dependency of surefire, which loads a class of it even
-            // when the tests are skipped, and the install of core has just put it there
-            if (Files.exists(inRepo(cfg, artifactId, version, classifier)))
-                continue;
-
-            List<String> fake = new ArrayList<>(common);
-            fake.addAll(List.of("install:install-file", "-Dfile=" + empty.toAbsolutePath(),
-                "-DgroupId=org.apache.ignite", "-DartifactId=" + artifactId, "-Dversion=" + version,
-                "-Dpackaging=jar"));
-
-            if (!classifier.isEmpty())
-                fake.add("-Dclassifier=" + classifier);
-
-            runStep("mvn install-file (empty " + artifactId + (classifier.isEmpty() ? "" : " " + classifier) + " jar)",
-                fake, work, env, log, Duration.ofMinutes(5), cancelled);
-        }
+        emptyTestJars(testOnlyArtifacts(work, modules), version, work, tmp, common, env, log, cancelled);
 
         List<String> install = new ArrayList<>(common);
         install.addAll(List.of("-pl", String.join(",", modules.stream().map(x -> "modules/" + x).toList()), "install"));
@@ -427,17 +579,62 @@ public final class Builder {
         }
     }
 
+    /** Installs an empty jar under each of {@code artifacts} the local repository lacks, at {@code version}. */
+    private void emptyTestJars(List<String[]> artifacts, String version, Path dir, Path tmp, List<String> common,
+        Map<String, String> env, Path log, BooleanSupplier cancelled) throws IOException, InterruptedException {
+        Path empty = tmp.resolve("empty.jar");
+
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(empty), new Manifest())) {
+            // nothing but the manifest
+        }
+
+        for (String[] a : artifacts) {
+            String artifactId = a[0], classifier = a[1];
+            // never over a real jar: ignite-tools is also a dependency of surefire, which loads a class of it even
+            // when the tests are skipped, and the install of core has just put it there
+            if (Files.exists(inRepo(cfg, artifactId, version, classifier)))
+                continue;
+
+            List<String> fake = new ArrayList<>(common);
+            fake.addAll(List.of("install:install-file", "-Dfile=" + empty.toAbsolutePath(),
+                "-DgroupId=org.apache.ignite", "-DartifactId=" + artifactId, "-Dversion=" + version,
+                "-Dpackaging=jar"));
+
+            if (!classifier.isEmpty())
+                fake.add("-Dclassifier=" + classifier);
+
+            runStep("mvn install-file (empty " + artifactId + (classifier.isEmpty() ? "" : " " + classifier) + " jar)",
+                fake, dir, env, log, Duration.ofMinutes(5), cancelled);
+        }
+    }
+
     /**
      * The Ignite artifacts the modules depend on in test scope, as {artifactId, classifier} (classifier {@code tests}
      * for a test-jar, empty for a main jar), in pom order without repeats; the main jars of the modules themselves are
      * left out (Maven takes them from the reactor).
      */
     static List<String[]> testOnlyArtifacts(Path work, List<String> modules) throws IOException {
+        List<Path> poms = new ArrayList<>();
+
+        for (String module : modules)
+            poms.add(work.resolve("modules").resolve(module).resolve("pom.xml"));
+
+        return testOnlyArtifacts(poms);
+    }
+
+    /**
+     * The Ignite artifacts the poms depend on in test scope, see {@link #testOnlyArtifacts(Path, List)}; the artifacts
+     * of the poms themselves are left out.
+     *
+     * @param pomFiles Poms.
+     * @return {artifactId, classifier} of each.
+     */
+    static List<String[]> testOnlyArtifacts(List<Path> pomFiles) throws IOException {
         List<org.w3c.dom.Element> poms = new ArrayList<>();
         Set<String> reactor = new TreeSet<>();
 
-        for (String module : modules) {
-            org.w3c.dom.Element project = parsePom(work.resolve("modules").resolve(module).resolve("pom.xml"));
+        for (Path pom : pomFiles) {
+            org.w3c.dom.Element project = parsePom(pom);
             poms.add(project);
             reactor.add(childText(project, "artifactId"));
         }
@@ -472,21 +669,33 @@ public final class Builder {
     }
 
     /** */
-    private static org.w3c.dom.Element parsePom(Path pom) throws IOException {
+    static org.w3c.dom.Element parsePom(Path pom) throws IOException {
+        return parsePom(Files.readString(pom), pom.toString());
+    }
+
+    /**
+     * Parses the text of a pom.
+     *
+     * @param text Pom text.
+     * @param name What the text is, for the error.
+     * @return The project element.
+     */
+    static org.w3c.dom.Element parsePom(String text, String name) throws IOException {
         try {
             javax.xml.parsers.DocumentBuilderFactory f = javax.xml.parsers.DocumentBuilderFactory.newInstance();
             f.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
             f.setExpandEntityReferences(false);
 
-            return f.newDocumentBuilder().parse(pom.toFile()).getDocumentElement();
+            return f.newDocumentBuilder().parse(new org.xml.sax.InputSource(new java.io.StringReader(text)))
+                .getDocumentElement();
         }
         catch (javax.xml.parsers.ParserConfigurationException | org.xml.sax.SAXException e) {
-            throw new IOException("cannot read " + pom + ": " + e.getMessage(), e);
+            throw new IOException("cannot read " + name + ": " + e.getMessage(), e);
         }
     }
 
     /** */
-    private static List<org.w3c.dom.Element> children(org.w3c.dom.Element e, String name) {
+    static List<org.w3c.dom.Element> children(org.w3c.dom.Element e, String name) {
         List<org.w3c.dom.Element> out = new ArrayList<>();
 
         for (org.w3c.dom.Node n = e.getFirstChild(); n != null; n = n.getNextSibling()) {
@@ -498,7 +707,7 @@ public final class Builder {
     }
 
     /** */
-    private static String childText(org.w3c.dom.Element e, String name) {
+    static String childText(org.w3c.dom.Element e, String name) {
         List<org.w3c.dom.Element> c = children(e, name);
 
         return c.isEmpty() ? null : c.get(0).getTextContent().trim();

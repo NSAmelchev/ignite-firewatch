@@ -6,14 +6,20 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 OUT="${1:-target/dev-libs}"
-mvn -q dependency:copy-dependencies -DincludeScope=provided -DoutputDirectory="$OUT"
-# the SQL set from a throwaway pom: in the harness pom the modules' Jackson would lose to the harness's own
+mkdir -p "$(dirname "$OUT")"
+OUT="$(cd "$(dirname "$OUT")" && pwd)/$(basename "$OUT")"
+OUT_SQL="$OUT-sql"
+# both sets from throwaway poms: no build of this project is needed, and in the harness pom the modules' Jackson would
+# lose to the harness's own
 V=$(sed -n 's:.*<ignite.version>\(.*\)</ignite.version>.*:\1:p' ../../pom.xml)
-P=target/dev-libs-sql-pom; mkdir -p "$P"
 dep() { echo "<dependency><groupId>org.apache.ignite</groupId><artifactId>$1</artifactId><version>$V</version></dependency>"; }
-echo "<project><modelVersion>4.0.0</modelVersion><groupId>local</groupId><artifactId>dev-libs-sql</artifactId><version>1</version>
-  <dependencies>$(dep ignite-core)$(dep ignite-indexing)$(dep ignite-calcite)</dependencies></project>" > "$P/pom.xml"
-OUT_SQL="$(cd "$(dirname "$OUT")" && pwd)/$(basename "$OUT")-sql"
-mvn -q -f "$P/pom.xml" dependency:copy-dependencies -DincludeScope=runtime -DoutputDirectory="$OUT_SQL"
+libs() { # name, output dir, artifacts
+  local p="target/$1-pom"; mkdir -p "$p"
+  echo "<project><modelVersion>4.0.0</modelVersion><groupId>local</groupId><artifactId>$1</artifactId><version>1</version>
+  <dependencies>$(for a in "${@:3}"; do dep "$a"; done)</dependencies></project>" > "$p/pom.xml"
+  mvn -q -f "$p/pom.xml" dependency:copy-dependencies -DincludeScope=runtime -DoutputDirectory="$2"
+}
+libs dev-libs "$OUT" ignite-core
+libs dev-libs-sql "$OUT_SQL" ignite-core ignite-indexing ignite-calcite
 echo "Ignite libs in $(cd "$OUT" && pwd) and $OUT_SQL:"
 ls -1 "$OUT"

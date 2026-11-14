@@ -29,6 +29,25 @@ class SettingsTest {
         assertThrows(IllegalArgumentException.class, () -> Settings.validate(Settings.AUTORUN_SCENARIO, " , ", sc));
     }
 
+    /** The settings of a plugin: plugin.NAME.FIELD, empty for the default. */
+    @Test void theSettingsOfAPluginAreValidated() {
+        Scenarios sc = scenarios();
+        assertEquals("ignite-spring-data-ext-3.1.0",
+            Settings.validate("plugin.spring-data.release", " ignite-spring-data-ext-3.1.0 ", sc));
+        assertEquals("", Settings.validate("plugin.spring-data.release", "", sc), "no release: it does not run");
+        assertEquals("2.17.0", Settings.validate("plugin.spring-data.ignite", "2.17.0", sc));
+        assertEquals("keep", Settings.validate("plugin.spring-data.mode", "keep", sc));
+        assertEquals("3", Settings.validate("plugin.spring-data.keepDays", "3", sc));
+        assertEquals("https://github.com/apache/ignite-extensions.git",
+            Settings.validate("plugin.spring-data.repo", "https://github.com/apache/ignite-extensions.git", sc));
+        assertThrows(IllegalArgumentException.class, () -> Settings.validate("plugin.spring-data.color", "red", sc));
+        assertThrows(IllegalArgumentException.class, () -> Settings.validate("plugin.Spring.release", "x", sc));
+        assertThrows(IllegalArgumentException.class, () -> Settings.validate("plugin.spring-data.mode", "on", sc));
+        assertThrows(IllegalArgumentException.class, () -> Settings.validate("plugin.spring-data.keepDays", "0", sc));
+        assertThrows(IllegalArgumentException.class, () -> Settings.validate("plugin.spring-data.release", "a b", sc));
+        assertThrows(IllegalArgumentException.class, () -> Settings.validate("plugin.spring-data.repo", "nope", sc));
+    }
+
     /** */
     @Test void otherSettingsAreValidated() throws Exception {
         Scenarios sc = scenarios();

@@ -51,6 +51,7 @@ and the image sets the paths and the port.
 | `IGNITE_FIREWATCH_HARNESS_HEAP_MB` | `128` | heap of the harness launcher JVM (nodes and loader follow the scenario) |
 | `IGNITE_FIREWATCH_PHASE_GRACE_SEC` | `120` | margin over the harness's own worst case, after which a phase counts as hung |
 | `IGNITE_FIREWATCH_FAKE_BUILD`, `IGNITE_FIREWATCH_FAKE_LIBS_DIR` | `0`, `modules/harness/target/dev-libs` | development mode |
+| `IGNITE_FIREWATCH_PLUGINS`, `IGNITE_FIREWATCH_PLUGINS_DIR` | empty, `config/plugins` | the plugins that are on: jar names in the directory or absolute paths, comma-separated; a jar that is not named does nothing (see Plugins) |
 | `IGNITE_FIREWATCH_SSH_KEY`, `IGNITE_FIREWATCH_SSH_KNOWN_HOSTS` | empty: what ssh finds by itself; `/ssh/key` and `/ssh/known_hosts` in the container | key and `known_hosts` of a remote stand, never stored in the DB |
 | `IGNITE_FIREWATCH_SSH_ACCEPT_NEW_HOSTS` | `false` | `true`: ssh takes the key of a host missing from `known_hosts` on first contact and adds it there (`StrictHostKeyChecking=accept-new`); a changed key is refused all the same |
 
@@ -60,7 +61,7 @@ comma-separated, a job for each; the first is the default scenario of the pages 
 the stand), `autorun.pathFilter` (globs: `modules/core/src/main/**`, …, `pom.xml`, `**/pom.xml`), `autorun.maxBacklog` (5),
 `autorun.keepDays` (1), `watch.pollSec` (3600), `watch.watermark`, `retention.keepJfrJobs` (30), `retention.artifactsGb` (3),
 `calibration.*` and `master.*` (A/A and master vs the release: `mode` `off` | `keep`, `keepDays` (7), `scenarios`; off by
-default), `notify.*` (see below).
+default), `notify.*` (see below), `plugin.<name>.*` (see Plugins).
 
 ## Stand (`Stand`)
 
@@ -280,6 +281,45 @@ The harness writes `profile.json` for a phase (a cut of `jdk.ExecutionSample` of
 `GET /api/jobs/{id}/profile` sums the A and B sides and returns the methods whose share of CPU samples changed most
 (`self` is the top of the stack, `total` anywhere in the stack); on the job page it is a table under the charts.
 
+## Plugins (`Plugins`, `PluginSchedule`, `PluginBuild`, `PluginApi`)
+
+A plugin runs Ignite together with an extension of another repository, such as a module of ignite-extensions, whose
+master is not tied to the releases of Ignite. It is a jar of scenarios (see the harness README and `examples/spring-data`)
+that names the repository and the module of the extension. The configuration turns plugins on (`plugins`); at the start
+the controller reads each named jar with `harness.jar list --plugin`, and keeps a mirror of the repository of its
+extension in `cache/plugins/<name>/mirror`. A jar that cannot be read is an error of its own in `/api/health` and the
+section; the stand starts all the same.
+
+A job of a plugin measures pairs: `sha_a` and `sha_b` stay the commits of Ignite, `ext_sha_a` and `ext_sha_b` (schema v6,
+with `plugin`) are those of the extension next to them, and `runs.ext_sha` says which the phase had.
+- **The release pair against the master pair** (source `plugin`): the extension at the release set on the page of the
+  plugin (`plugin.<name>.release`, a tag or a branch; not set: the plugin runs only by hand) with the Ignite its pom builds
+  against: the chain of `<parent>` from the module up to `org.apache.ignite:ignite-parent`, whose version is the tag of
+  Ignite (`plugin.<name>.ignite` sets another). The master pair is the head of the branch of Ignite and the head of
+  `plugin.<name>.branch` (the jar's by default). The watcher fetches the repositories of the plugins with its poll and
+  queues a pair by `Freshness` (`plugin.<name>.mode` `keep` | `off`, `keepDays` 1): nothing while one waits, nothing when
+  neither master moved since the last run or since a failure of the same pairs.
+- **Compare** (source `plugin-compare`): two pairs given as refs of both repositories; `split` goes one side at a time,
+  Ignite first (the extension of A on both sides), then the extension (the Ignite of B on both sides).
+- Both sides of a pair move, so a result says how the two masters do together, not which commit moved them. A job of a
+  plugin is never bisected, never notified, has no segment, and stays out of every view of the branch: the queries of the
+  trend, Commits, a commit, the matrix, Noise and Release are of jobs without a plugin. The queue is shared. The threshold
+  is the default floor: a plugin has no A/A of its own yet.
+
+**The build of a pair.** The key is `<sha>[+modules]@<plugin>-<sha of the extension>`. After Ignite and the modules of the
+scenario are installed, `PluginBuild` exports the extension next to the work tree of Ignite, sets the version of
+`ignite-parent` in its chain of poms to the version of the Ignite just built (the extension always builds against the
+Ignite of its pair; for a release pair nothing changes), installs `ignite-parent` if the install of core did not, installs
+empty jars under the test-scope Ignite artifacts the poms of the extension name (as for the modules of Ignite), runs
+`mvn -pl <module> -am install`, then copies the dependencies of the module with `-DincludeScope=compile`: compile and
+provided, so what the extension leaves `provided` (Spring for spring-data-ext) comes with it at the versions of its pom.
+A library that is in the libs in another version (by the `pom.properties` of the jar) stays the one of Ignite, and the log
+says what was left out. A module of Ignite the extension needs outside test scope has to be among the modules of the
+scenario: the build fails with what to add, rather than take an older build of the same snapshot version from `m2`. An
+extension that does not build against an Ignite is a failed build of the pair: the page of the plugin says incompatible.
+With `FAKE_BUILD` the extension comes from `<jar name>-libs/` next to the jar (the build of the example puts the jars of
+its release there).
+
 ## ABBA statistics (`Stats`)
 
 For every metric A = mean(A1, A2), B = mean(B1, B2), Δ = B/A − 1. The verdict of a metric, `regression | improvement |
@@ -311,6 +351,11 @@ result is cached (LRU of 500 entries).
 | `GET /api/storage` | how many bytes the runs take, their heavy files, the files of comparisons and the records of bisections: what the limits act on |
 | `GET /api/log?lines=` | the last lines of the controller log |
 | `GET /api/scenarios` | the scenarios of the catalog |
+| `GET /api/plugins` | the plugins that are on, each with its settings, its mirror, its pairs now (or why there are none) and its scenarios, and the jars that could not be read |
+| `GET /api/plugins/{name}` | the page of a plugin: per scenario the last result against the release, the jobs in the queue, a failure since, the history with how many commits each side moved since the run before; the compares |
+| `GET /api/plugins/{name}/scenarios/{id}` | a scenario of the plugin as `harness.jar list --plugin` lists it |
+| `POST /api/plugins/{name}/run` | the release pair against the master pair now: `{scenarios?, priority?}` |
+| `POST /api/plugins/{name}/compare` | `{a: {ignite, ext}, b: {ignite, ext}, split?, scenarios?, priority?}`: an ABBA per scenario, or per scenario and step |
 | `GET /api/scenarios/{name}/describe` | a scenario as `harness.jar list` lists it: id, version, topology, timings, sources |
 | `GET /api/settings`, `PUT /api/settings {key: value}` | settings (validated) |
 | `GET /api/stand`, `PUT /api/stand {mode, hosts, sizes}` | the stand: mode, hosts, sizes, `needsSetup`, `frozen`, the last Check and Measure load; writing it ends the wizard, after the first finished phase it is 409 |
@@ -497,6 +542,13 @@ strength of the signal, commits.
   the metrics that decide the verdict have one. A broken phase is marked. Overlaid per-second series: three charts, the
   others on a button, one legend for all with the values of the chart under the cursor. Files (logs, JFR). On a remote
   stand there is also a Layout block: which JVM is on which host, what that machine is, the CPU, GC and heap of each.
+- **Plugins** (`#/plugins`, only when a plugin is on; its code is `plugins.js`, loaded only then): a card per plugin
+  with its two pairs (or why there are none), and a row per scenario: master against the release now, when, the history of
+  Δ ops/s run by run, links to its history and to Compare; a pair that does not build is incompatible. The page of a
+  plugin (`#/plugin?name=…`) has History (every run with the commits each side moved since the run before, linked to the
+  diff), Compare (two pairs, split one side at a time), Scenarios (as the page Scenarios shows them) and Settings (the
+  release, the Ignite of the release, Keep fresh, the repository). A job of a plugin carries its name in Queue and its
+  pairs on its page.
 - **Scenarios**: the scenarios of the harness (Java classes): servers, client and threads, warmup/measurement, version and
   the sources of the class and its base classes from `harness.jar` (`harness.jar list`, read at the start of the
   controller).
@@ -520,7 +572,9 @@ through the service layer with `FAKE_BUILD` and a shell script instead of the ha
 calibrations and the noise threshold, a failed phase, cancel during a phase, recovery after a restart, the watcher with
 its filter/pause/backlog, compare via the merge base, comparisons (a job per scenario, status from the jobs, cancel,
 delete, repeats), automatic bisection (the second half when the first one moved, two changes in different halves, reuse,
-spread, confirm, cancel, stop/resume, a restart in the middle of a step). The UI smoke test
+spread, confirm, cancel, stop/resume, a restart in the middle of a step), a plugin (its pairs queued, built and run, out
+of the views of the branch, a retry that keeps the pairs), the chain of poms of an extension and its libraries against
+those of Ignite. The UI smoke test
 (`everyPageOfTheUiRendersAgainstTheApi`): a controller with the data of a segment, two bisections and two comparisons on a
 local port, and `node src/test/resources/ui-smoke.mjs` renders every page of `app.js` against its API with a stub of the
 browser and fails on the first one that throws; without `node` in PATH or the right to listen on a local port the test is

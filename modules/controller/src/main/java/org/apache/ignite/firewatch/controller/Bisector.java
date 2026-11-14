@@ -111,6 +111,10 @@ public final class Bisector {
         if (root == null)
             throw new java.util.NoSuchElementException("no job " + jobId);
 
+        if (root.plugin != null)
+            throw new IllegalArgumentException("a job of a plugin compares pairs of two repositories: it is not bisected, "
+                + "Compare on the page of the plugin narrows it down");
+
         if (!Job.ABBA.equals(root.type) || !Job.DONE.equals(root.status) || root.shaA.equals(root.shaB))
             throw new IllegalArgumentException("only a finished ABBA job of two commits can be bisected");
 

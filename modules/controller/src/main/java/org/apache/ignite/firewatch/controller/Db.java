@@ -21,7 +21,7 @@ import java.util.Map;
  */
 public final class Db implements AutoCloseable {
     /** */
-    private static final int SCHEMA_VERSION = 5;
+    private static final int SCHEMA_VERSION = 6;
 
     /** */
     private final Connection c;
@@ -128,6 +128,15 @@ public final class Db implements AutoCloseable {
                 st.execute("ALTER TABLE jobs ADD COLUMN cancelled_by TEXT");
                 st.execute("ALTER TABLE bisects ADD COLUMN requested_by TEXT");
                 st.execute("ALTER TABLE comparisons ADD COLUMN requested_by TEXT");
+            }
+
+            if (v < 6) {
+                // a plugin measures pairs: the commits of Ignite stay in sha_a and sha_b, the extension's go here
+                st.execute("ALTER TABLE jobs ADD COLUMN plugin TEXT");
+                st.execute("ALTER TABLE jobs ADD COLUMN ext_sha_a TEXT");
+                st.execute("ALTER TABLE jobs ADD COLUMN ext_sha_b TEXT");
+                st.execute("ALTER TABLE runs ADD COLUMN ext_sha TEXT");
+                st.execute("CREATE INDEX IF NOT EXISTS jobs_plugin ON jobs(plugin, scenario)");
             }
 
             if (v < SCHEMA_VERSION) {
@@ -429,9 +438,10 @@ public final class Db implements AutoCloseable {
      */
     public synchronized List<Build> buildsOf(String sha) {
         try (PreparedStatement ps = c.prepareStatement(
-            "SELECT * FROM builds WHERE sha = ? OR sha LIKE ? ORDER BY started_at DESC")) {
+            "SELECT * FROM builds WHERE sha = ? OR sha LIKE ? OR sha LIKE ? ORDER BY started_at DESC")) {
             ps.setString(1, sha);
             ps.setString(2, sha + "+%");
+            ps.setString(3, sha + "@%");
 
             try (ResultSet rs = ps.executeQuery()) {
                 List<Build> out = new ArrayList<>();
@@ -574,7 +584,8 @@ public final class Db implements AutoCloseable {
 
         try (PreparedStatement ps = c.prepareStatement("INSERT INTO jobs(type, source, status, priority, scenario, "
             + "scenario_hash, ref_a, sha_a, ref_b, sha_b, label, created_at, stage, progress, bisect_id, bisect_step, "
-            + "comparison_id, requested_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)",
+            + "comparison_id, requested_by, plugin, ext_sha_a, ext_sha_b) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, "
+            + "?, ?, ?, ?, ?, ?, ?)",
             Statement.RETURN_GENERATED_KEYS)) {
             ps.setString(1, j.type);
             ps.setString(2, j.source);
@@ -593,6 +604,9 @@ public final class Db implements AutoCloseable {
             setLong(ps, 15, j.bisectStep == null ? null : (long)j.bisectStep);
             setLong(ps, 16, j.comparisonId);
             ps.setString(17, j.requestedBy);
+            ps.setString(18, j.plugin);
+            ps.setString(19, j.extShaA);
+            ps.setString(20, j.extShaB);
             ps.executeUpdate();
 
             try (ResultSet rs = ps.getGeneratedKeys()) {
@@ -861,7 +875,8 @@ public final class Db implements AutoCloseable {
      */
     public synchronized boolean hasActiveJob(String type, String shaA, String shaB, String scenario) {
         try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM jobs WHERE status IN ('queued', 'running') AND "
-            + "type = ? AND sha_a = ? AND COALESCE(sha_b, '') = COALESCE(?, '') AND scenario = ? LIMIT 1")) {
+            + "type = ? AND sha_a = ? AND COALESCE(sha_b, '') = COALESCE(?, '') AND scenario = ? AND plugin IS NULL "
+            + "LIMIT 1")) {
             ps.setString(1, type);
             ps.setString(2, shaA);
             ps.setString(3, shaB);
@@ -883,8 +898,8 @@ public final class Db implements AutoCloseable {
      * @return Jobs, newest first.
      */
     public synchronized List<Job> jobsTouching(String sha) {
-        try (PreparedStatement ps = c.prepareStatement("SELECT * FROM jobs WHERE sha_a = ? OR sha_b = ? ORDER BY id "
-            + "DESC")) {
+        try (PreparedStatement ps = c.prepareStatement("SELECT * FROM jobs WHERE (sha_a = ? OR sha_b = ?) AND plugin IS "
+            + "NULL ORDER BY id DESC")) {
             ps.setString(1, sha);
             ps.setString(2, sha);
 
@@ -915,7 +930,7 @@ public final class Db implements AutoCloseable {
 
         String marks = String.join(",", java.util.Collections.nCopies(shas.size(), "?"));
         String sql = "SELECT * FROM jobs WHERE (sha_b IN (" + marks + ") OR (type = 'single' AND sha_a IN (" + marks
-            + ")))" + (scenario == null ? "" : " AND scenario = ?") + " ORDER BY id DESC";
+            + "))) AND plugin IS NULL" + (scenario == null ? "" : " AND scenario = ?") + " ORDER BY id DESC";
 
         try (PreparedStatement ps = c.prepareStatement(sql)) {
             int i = 1;
@@ -948,7 +963,7 @@ public final class Db implements AutoCloseable {
      * @return Finished jobs.
      */
     public synchronized List<Job> doneJobs(String scenario, String type, String source, int limit) {
-        StringBuilder sql = new StringBuilder("SELECT * FROM jobs WHERE status = 'done'");
+        StringBuilder sql = new StringBuilder("SELECT * FROM jobs WHERE status = 'done' AND plugin IS NULL");
         List<Object> args = new ArrayList<>();
 
         if (scenario != null) {
@@ -1138,6 +1153,9 @@ public final class Db implements AutoCloseable {
         j.comparisonId = getLong(rs, "comparison_id");
         j.requestedBy = rs.getString("requested_by");
         j.cancelledBy = rs.getString("cancelled_by");
+        j.plugin = rs.getString("plugin");
+        j.extShaA = rs.getString("ext_sha_a");
+        j.extShaB = rs.getString("ext_sha_b");
 
         return j;
     }
@@ -1191,7 +1209,7 @@ public final class Db implements AutoCloseable {
     public synchronized List<Job> doneJobsOfPair(String shaA, String shaB, String scenario) {
         try (PreparedStatement ps = c.prepareStatement(
             "SELECT * FROM jobs WHERE status = 'done' AND type = 'abba' AND sha_a = ? AND sha_b = ? AND scenario = ? "
-            + "ORDER BY id")) {
+            + "AND plugin IS NULL ORDER BY id")) {
             ps.setString(1, shaA);
             ps.setString(2, shaB);
             ps.setString(3, scenario);
@@ -1215,10 +1233,85 @@ public final class Db implements AutoCloseable {
      */
     public synchronized Job activeJobOfPair(String shaA, String shaB, String scenario) {
         try (PreparedStatement ps = c.prepareStatement("SELECT * FROM jobs WHERE status IN ('queued', 'running') AND "
-            + "type = 'abba' AND sha_a = ? AND sha_b = ? AND scenario = ? ORDER BY id LIMIT 1")) {
+            + "type = 'abba' AND sha_a = ? AND sha_b = ? AND scenario = ? AND plugin IS NULL ORDER BY id LIMIT 1")) {
             ps.setString(1, shaA);
             ps.setString(2, shaB);
             ps.setString(3, scenario);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? jobOf(rs) : null;
+            }
+        }
+        catch (SQLException e) {
+            throw wrap(e);
+        }
+    }
+
+    /**
+     * Jobs of a plugin, newest first. The main views never see them: every query above is of the harness only.
+     *
+     * @param plugin Plugin name.
+     * @param scenario Scenario of the plugin, or {@code null} for all.
+     * @param source Job source, or {@code null} for all.
+     * @param done Whether only finished jobs.
+     * @param limit Maximum number of jobs.
+     * @return Jobs.
+     */
+    public synchronized List<Job> pluginJobs(String plugin, String scenario, String source, boolean done, int limit) {
+        StringBuilder sql = new StringBuilder("SELECT * FROM jobs WHERE plugin = ?");
+        List<Object> args = new ArrayList<>(List.of(plugin));
+
+        if (scenario != null) {
+            sql.append(" AND scenario = ?");
+            args.add(scenario);
+        }
+
+        if (source != null) {
+            sql.append(" AND source = ?");
+            args.add(source);
+        }
+
+        if (done)
+            sql.append(" AND status = 'done'");
+
+        sql.append(" ORDER BY id DESC LIMIT ?");
+        args.add(limit);
+
+        try (PreparedStatement ps = c.prepareStatement(sql.toString())) {
+            for (int i = 0; i < args.size(); i++)
+                ps.setObject(i + 1, args.get(i));
+
+            try (ResultSet rs = ps.executeQuery()) {
+                return jobsOf(rs);
+            }
+        }
+        catch (SQLException e) {
+            throw wrap(e);
+        }
+    }
+
+    /**
+     * The queued or running job of a plugin that measures exactly these pairs, if any.
+     *
+     * @param plugin Plugin name.
+     * @param scenario Scenario of the plugin.
+     * @param shaA Ignite of A.
+     * @param extA Extension of A.
+     * @param shaB Ignite of B.
+     * @param extB Extension of B.
+     * @return The job, or {@code null} if there is none.
+     */
+    public synchronized Job activePluginJob(String plugin, String scenario, String shaA, String extA, String shaB,
+        String extB) {
+        try (PreparedStatement ps = c.prepareStatement("SELECT * FROM jobs WHERE status IN ('queued', 'running') AND "
+            + "plugin = ? AND scenario = ? AND sha_a = ? AND ext_sha_a = ? AND sha_b = ? AND ext_sha_b = ? ORDER BY id "
+            + "LIMIT 1")) {
+            ps.setString(1, plugin);
+            ps.setString(2, scenario);
+            ps.setString(3, shaA);
+            ps.setString(4, extA);
+            ps.setString(5, shaB);
+            ps.setString(6, extB);
 
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? jobOf(rs) : null;
@@ -1534,7 +1627,7 @@ public final class Db implements AutoCloseable {
      */
     public synchronized Run insertRun(Run r) {
         try (PreparedStatement ps = c.prepareStatement("INSERT INTO runs(job_id, phase, sha, seq, status, started_at, "
-            + "dir) VALUES (?, ?, ?, ?, ?, ?, ?)", Statement.RETURN_GENERATED_KEYS)) {
+            + "dir, ext_sha) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", Statement.RETURN_GENERATED_KEYS)) {
             ps.setLong(1, r.jobId);
             ps.setString(2, r.phase);
             ps.setString(3, r.sha);
@@ -1542,6 +1635,7 @@ public final class Db implements AutoCloseable {
             ps.setString(5, r.status);
             ps.setString(6, r.startedAt);
             ps.setString(7, r.dir);
+            ps.setString(8, r.extSha);
             ps.executeUpdate();
 
             try (ResultSet rs = ps.getGeneratedKeys()) {
@@ -1679,6 +1773,7 @@ public final class Db implements AutoCloseable {
         r.heapAfterGcMb = getDouble(rs, "heap_after_gc_mb");
         r.errors = getLong(rs, "errors");
         r.noise = rs.getString("noise");
+        r.extSha = rs.getString("ext_sha");
 
         return r;
     }

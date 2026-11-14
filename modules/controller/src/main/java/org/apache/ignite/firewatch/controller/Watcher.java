@@ -26,6 +26,9 @@ public final class Watcher implements Runnable {
     /** */
     private final JobService jobs;
 
+    /** The plugins: their repositories are fetched and their pairs queued with the other recurring runs. */
+    private volatile Plugins plugins;
+
     /** */
     private final Object lock = new Object();
 
@@ -58,6 +61,15 @@ public final class Watcher implements Runnable {
 
     /** */
     private volatile int lastQueued;
+
+    /**
+     * Sets the plugins of the stand.
+     *
+     * @param p Plugins.
+     */
+    void plugins(Plugins p) {
+        plugins = p;
+    }
 
     /**
      * Creates the watcher.
@@ -166,6 +178,17 @@ public final class Watcher implements Runnable {
         }
         catch (Exception e) {
             Log.warn("watcher: recurring runs: " + e);
+        }
+
+        Plugins p = plugins;
+
+        if (p != null && !p.list().isEmpty()) {
+            try {
+                PluginSchedule.runIfDue(db, jobs, p, mirror);
+            }
+            catch (Exception e) {
+                Log.warn("watcher: plugins: " + e);
+            }
         }
     }
 

@@ -55,6 +55,9 @@ final class PhaseRunner {
 
         /** */
         Integer measureSec;
+
+        /** The jar of the plugin the scenario is of; null for a scenario of the harness. */
+        Path plugin;
     }
 
     /** */
@@ -85,6 +88,18 @@ final class PhaseRunner {
         this.options = options;
     }
 
+    /** The arguments of a server or a loader, with the jar of the plugin as the host has it. */
+    private List<String> withPlugin(List<String> args, Host host) {
+        if (options.plugin == null)
+            return args;
+
+        List<String> all = new ArrayList<>(args);
+        all.add("--plugin");
+        all.add(host.pluginPath(options.plugin));
+
+        return all;
+    }
+
     /** */
     private static List<String> withScale(String[] jvmOpts, Scale scale) {
         List<String> opts = new ArrayList<>(List.of(jvmOpts));
@@ -113,7 +128,7 @@ final class PhaseRunner {
         }, "firewatch-cleanup"));
 
         try {
-            Catalog.Entry entry = Catalog.get(scenarioId);
+            Catalog.Entry entry = Catalog.get(scenarioId, options.plugin);
             Bench b = entry.bench;
             Placement placement = Placement.of(b,
                 options.standFile == null ? null : Json.read(options.standFile, StandConfig.class), runId);
@@ -147,7 +162,7 @@ final class PhaseRunner {
             hosts.addAll(placement.hosts());
 
             for (Host h : hosts) {
-                h.prepare(harnessJar, libsDir, out);
+                h.prepare(harnessJar, options.plugin, libsDir, out);
 
                 if (h.facts() != null) {
                     if (res.hosts == null)
@@ -170,13 +185,14 @@ final class PhaseRunner {
                 s.heapMb = scale.heapMb(b.servers().heapMb(), sql);
                 s.jvmOpts = withScale(b.servers().jvmOpts(), scale);
                 s.harnessJar = harnessJar;
+                s.pluginJar = options.plugin;
                 s.libsDir = libsDir;
                 s.dir = host.dir(out);
                 s.jfr = true;
                 s.runId = runId;
                 s.logFile = out.resolve("node-" + i + ".log");
-                s.args = List.of("--scenario", b.id(), "--node-index", String.valueOf(i), "--host", host.address(),
-                    "--discovery", discovery, "--work-dir", s.dir + "/work/node-" + i);
+                s.args = withPlugin(List.of("--scenario", b.id(), "--node-index", String.valueOf(i), "--host",
+                    host.address(), "--discovery", discovery, "--work-dir", s.dir + "/work/node-" + i), host);
                 JvmProcess p = host.start(s);
                 children.add(p);
                 servers.add(p);
@@ -202,6 +218,7 @@ final class PhaseRunner {
             l.heapMb = b.loader().heapMb();
             l.jvmOpts = withScale(b.loader().jvmOpts(), scale);
             l.harnessJar = harnessJar;
+            l.pluginJar = options.plugin;
             l.libsDir = libsDir;
             l.dir = ldrHost.dir(out);
             l.runId = runId;
@@ -210,7 +227,7 @@ final class PhaseRunner {
                 "--work-dir", l.dir + "/work/loader", "--host", ldrHost.address(),
                 "--discovery", discovery, "--thin", placement.thinAddresses(),
                 "--warmup-sec", String.valueOf(res.warmupSec), "--measure-sec", String.valueOf(res.measureSec)));
-            l.args = args;
+            l.args = withPlugin(args, ldrHost);
 
             if (options.standFile != null)
                 res.loaderHost = ldrHost.name();

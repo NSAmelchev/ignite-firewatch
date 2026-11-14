@@ -23,7 +23,7 @@ import java.util.zip.ZipOutputStream;
  */
 public final class Downloads {
     /** A build: the sha of the commit, then the modules of its scenario. */
-    static final Pattern KEY = Pattern.compile("[0-9a-f]{40}(\\+[a-z][a-z0-9-]*)*");
+    static final Pattern KEY = Pattern.compile("[0-9a-f]{40}(\\+[a-z][a-z0-9-]*)*(@[a-z][a-z0-9-]*-[0-9a-f]{40})?");
 
     /** What the nodes write their data into: big and of no use away from the stand. */
     private static final String WORK = "work";
@@ -38,17 +38,17 @@ public final class Downloads {
     private final Db db;
 
     /** */
-    private final Scenarios scenarios;
+    private final JobService jobs;
 
     /**
      * @param cfg Configuration.
      * @param db Database.
-     * @param scenarios Scenarios: their modules name the builds of a job.
+     * @param jobs Jobs: the scenario of a job names its builds.
      */
-    public Downloads(Config cfg, Db db, Scenarios scenarios) {
+    public Downloads(Config cfg, Db db, JobService jobs) {
         this.cfg = cfg;
         this.db = db;
-        this.scenarios = scenarios;
+        this.jobs = jobs;
     }
 
     /**
@@ -77,8 +77,8 @@ public final class Downloads {
 
         List<Map<String, Object>> builds = new ArrayList<>();
 
-        for (Map.Entry<String, String> side : sides(j).entrySet()) {
-            String key = Builder.key(side.getValue(), modules(j));
+        for (Map.Entry<String, String> side : JobService.buildKeys(j, jobs.scenarioOf(j)).entrySet()) {
+            String key = side.getValue();
             Map<String, Object> m = build(key, db.build(key));
             m.put("side", side.getKey());
             builds.add(m);
@@ -137,8 +137,8 @@ public final class Downloads {
         Path dir = cfg.runsDir().resolve(String.valueOf(id));
         Map<String, Path> logs = new LinkedHashMap<>();
 
-        for (Map.Entry<String, String> side : sides(j).entrySet()) {
-            String key = Builder.key(side.getValue(), modules(j));
+        for (Map.Entry<String, String> side : JobService.buildKeys(j, jobs.scenarioOf(j)).entrySet()) {
+            String key = side.getValue();
             Path log = logOf(db.build(key));
 
             if (log != null)
@@ -210,26 +210,6 @@ public final class Downloads {
             throw new NoSuchElementException("no job " + id);
 
         return j;
-    }
-
-    /** @return The commits a job builds, by side: A, and B when it is another commit. */
-    private static Map<String, String> sides(Job j) {
-        Map<String, String> m = new LinkedHashMap<>();
-
-        if (j.shaA != null)
-            m.put("A", j.shaA);
-
-        if (j.isAbba() && j.shaB != null && !j.shaB.equals(j.shaA))
-            m.put("B", j.shaB);
-
-        return m;
-    }
-
-    /** */
-    private List<String> modules(Job j) {
-        Scenarios.Info sc = scenarios.get(j.scenario);
-
-        return sc == null ? List.of() : sc.modules;
     }
 
     /** @return The files of the phases of a job, without the work directories of the nodes. */

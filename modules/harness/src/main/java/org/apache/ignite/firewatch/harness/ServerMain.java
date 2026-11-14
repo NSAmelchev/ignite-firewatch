@@ -23,7 +23,8 @@ public final class ServerMain {
      */
     public static void main(String[] args) throws Exception {
         Cli cli = Cli.parse(args, 0);
-        Scenario sc = Catalog.get(cli.req("scenario")).newInstance();
+        String plugin = cli.get("plugin", null);
+        Scenario sc = Catalog.get(cli.req("scenario"), plugin == null ? null : Path.of(plugin)).newInstance();
         int idx = cli.getInt("node-index", 0);
         Path workDir = Path.of(cli.get("work-dir", "work-node-" + idx));
         IgniteConfiguration cfg = IgniteConfigs.server(idx, cli.get("host", "127.0.0.1"),

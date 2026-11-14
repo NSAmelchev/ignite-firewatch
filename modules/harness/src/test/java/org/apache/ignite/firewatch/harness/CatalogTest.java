@@ -60,6 +60,7 @@ class CatalogTest {
         URL classes = Catalog.class.getProtectionDomain().getCodeSource().getLocation();
         URL[] cp = {
             classes,
+            org.apache.ignite.firewatch.harness.api.Bench.class.getProtectionDomain().getCodeSource().getLocation(),
             com.fasterxml.jackson.databind.ObjectMapper.class.getProtectionDomain().getCodeSource().getLocation(),
             com.fasterxml.jackson.core.JsonFactory.class.getProtectionDomain().getCodeSource().getLocation(),
             com.fasterxml.jackson.annotation.JsonInclude.class.getProtectionDomain().getCodeSource().getLocation(),

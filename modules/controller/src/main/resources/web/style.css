@@ -171,6 +171,9 @@ details.scenario li { margin: 3px 0; }
 .seg button { border: 0; border-radius: 0; background: transparent; color: var(--muted); padding: 5px 12px; cursor: pointer; }
 .seg button + button { border-left: 1px solid var(--line); }
 .seg button.on { background: var(--accent); color: #fff; }
+.seg a.seg-link { color: var(--muted); padding: 5px 12px; text-decoration: none; }
+.seg a.seg-link + a.seg-link { border-left: 1px solid var(--line); }
+.seg a.seg-link.on { background: var(--accent); color: #fff; }
 #compare input:not([type]), #compare input[type="text"] { width: 100%; box-sizing: border-box; }
 /* Compare: multi-select of scenarios, a chip toggles a whole group */
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
@@ -595,3 +598,26 @@ input.bad, input.bad:focus { border-color: var(--bad); outline-color: var(--bad)
 .hint.error { color: var(--bad); }
 .by-name { display: inline-block; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .by-name.mine { font-weight: 600; }
+
+/* Plugins: a card per plugin, its two pairs, a row per scenario with the history of its Δ */
+.plugin-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.plugin-head h2 { margin: 0; }
+.plugin-head h2 a { color: var(--fg); text-decoration: none; }
+.plugin-actions { margin-left: auto; display: flex; gap: 10px; align-items: baseline; }
+.plugin-pairs { margin: 4px 0 2px; }
+.plugin-pairs dd { overflow-wrap: anywhere; }
+.plugin-rows { margin-top: 10px; }
+.plugin-spark .spark-zero { stroke: var(--line); stroke-width: 1; }
+.plugin-spark .spark-line { fill: none; stroke: var(--muted); stroke-width: 1.2; }
+.plugin-spark .spark-dot { fill: var(--muted); }
+.plugin-spark .spark-bad { fill: var(--bad); }
+.plugin-spark .spark-good { fill: var(--ok); }
+.pair-form { display: flex; gap: 24px; flex-wrap: wrap; }
+.pair-form > div { flex: 1 1 280px; min-width: 0; }
+.pair-form h3 { margin: 0 0 4px; }
+.pair-form input, .plugin-settings input:not([type=radio]):not([type=number]) { width: 100%; }
+label.check { display: flex; gap: 8px; align-items: baseline; color: var(--fg); font-size: 13px; margin: 12px 0 4px; }
+.plugin-tabs { margin-top: 12px; }
+.plugin-settings input:not([type=radio]):not([type=number]) { width: 100%; }
+.plugin-settings .mode-row { margin-top: 12px; }
+.plugin-settings details { margin-top: 12px; }

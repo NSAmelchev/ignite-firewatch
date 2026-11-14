@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
@@ -74,6 +75,15 @@ public final class Config {
     /** */
     public int harnessHeapMb = 128;
 
+    /**
+     * The plugins this stand runs: jar names in {@link #pluginsDir}, or absolute paths, comma-separated. A jar lying in
+     * the directory does nothing until it is named here; see {@link Plugins}.
+     */
+    public List<String> plugins = List.of();
+
+    /** */
+    public Path pluginsDir = Path.of("config/plugins");
+
     /** Development mode: instead of building a commit, copy release jars from {@link #fakeLibsDir}. */
     public boolean fakeBuild;
 
@@ -133,6 +143,8 @@ public final class Config {
         c.fetchTimeoutMin = Integer.parseInt(get("FETCH_TIMEOUT_MIN", String.valueOf(c.fetchTimeoutMin)));
         c.harnessHeapMb = Integer.parseInt(get("HARNESS_HEAP_MB", String.valueOf(c.harnessHeapMb)));
         c.fakeBuild = isTrue(get("FAKE_BUILD", "0"));
+        c.plugins = Arrays.stream(get("PLUGINS", "").split(",")).map(String::trim).filter(x -> !x.isEmpty()).toList();
+        c.pluginsDir = Path.of(get("PLUGINS_DIR", c.pluginsDir.toString()));
         c.fakeLibsDir = Path.of(get("FAKE_LIBS_DIR", c.fakeLibsDir.toString()));
         c.phaseGraceSec = Integer.parseInt(get("PHASE_GRACE_SEC", String.valueOf(c.phaseGraceSec)));
         c.sshKey = get("SSH_KEY", c.sshKey);
@@ -151,6 +163,25 @@ public final class Config {
             v = file().getProperty(key);
 
         return v == null || v.isBlank() ? def : v.trim();
+    }
+
+    /**
+     * The jars of {@link #plugins}, in their order: a name is in {@link #pluginsDir}, a path stays as it is.
+     *
+     * @return Jar paths.
+     */
+    public List<Path> pluginJars() {
+        return plugins.stream().map(p -> Path.of(p).isAbsolute() ? Path.of(p) : pluginsDir.resolve(p)).toList();
+    }
+
+    /**
+     * The mirror of the repository of a plugin.
+     *
+     * @param plugin Plugin name.
+     * @return Directory of its bare repository.
+     */
+    public Path pluginMirrorDir(String plugin) {
+        return cacheDir.resolve("plugins").resolve(plugin).resolve("mirror");
     }
 
     /**

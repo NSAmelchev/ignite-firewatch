@@ -33,6 +33,9 @@ final class JvmProcess {
         /** */
         Path harnessJar;
 
+        /** The jar of the plugin whose scenario runs; null for a scenario of the harness. */
+        Path pluginJar;
+
         /** */
         Path libsDir;
 
@@ -137,7 +140,7 @@ final class JvmProcess {
                 System.out.println(s.label + ": taskset not found, cpuset '" + s.cpuset + "' ignored");
         }
 
-        cmd.addAll(javaCommand(s, Jvm.javaExecutable(), Jvm.classpath(s.harnessJar, s.libsDir)));
+        cmd.addAll(javaCommand(s, Jvm.javaExecutable(), Jvm.classpath(s.harnessJar, s.pluginJar, s.libsDir)));
         Files.createDirectories(Path.of(s.dir, "work", "tmp"));
 
         if (s.jfr)

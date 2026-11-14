@@ -159,6 +159,9 @@ public final class Settings {
 
         value = value.trim();
 
+        if (key.startsWith(Plugins.PREFIX))
+            return Plugins.validate(key, value);
+
         switch (key) {
             case AUTORUN_ENABLED:
                 if (!value.equals("true") && !value.equals("false"))

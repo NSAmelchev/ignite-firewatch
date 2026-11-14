@@ -169,7 +169,7 @@ const mapLevel = (metric, d, threshold, verdict) => {
 const STARTUP = new Set(['serverStartMs', 'preloadMs']);
 // How a Δ is marked: filled only on a metric that decides the verdict of a run, or the one a page follows. The others
 // moved too but stay quiet, so a filled cell never sits in a no-change row.
-const deltaClass = (key, d, threshold, verdict, main = VERDICT_KEYS.includes(key)) => {
+export const deltaClass = (key, d, threshold, verdict, main = VERDICT_KEYS.includes(key)) => {
   const level = STARTUP.has(key) ? '' : deltaLevel(d, threshold, verdict), worse = HIGHER_BETTER.has(key) ? d < 0 : d > 0;
   return level === 'verdict' && main ? (worse ? 'v-worse' : 'v-better') : level ? (worse ? 'hl-worse' : 'hl-better') : '';
 };
@@ -189,7 +189,8 @@ const moreRunBtn = (jobId) => `<button class="small" data-more="${jobId}" title=
 const splitBtns = (jobId, cls = 'small') => `<button class="${cls}" data-split="${jobId}" data-mode="halves" title="queue A..middle and middle..B">Split ½</button>
   <button class="${cls}" data-split="${jobId}" data-mode="commits" title="queue every commit of the segment against its parent">Each commit</button>`;
 // what a job is a part of: the step of an automatic bisection or a scenario of a comparison
-const parentTag = (j) => (j && j.bisectId ? ` <a class="badge bisect" href="#/bisects/${j.bisectId}" title="step ${j.bisectStep} of automatic bisect #${j.bisectId}">bisect #${j.bisectId} · step ${j.bisectStep}</a>`
+export const parentTag = (j) => (j && j.plugin ? ` <a class="badge bisect" href="#/plugin?name=${encodeURIComponent(j.plugin)}" title="a job of plugin ${esc(j.plugin)}: pairs of Ignite and the extension">${esc(j.plugin)}</a>`
+  : j && j.bisectId ? ` <a class="badge bisect" href="#/bisects/${j.bisectId}" title="step ${j.bisectStep} of automatic bisect #${j.bisectId}">bisect #${j.bisectId} · step ${j.bisectStep}</a>`
   : j && j.comparisonId ? ` <a class="badge bisect" href="#/comparisons/${j.comparisonId}" title="a scenario of comparison #${j.comparisonId}">comparison #${j.comparisonId}</a>` : '');
 // the button that starts a bisection from a segment with a verdict
 const bisectBtn = (jobId, cls = 'small') => `<button class="${cls}" data-bisect="${jobId}" title="find the commit that moved the metric: one half per step, queued automatically until one commit is left">Bisect</button>`;
@@ -478,7 +479,7 @@ const bisectActions = (b) => (b.status === 'running' ? `<button class="small" da
     : canGoDeep(b) ? deepButton(b.id) : '');
 // one line of a bisection: where it is now, or how it ended
 const foundOf = (b) => b.state.findings.filter((f) => f.kind === 'found');
-const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+export const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 function bisectNow(b) {
   const s = b.state, n = s.steps.length + (b.waiting ? 1 : 0), left = s.open.reduce((x, r) => x + r.commits, 0), found = foundOf(b);
   if (b.status === 'found') return `found <a class="mono" href="#/commits/${b.resultSha}">${fmt.sha(b.resultSha)}</a> <span class="job-subject" title="${esc(b.subjects[b.resultSha] || '')}">${esc(b.subjects[b.resultSha] || '')}</span>${found.length > 1 ? ` <span class="muted">+${found.length - 1} more</span>` : ''}`;
@@ -517,7 +518,7 @@ function latestBisects(list) {
 const earlierMark = (g) => (g.earlier.length ? ` <span class="muted" title="earlier searches of the same range">${g.earlier.map((b) => `<a href="#/bisects/${b.id}">#${b.id}</a>`).join(' ')}</span>` : '');
 
 // Δ of a finished job in one line: the verdict metrics, coloured as in the tables
-function deltaLine(j) {
+export function deltaLine(j) {
   const m = (j && j.comparison && j.comparison.metrics) || {};
   const parts = METRIC_COLS.slice(0, 4).filter(([k]) => m[k] && m[k].deltaPct != null).map(([k, h]) => {
     const r = m[k];
@@ -528,7 +529,7 @@ function deltaLine(j) {
 const mins = (sec) => fmt.len(sec);
 // A modal in the page: resolves true on the main button (or Enter), false on Cancel, Esc or a click outside
 // `required`: no Cancel, and neither Escape nor a click outside closes it; `asWho`: says in whose name the action goes
-function modal(title, body, ok = 'OK', { open, value, danger, required, asWho } = {}) {
+export function modal(title, body, ok = 'OK', { open, value, danger, required, asWho } = {}) {
   return new Promise((resolve) => {
     const w = document.createElement('div');
     w.className = 'modal-back';
@@ -588,7 +589,7 @@ function paintWho() {
 // it should be done. Resolves to { priority, scenarios } (false on cancel): the priority chosen, as usual by default (`priority`
 // is the usual one of its kind). With `choose` ([{name, checked}]) the Scenario row is a set of checkboxes and `scenarios` the
 // chosen names; with `scenarios` (names) it covers all of them. The estimate follows the choices.
-async function confirmLaunch({ title, what, job, note, scenario, scenarios, choose, type = 'abba', jobs = 1, shas = [], extraBuilds = 0, priority = 1, ok = 'Queue' }) {
+export async function confirmLaunch({ title, what, job, note, scenario, scenarios, choose, type = 'abba', jobs = 1, shas = [], extraBuilds = 0, priority = 1, ok = 'Queue' }) {
   const estimate = async (sc, n, prio) => {
     const q = new URLSearchParams({ scenario: sc, type, jobs: n, shas: shas.filter(Boolean).join(','), extraBuilds, priority: prio });
     const e = await api.get(`/api/estimate?${q}`).catch(() => null);
@@ -671,15 +672,19 @@ const segmentSize = (j) => {
 const isSegment = (j) => segmentSize(j) !== 0;
 const isAA = (j) => j.type === 'abba' && j.shaA && j.shaA === j.shaB;
 const fmtDay = (iso) => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: new Date(iso).getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined }) : '?');
-const jobTitle = (j, link = true) => {
+export const jobTitle = (j, link = true) => {
   const n = segmentSize(j);
-  const t = isAA(j) ? `A/A calibration · ${scName(j.scenario)}`
+  // a plugin: the chip names it and the line below has the pairs
+  const t = j.plugin ? `${j.source === 'plugin' ? 'master vs release' : 'pairs compared'} · ${j.scenario}`
+    : isAA(j) ? `A/A calibration · ${scName(j.scenario)}`
     : j.source === 'release' ? `${j.refB || 'master'} vs ${j.refA} · ${scName(j.scenario)}`
     : j.comparisonId ? `${j.label} · ${scName(j.scenario)}`
     : isSegment(j) ? `Segment of ${n || 'several'} commits, ${fmtDay(j.dateA)} – ${fmtDay(j.dateB)}` : jobSubjectText(j) || j.label;
   const body = `<span class="job-subject" title="${esc(t)}">${esc(t)}</span>`;
   return link ? `<a class="job-title" href="#/jobs/${j.id}">${body}</a>` : body;
 };
+// the extension next to a side of a job of a plugin
+const extLine = (plugin, sha) => `<div>+ ${esc(plugin)} <span class="mono" title="${esc(sha || '')}">${fmt.sha(sha)}</span></div>`;
 // "a1b2c3d4e5 IGNITE-123 Subject…" with the full sha in the tooltip; the ref is shown only when it is not just the sha
 const refLine = (ref, sha, subject) => {
   const showRef = ref && !/^[0-9a-f]{7,40}$/i.test(ref) && !(sha || '').startsWith(ref);
@@ -687,7 +692,10 @@ const refLine = (ref, sha, subject) => {
     + (subject ? ` <span class="job-subject" title="${esc(subject)}">${subjectHtml(subject)}</span>` : '')
     + (showRef ? ` <span class="muted">(${esc(ref)})</span>` : '');
 };
-const jobRefsShort = (j) => {
+// a side of a job of a plugin: Ignite + the extension next to it
+const pairShort = (sha, ext) => `<span class="mono">${fmt.sha(sha)}</span> + <span class="mono" title="the extension">${fmt.sha(ext)}</span>`;
+export const jobRefsShort = (j) => {
+  if (j.plugin) return `${pairShort(j.shaB, j.extShaB)} vs ${pairShort(j.shaA, j.extShaA)}`;
   if (isAA(j)) return `${esc(j.refA || '')} <span class="mono">${fmt.sha(j.shaA)}</span> against itself: every Δ is stand noise`;
   if (j.source === 'release') return `<span class="mono">${fmt.sha(j.shaB)}</span> vs ${esc(j.refA)} <span class="mono">${fmt.sha(j.shaA)}</span>`;
   // the last commit's subject says nothing about a segment: only in the tooltip
@@ -757,7 +765,7 @@ const jobSource = (j) => `${esc(j.source)}${j.type === 'abba' ? '' : ` · ${esc(
 // who queued a job and who cancelled it; what the stand queues by itself has no name; the user's own name is bold
 const byName = (name) => `<span class="by-name${name === who ? ' mine' : ''}" title="${esc(name)}">${esc(name)}</span>`;
 // no name: what a person queues by hand had none before the stand asked for it, or came through the API without one
-const noName = (j) => (['manual', 'compare'].includes(j.source) ? 'no name: queued before the stand asked for one, or through the API without it'
+const noName = (j) => (['manual', 'compare', 'plugin-compare'].includes(j.source) ? 'no name: queued before the stand asked for one, or through the API without it'
   : 'queued by the stand itself (or before the stand asked for names)');
 const byCell = (j) => `${j.requestedBy ? byName(j.requestedBy) : `<span class="muted" title="${noName(j)}">–</span>`}${j.cancelledBy ? `<div class="muted">cancelled by ${byName(j.cancelledBy)}</div>` : ''}`;
 function historyTable(history) {
@@ -834,14 +842,14 @@ views.job = {
     const broken = cmp && cmp.metrics.throughput ? brokenPhases(cmp.metrics.throughput) : [];
     return `
       <h1>${jobTitle(j, false)} ${badge(j.status)} ${j.verdict ? badge(j.verdict) : ''}
-        ${j.source !== 'compare' && j.shaB ? ` <a class="small-link" href="#/commits/${j.shaB}">commit page →</a>` : ''}</h1>
+        ${j.source !== 'compare' && !j.plugin && j.shaB ? ` <a class="small-link" href="#/commits/${j.shaB}">commit page →</a>` : ''}</h1>
       <div class="muted" style="margin:-6px 0 12px">job #${j.id}${parentTag(j)}</div>
       <div class="row">
         <div class="card"><dl class="kv">
           <dt>Type</dt><dd>${esc(j.type)} · ${esc(j.source)} · scenario <b>${esc(scName(j.scenario))}</b>${j.scenarioHash ? ` <span class="muted mono">${esc(j.scenarioHash.slice(0, 12))}</span>` : ''}</dd>
           <dt>Measures</dt><dd>${measures(j)}</dd>
-          <dt>A (baseline)</dt><dd>${refLine(j.refA, j.shaA, j.subjectA)}</dd>
-          ${j.type === 'abba' ? `<dt>B (target)</dt><dd>${refLine(j.refB, j.shaB, j.subjectB)}</dd>` : ''}
+          <dt>A (baseline)</dt><dd>${refLine(j.refA, j.shaA, j.subjectA)}${j.plugin ? extLine(j.plugin, j.extShaA) : ''}</dd>
+          ${j.type === 'abba' ? `<dt>B (target)</dt><dd>${refLine(j.refB, j.shaB, j.subjectB)}${j.plugin ? extLine(j.plugin, j.extShaB) : ''}</dd>` : ''}
           <dt>Timing</dt><dd>created ${fmt.date(j.createdAt)} · started ${fmt.date(j.startedAt)} · finished ${fmt.date(j.finishedAt)} · took ${fmt.dur(j.startedAt, j.finishedAt)}</dd>
           ${running ? `<dt>Stage</dt><dd>${esc(j.stage)} · ${j.progress}%</dd>` : ''}
           ${j.error ? `<dt>Error</dt><dd class="error">${esc(j.error)}${failedBuildKey(j) ? ` <a class="inline-dl" href="${buildLogUrl(failedBuildKey(j))}" target="_blank">build log</a>` : ''}</dd>` : ''}
@@ -1391,7 +1399,7 @@ views.commit = {
 };
 
 // A row that unfolds the detail row right after it
-function unfoldRow(row, open) {
+export function unfoldRow(row, open) {
   row.nextElementSibling.hidden = !open;
   $('.chev', row).textContent = open ? '▾' : '▸';
 }
@@ -2049,30 +2057,33 @@ function scenarioSummary(d) {
     </div>
   </div>`;
 }
+// What a scenario runs, from what the harness says of it: topology, load, phase, the code of its hooks and its full source.
+// The Scenarios page and the page of a plugin show it alike
+export function scenarioDetail(d) {
+  const fact = (label, value, sub) => `<div class="stat"><div class="stat-label">${label}</div><div class="fact-value">${value}</div><div class="muted small-text">${sub}</div></div>`;
+  const sv = d.servers || {}, ld = d.loader || {};
+  const clients = `${ld.count > 1 ? `${ld.count} ` : ''}${ld.client}`;
+  return `
+    <div class="muted scenario-desc">${plural(sv.count, 'server')} · ${clients} client × ${ld.threads} threads · ${d.warmupSec + d.measureSec} s per phase${(d.modules || []).length ? ` · ignite-core + ${d.modules.map(esc).join(', ')}` : ''}</div>
+    <div class="facts">
+      ${fact('Servers', plural(sv.count, 'node'), `heap ${sv.heapMb} MB · ${esc((sv.jvmOpts || []).join(' '))}`)}
+      ${fact('Load', `${clients} × ${ld.threads}`, `client JVM${ld.count > 1 ? 's' : ''} × threads · heap ${ld.heapMb} MB`)}
+      ${fact('Pacing', ld.rateOpsPerSec ? `${fmt.num(ld.rateOpsPerSec)} ops/s` : 'closed loop', ld.rateOpsPerSec ? 'open loop, latency from the scheduled time' : 'next op right after the previous one')}
+      ${fact('Phase', `${d.warmupSec} + ${d.measureSec} s`, 'warmup + measure, fresh JVMs')}
+      ${fact('Class', esc(d.className), `version ${d.version}: raise it when what is measured changes`)}
+    </div>
+    ${scenarioSummary(d)}
+    <details class="scenario-json"><summary class="muted">Full source: ${(d.sources || []).map((f) => esc(f.file)).join(', ')}</summary>
+    ${(d.sources || []).map((f, i) => `<div class="code-title">${esc(f.file)} ${i === 0 ? '<span class="muted">the scenario</span>' : '<span class="muted">base class</span>'}</div>
+      <pre class="code">${javaCode(f.text.replace(/^(package|import) [^\n]*\n/gm, '').replace(/^\s*\n+/, ''))}</pre>`).join('')}
+    </details>`;
+}
 views.scenarios = {
   async render() {
     const scenarios = await api.get('/api/scenarios');
     const described = await Promise.all(scenarios.map((sc) => api.get(`/api/scenarios/${encodeURIComponent(sc.name)}/describe`).catch((e) => ({ name: sc.name, error: e.message }))));
     if (!this.open) this.open = new Set(); // all folded at first; opened rows stay open across re-renders
-    const fact = (label, value, sub) => `<div class="stat"><div class="stat-label">${label}</div><div class="fact-value">${value}</div><div class="muted small-text">${sub}</div></div>`;
-    const detail = (d) => {
-      const sv = d.servers || {}, ld = d.loader || {};
-      const clients = `${ld.count > 1 ? `${ld.count} ` : ''}${ld.client}`;
-      return `
-        <div class="muted scenario-desc">${plural(sv.count, 'server')} · ${clients} client × ${ld.threads} threads · ${d.warmupSec + d.measureSec} s per phase${(d.modules || []).length ? ` · ignite-core + ${d.modules.map(esc).join(', ')}` : ''}</div>
-        <div class="facts">
-          ${fact('Servers', plural(sv.count, 'node'), `heap ${sv.heapMb} MB · ${esc((sv.jvmOpts || []).join(' '))}`)}
-          ${fact('Load', `${clients} × ${ld.threads}`, `client JVM${ld.count > 1 ? 's' : ''} × threads · heap ${ld.heapMb} MB`)}
-          ${fact('Pacing', ld.rateOpsPerSec ? `${fmt.num(ld.rateOpsPerSec)} ops/s` : 'closed loop', ld.rateOpsPerSec ? 'open loop, latency from the scheduled time' : 'next op right after the previous one')}
-          ${fact('Phase', `${d.warmupSec} + ${d.measureSec} s`, 'warmup + measure, fresh JVMs')}
-          ${fact('Class', esc(d.className), `version ${d.version}: raise it when what is measured changes`)}
-        </div>
-        ${scenarioSummary(d)}
-        <details class="scenario-json"><summary class="muted">Full source: ${(d.sources || []).map((f) => esc(f.file)).join(', ')}</summary>
-        ${(d.sources || []).map((f, i) => `<div class="code-title">${esc(f.file)} ${i === 0 ? '<span class="muted">the scenario</span>' : '<span class="muted">base class</span>'}</div>
-          <pre class="code">${javaCode(f.text.replace(/^(package|import) [^\n]*\n/gm, '').replace(/^\s*\n+/, ''))}</pre>`).join('')}
-        </details>`;
-    };
+    const detail = scenarioDetail;
     const row = (s) => {
       const d = described.find((x) => x.name === s.name), open = this.open.has(s.name);
       if (d.error) return `<tr><td colspan="2" class="error">${esc(d.name)}: ${esc(d.error)}</td></tr>`;
@@ -2977,7 +2988,7 @@ views.dashboard = {
     ]);
     const w = health.watcher, cur = health.worker.job;
     // failed runs of the branch not followed by a good one
-    const branchJob = (j) => j.source !== 'calibration' && j.source !== 'compare' && j.source !== 'release';
+    const branchJob = (j) => !j.plugin && j.source !== 'calibration' && j.source !== 'compare' && j.source !== 'release';
     const failed = history.filter((j) => (j.status === 'failed' || j.status === 'interrupted') && branchJob(j) && j.shaB
       && !history.some((x) => x.id > j.id && x.shaB === j.shaB && x.scenario === j.scenario && x.status === 'done'));
     const failedLines = failed.slice(0, 5).map((j) => `<div class="att-line att-failed">${badge(j.status)} ${esc(scName(j.scenario))} <a class="mono" href="#/commits/${j.shaB}">${fmt.sha(j.shaB)}</a>
@@ -3083,7 +3094,7 @@ function route() {
     : m && m[1] === 'comparisons' && m[2] ? 'comparison'
     : m && views[m[1]] && m[1] !== 'setup' ? m[1] : 'dashboard';
   const params = { id: m && m[2] };
-  document.querySelectorAll('header nav a').forEach((a) => a.classList.toggle('active', a.dataset.view === name || (name === 'job' && a.dataset.view === 'queue') || (name === 'bisect' && a.dataset.view === 'bisects') || (name === 'commit' && a.dataset.view === 'commits') || (name === 'comparison' && a.dataset.view === 'compare')));
+  document.querySelectorAll('header nav a').forEach((a) => a.classList.toggle('active', a.dataset.view === name || (name === 'plugin' && a.dataset.view === 'plugins') || (name === 'job' && a.dataset.view === 'queue') || (name === 'bisect' && a.dataset.view === 'bisects') || (name === 'commit' && a.dataset.view === 'commits') || (name === 'comparison' && a.dataset.view === 'compare')));
   currentView = views[name];
   currentParams = params;
   lastHtml = null;
@@ -3180,8 +3191,14 @@ document.addEventListener('change', (e) => {
   const chip = $('#who');
   if (chip) chip.addEventListener('click', () => askWho(false));
   return api.get('/api/stand');
-}).then((s) => { setupPending = s.needsSetup; }).catch(() => null).finally(() => {
-  $('header nav').hidden = setupPending;
-  $('.search').hidden = setupPending;
-  route();
-});
+}).then((s) => { setupPending = s.needsSetup; }).catch(() => null)
+  // the section of the plugins exists only on a stand whose configuration names some: its code is loaded only then
+  .then(() => api.get('/api/plugins')).then((p) => {
+    if (!p || !(p.plugins.length || p.errors.length)) return null;
+    $('header nav a[data-view=plugins]').hidden = false;
+    return import('./plugins.js');
+  }).catch(() => null).finally(() => {
+    $('header nav').hidden = setupPending;
+    $('.search').hidden = setupPending;
+    route();
+  });

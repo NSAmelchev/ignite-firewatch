@@ -49,6 +49,9 @@ public final class JobRunner implements Runnable {
     /** */
     private final JobService jobs;
 
+    /** The plugins of the stand: the jar of the plugin of a job goes to the harness. */
+    private volatile Plugins plugins;
+
     /** */
     private final GitMirror mirror;
 
@@ -298,40 +301,42 @@ public final class JobRunner implements Runnable {
             if (unchecked != null)
                 throw new JobFailed("host " + unchecked + " has not passed Check: run it in Settings, section Stand");
 
-            Scenarios.Info sc = scenarios.get(job.scenario);
+            Scenarios.Info sc = jobs.scenarioOf(job);
 
             if (sc == null)
-                throw new JobFailed("scenario " + job.scenario + " no longer exists");
+                throw new JobFailed("scenario " + job.scenario + (job.plugin == null ? "" : " of plugin " + job.plugin)
+                    + " no longer exists");
 
-            List<String> shas = new ArrayList<>();
-            shas.add(job.shaA);
+            // a build per side: SQL scenarios with their modules, a plugin with its extension next to Ignite
+            Map<String, String> keys = JobService.buildKeys(job, sc);
+            List<String> shas = new ArrayList<>(List.of(job.shaA));
 
             if (job.isAbba() && !job.shaB.equals(job.shaA))
                 shas.add(job.shaB);
 
             List<String> phases = job.isAbba() ? List.of("A1", "B1", "B2", "A2") : job.isProbe() ? PROBE_PHASES
                 : List.of("S");
-            int totalUnits = shas.size() + phases.size() * 3;
+            int totalUnits = keys.size() + phases.size() * 3;
             int doneUnits = 0;
 
             Map<String, Path> libs = new LinkedHashMap<>();
             evictArtifacts(shas);
 
-            for (String sha : shas) {
+            for (String key : keys.values()) {
                 checkCancelled(cancelled);
-                String key = Builder.key(sha, sc.modules); // SQL scenarios: a build of the commit with their modules
                 boolean cached = builder.cached(key);
                 stage(job, (cached ? "build (cached) " : "build ") + Builder.label(key), doneUnits * 100 / totalUnits,
                     cached ? null : builder.libsDir(key).resolveSibling("build.log"));
                 boolean automatic = JobService.SRC_AUTO.equals(job.source)
                     || JobService.SRC_CALIBRATION.equals(job.source)
-                    || JobService.SRC_RELEASE.equals(job.source);
+                    || JobService.SRC_RELEASE.equals(job.source)
+                    || JobService.SRC_PLUGIN.equals(job.source);
                 Build b = builder.build(key, cancelled, automatic);
 
                 if (!Build.OK.equals(b.status))
                     throw new JobFailed("build of " + Builder.label(key) + " failed: " + b.error);
 
-                libs.put(sha, Path.of(b.libsDir));
+                libs.put(key, Path.of(b.libsDir));
                 doneUnits++;
             }
 
@@ -341,20 +346,24 @@ public final class JobRunner implements Runnable {
             for (int i = 0; i < phases.size(); i++) {
                 checkCancelled(cancelled);
                 String phase = phases.get(i);
-                String sha = phase.startsWith("B") ? job.shaB : job.shaA;
+                boolean b = phase.startsWith("B");
+                String sha = b ? job.shaB : job.shaA;
                 Run run = new Run();
                 run.jobId = job.id;
                 run.phase = phase;
                 run.sha = sha;
+                run.extSha = b ? job.extShaB : job.extShaA;
                 run.seq = i;
                 run.status = Run.RUNNING;
                 run.startedAt = Db.now();
                 run.dir = "runs/" + job.id + "/" + phase;
                 db.insertRun(run);
-                stage(job, "phase " + phase + " (" + Job.shortSha(sha) + ")", doneUnits * 100 / totalUnits,
+                stage(job, "phase " + phase + " (" + Job.shortSha(sha)
+                    + (run.extSha == null ? "" : " + " + Job.shortSha(run.extSha)) + ")", doneUnits * 100 / totalUnits,
                     cfg.dataDir.resolve(run.dir).resolve("harness.log"));
                 double threads = stand.sizes.threadsFactor * (job.isProbe() ? PROBE_FACTORS.get(i) : 1);
-                PhaseData d = runPhase(job, run, libs.get(sha), sc, cancelled, runIdPrefix + phase, stand, threads);
+                String key = keys.get(b && keys.containsKey("B") ? "B" : "A");
+                PhaseData d = runPhase(job, run, libs.get(key), sc, cancelled, runIdPrefix + phase, stand, threads);
                 data.add(d);
 
                 if (!Run.OK.equals(run.status))
@@ -422,6 +431,15 @@ public final class JobRunner implements Runnable {
     }
 
     /**
+     * Sets the plugins of the stand.
+     *
+     * @param p Plugins.
+     */
+    void plugins(Plugins p) {
+        plugins = p;
+    }
+
+    /**
      * Whether the last probe gave noticeably more than the one before it; the next one is not worth a minute otherwise.
      */
     private static boolean stillGrowing(List<Run> probes) {
@@ -479,13 +497,23 @@ public final class JobRunner implements Runnable {
 
     /** */
     private PhaseData runPhase(Job job, Run run, Path libs, Scenarios.Info sc, BooleanSupplier cancelled, String runId,
-        Stand stand, double threads) throws IOException, InterruptedException {
+        Stand stand, double threads) throws IOException, InterruptedException, JobFailed {
         Path dir = cfg.dataDir.resolve(run.dir);
         Files.createDirectories(dir);
         List<String> cmd = new ArrayList<>(cfg.harness(cfg.harnessHeapMb));
         cmd.addAll(List.of("run", "--libs", libs.toAbsolutePath().toString(),
             "--scenario", job.scenario,
             "--out", dir.toAbsolutePath().toString(), "--run-id", runId, "--phase", run.phase));
+
+        if (job.plugin != null) {
+            Plugins p = plugins;
+            Plugins.Plugin pl = p == null ? null : p.get(job.plugin);
+
+            if (pl == null)
+                throw new JobFailed("plugin " + job.plugin + " is not on this stand");
+
+            cmd.addAll(List.of("--plugin", pl.jar.toAbsolutePath().toString()));
+        }
         boolean remote = Stand.REMOTE.equals(stand.mode);
 
         if (remote) {
@@ -580,6 +608,9 @@ public final class JobRunner implements Runnable {
     /** */
     private List<Stats.Comparison> calibrations(Job job) {
         List<Stats.Comparison> out = new ArrayList<>();
+
+        if (job.plugin != null)
+            return out; // a plugin has no A/A of its own yet: the default floors
 
         for (Job c : jobs.calibrationsOfCurrentVersion(job.scenario)) {
             if (c.comparison == null)

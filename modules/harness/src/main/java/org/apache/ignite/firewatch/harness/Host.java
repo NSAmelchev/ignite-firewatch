@@ -35,8 +35,16 @@ interface Host {
     /** The directory of the phase on this host, for its JVMs; {@code out} is the phase directory of this machine. */
     String dir(Path out);
 
-    /** Puts what the JVMs need on the host: the harness, the Ignite jars and the JFR settings. */
-    default void prepare(Path harnessJar, Path libsDir, Path out) throws IOException {
+    /**
+     * Puts what the JVMs need on the host: the harness, the jar of the plugin (null when the scenario is of the
+     * harness), the Ignite jars and the JFR settings.
+     */
+    default void prepare(Path harnessJar, Path pluginJar, Path libsDir, Path out) throws IOException {
+    }
+
+    /** Where the jar of the plugin is for the JVMs of this host. */
+    default String pluginPath(Path pluginJar) {
+        return pluginJar.toAbsolutePath().toString();
     }
 
     /** */

@@ -97,6 +97,19 @@ public final class Job {
     /** Who cancelled it; null when nobody did or the request named nobody. */
     public String cancelledBy;
 
+    /**
+     * The plugin whose scenario it runs, see {@link Plugins}; null for a scenario of the harness. A job of a plugin
+     * measures pairs: {@link #shaA} and {@link #shaB} stay the commits of Ignite, {@link #extShaA} and {@link #extShaB}
+     * are those of the extension next to them.
+     */
+    public String plugin;
+
+    /** */
+    public String extShaA;
+
+    /** */
+    public String extShaB;
+
     /** */
     public String logFile;
 

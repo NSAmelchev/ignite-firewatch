@@ -689,6 +689,87 @@ class PipelineTest {
         return bisector.get(id);
     }
 
+    /** The extension of {@link #plugin()}: its release (tag ext-1.0) and its master. */
+    GitFixture ext;
+
+    /**
+     * A plugin as spring-data-ext would be: its release builds against Ignite 2.17.0 (a tag of the first commit), its
+     * master against the snapshot; the jobs, the runner and the builder know it.
+     */
+    private Plugins plugin() throws Exception {
+        ext = new GitFixture(tmp.resolve("ext"));
+        ext.commit("release", PluginPomsTest.springData("2.17.0"));
+        ext.tag("ext-1.0");
+        ext.commit("master", PluginPomsTest.springData("2.20.0-SNAPSHOT"));
+        GitFixture.git("-C", origin.repo.toString(), "tag", "2.17.0", origin.shas.get(0));
+        mirror.fetch();
+
+        Plugins.Plugin p = new Plugins.Plugin();
+        p.name = "spring-data";
+        p.title = "Spring Data";
+        p.description = "";
+        p.module = "modules/spring-data-ext/spring-data";
+        p.defaultRepo = ext.url();
+        p.defaultBranch = "master";
+        p.jar = tmp.resolve("plugins/firewatch-spring-data.jar");
+        Scenarios.Info point = Scenarios.Info.of("point", 1, 2);
+        point.raw = Json.MAPPER.readTree("{\"name\": \"point\", \"title\": \"point\", \"description\": \"a point\", "
+            + "\"version\": 1, \"className\": \"Point\", \"servers\": {\"count\": 1, \"heapMb\": 512, \"jvmOpts\": []}, "
+            + "\"loader\": {\"client\": \"thin\", \"count\": 1, \"threads\": 4, \"heapMb\": 256, \"jvmOpts\": [], "
+            + "\"rateOpsPerSec\": 0}, \"modules\": [], \"warmupSec\": 1, \"measureSec\": 2, "
+            + "\"sources\": [{\"file\": \"Point.java\", \"text\": \"class Point {}\"}]}");
+        p.scenarios = new Scenarios(List.of(point));
+        p.mirror = new GitMirror(cfg.pluginMirrorDir(p.name), ext.url(), "master", Duration.ofMinutes(1));
+        Path extLibs = Files.createDirectories(tmp.resolve("plugins/firewatch-spring-data-libs"));
+        Files.writeString(extLibs.resolve("ignite-spring-data-ext-1.0.jar"), "not really a jar");
+        Plugins plugins = Plugins.of(db, List.of(p));
+        jobs.plugins(plugins);
+        runner.plugins(plugins);
+        builder.extension(new PluginBuild(cfg, plugins));
+
+        return plugins;
+    }
+
+    /** A plugin measures its release pair against its master pair, and the branch knows nothing of it. */
+    @Test void aPluginMeasuresPairsAndStaysOutOfTheBranch() throws Exception {
+        Plugins plugins = plugin();
+        Plugins.Plugin p = plugins.get("spring-data");
+        String extRel = ext.shas.get(0), extHead = ext.shas.get(1);
+
+        assertEquals(0, PluginSchedule.runIfDue(db, jobs, plugins, mirror), "no release set: the plugin waits");
+        db.setSetting("plugin.spring-data.release", "ext-1.0");
+        assertEquals(1, PluginSchedule.runIfDue(db, jobs, plugins, mirror));
+        Job j = db.nextQueued();
+        assertEquals("spring-data", j.plugin);
+        assertEquals(JobService.SRC_PLUGIN, j.source);
+        assertEquals(List.of(origin.shas.get(0), extRel, origin.shas.get(1), extHead),
+            List.of(j.shaA, j.extShaA, j.shaB, j.extShaB), "the release pair against the master pair");
+        assertEquals("2.17.0", j.refA, "the Ignite of the release: the one its pom builds against");
+
+        runner.runJob(j);
+        Job done = db.job(j.id);
+        assertEquals(Job.DONE, done.status, done.error);
+        List<Run> runs = db.runs(j.id);
+        assertEquals(List.of(extRel, extHead, extHead, extRel), runs.stream().map(r -> r.extSha).toList());
+        assertTrue(Files.readString(cfg.dataDir.resolve(runs.get(0).dir).resolve("harness.log"))
+            .contains("--plugin " + p.jar.toAbsolutePath()), "the harness gets the jar of the plugin");
+        assertTrue(Files.exists(builder.libsDir(Builder.key(origin.shas.get(1), List.of(), p.name, extHead))
+            .resolve("ignite-spring-data-ext-1.0.jar")), "a build per pair, with the extension next to Ignite");
+
+        assertTrue(db.jobsForShas(List.of(origin.shas.get(1)), null).isEmpty(), "not in the trend");
+        assertTrue(db.jobsTouching(origin.shas.get(1)).isEmpty(), "not on the commit");
+        assertFalse(JobService.isBranchHistory(done));
+        assertEquals(List.of(j.id), db.pluginJobs(p.name, "point", JobService.SRC_PLUGIN, true, 10).stream()
+            .map(x -> x.id).toList());
+        assertThrows(IllegalArgumentException.class, () -> new Bisector(db, mirror, jobs).start(j.id, null, null));
+
+        assertEquals(0, PluginSchedule.runIfDue(db, jobs, plugins, mirror), "nothing moved: nothing to run");
+        Job again = jobs.retry(j.id);
+        assertEquals(List.of(j.shaA, j.extShaA, j.shaB, j.extShaB, p.name),
+            List.of(again.shaA, again.extShaA, again.shaB, again.extShaB, again.plugin), "a retry keeps the pairs");
+        assertThrows(IllegalArgumentException.class, () -> jobs.retry(j.id), "the same pairs are queued already");
+    }
+
     /**
      * The name of a request goes to what it queues and cancels; the steps the worker queues later carry the name of
      * the bisection, and what the stand queues by itself has none.
@@ -1585,10 +1666,19 @@ class PipelineTest {
         runToTheEnd(bisector, bisector.start(db.jobsOfComparison(cmp.id).get(0).id, "throughput", null).id);
         bisector.start(measuredSegment(origin.shas.get(1), c.get(5)).id, "throughput", null);
         comparisons.create(origin.shas.get(0), c.get(6), List.of("smoke"), 2);
+        Plugins plugins = plugin(); // a plugin with a run against its release and a compare waiting
+        db.setSetting("plugin.spring-data.release", "ext-1.0");
+        PluginSchedule.runIfDue(db, jobs, plugins, mirror);
+        runner.runJob(db.pluginJobs("spring-data", null, null, false, 1).get(0));
+        Plugins.Plugin p = plugins.get("spring-data");
+        PluginSchedule.Pairs pairs = PluginSchedule.pairs(plugins, p, mirror);
+        PluginSchedule.queue(jobs, p, p.scenarios.get("point"), pairs.release(), pairs.master(),
+            JobService.SRC_PLUGIN_COMPARE, 1);
         cfg.bindHost = "127.0.0.1";
         cfg.port = 0;
         Api api = new Api(cfg, db, jobs, runner, new Watcher(cfg, db, mirror, jobs),
             scenarios, mirror, new Notifier(db), bisector, comparisons);
+        api.plugins(plugins);
         api.start();
 
         try {

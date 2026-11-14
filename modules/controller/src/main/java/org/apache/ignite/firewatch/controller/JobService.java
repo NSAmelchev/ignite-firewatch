@@ -39,6 +39,12 @@ public final class JobService {
     /** Measure load: see {@link Job#PROBE}. */
     public static final String SRC_PROBE = "probe";
 
+    /** A plugin: its release pair against its master pair, see {@link PluginSchedule}. */
+    public static final String SRC_PLUGIN = "plugin";
+
+    /** A plugin: two pairs from the Compare of its page. */
+    public static final String SRC_PLUGIN_COMPARE = "plugin-compare";
+
     /**
      * A run whose phases of one side differ by more than this many noise floors has a broken phase. Ordinary phases of
      * a transaction scenario reach 3.4 % at a 2 % floor, the broken ones start at 6 %; the median copes with the
@@ -48,12 +54,15 @@ public final class JobService {
 
     /** True for jobs that describe the branch itself: shown in trends, Commits and pooled as repeats. */
     static boolean isBranchHistory(Job j) {
-        return (Job.ABBA.equals(j.type) || Job.SINGLE.equals(j.type))
+        return j.plugin == null && (Job.ABBA.equals(j.type) || Job.SINGLE.equals(j.type))
             && !SRC_CALIBRATION.equals(j.source) && !SRC_COMPARE.equals(j.source) && !SRC_RELEASE.equals(j.source);
     }
 
     /** */
     private final Config cfg;
+
+    /** */
+    private volatile Plugins plugins;
 
     /** */
     private final Db db;
@@ -83,6 +92,61 @@ public final class JobService {
         this.db = db;
         this.mirror = mirror;
         this.scenarios = scenarios;
+    }
+
+    /**
+     * Sets the plugins of the stand: their scenarios name the jobs of plugins.
+     *
+     * @param p Plugins.
+     */
+    void plugins(Plugins p) {
+        plugins = p;
+    }
+
+    /**
+     * The scenario of a job: of the harness, or of its plugin.
+     *
+     * @param j Job.
+     * @return Scenario, or {@code null} when it no longer exists.
+     */
+    public Scenarios.Info scenarioOf(Job j) {
+        if (j.plugin == null)
+            return scenarios.get(j.scenario);
+
+        Plugins p = plugins;
+
+        return p == null ? null : p.scenario(j.plugin, j.scenario);
+    }
+
+    /**
+     * The build of each side of a job, by side ("A", "B"): B only when it is another build than A. A job of a plugin
+     * builds pairs, so its B is another build when either commit differs.
+     *
+     * @param j Job.
+     * @param sc Its scenario, or {@code null}.
+     * @return Build keys by side.
+     */
+    static Map<String, String> buildKeys(Job j, Scenarios.Info sc) {
+        List<String> mods = sc == null ? List.of() : sc.modules;
+        Map<String, String> m = new LinkedHashMap<>();
+
+        if (j.shaA != null)
+            m.put("A", Builder.key(j.shaA, mods, j.plugin, j.extShaA));
+
+        if (j.isAbba() && j.shaB != null && !(j.shaB.equals(j.shaA) && java.util.Objects.equals(j.extShaB, j.extShaA)))
+            m.put("B", Builder.key(j.shaB, mods, j.plugin, j.extShaB));
+
+        return m;
+    }
+
+    /**
+     * Queues a job made elsewhere: a plugin queues its pairs this way, with the checks of every job.
+     *
+     * @param j Job.
+     * @return Queued job.
+     */
+    Job queue(Job j) {
+        return insert(j);
     }
 
     /**
@@ -857,7 +921,9 @@ public final class JobService {
         // Repeated A/A runs are the point of calibration, so only regular jobs are deduplicated.
 
         synchronized (insertLock) {
-            if (!SRC_CALIBRATION.equals(j.source) && db.hasActiveJob(j.type, j.shaA, j.shaB, j.scenario))
+            if (!SRC_CALIBRATION.equals(j.source) && (j.plugin == null
+                ? db.hasActiveJob(j.type, j.shaA, j.shaB, j.scenario)
+                : db.activePluginJob(j.plugin, j.scenario, j.shaA, j.extShaA, j.shaB, j.extShaB) != null))
                 throw new IllegalArgumentException("an identical job is already queued or running");
 
             db.insertJob(j);
@@ -958,6 +1024,9 @@ public final class JobService {
         j.shaB = old.shaB;
         j.label = old.label;
         j.comparisonId = old.comparisonId;
+        j.plugin = old.plugin;
+        j.extShaA = old.extShaA;
+        j.extShaB = old.extShaB;
 
         return insert(j);
     }
@@ -1195,8 +1264,8 @@ public final class JobService {
      * @param j Job to fill.
      */
     public void addSegment(Job j) throws IOException {
-        if (!Job.ABBA.equals(j.type) || j.shaA == null || j.shaB == null || j.shaA.equals(j.shaB))
-            return;
+        if (j.plugin != null || !Job.ABBA.equals(j.type) || j.shaA == null || j.shaB == null || j.shaA.equals(j.shaB))
+            return; // the pairs of a plugin are no segment of the branch: both sides moved
 
         CommitInfo a = db.commit(j.shaA), b = db.commit(j.shaB);
 
@@ -1275,13 +1344,14 @@ public final class JobService {
         java.util.Set<String> built = db.okBuildShas(); // one query instead of one per queued sha
 
         for (Job j : active) {
-            double run = runCache.computeIfAbsent(j.scenario + "|" + j.type, k -> runSeconds(j.scenario, j.type));
+            Scenarios.Info sc = scenarioOf(j);
+            double run = runCache.computeIfAbsent(j.plugin + "|" + j.scenario + "|" + j.type,
+                k -> j.plugin == null ? runSeconds(j.scenario, j.type) : pluginRunSeconds(j, sc));
             double secs = run;
-            Scenarios.Info sc = scenarios.get(j.scenario);
 
-            for (String sha : new String[] {j.shaA, j.shaB}) {
-                // build keys: a SQL scenario needs its own build of a commit
-                if (sha == null || !built.add(Builder.key(sha, sc == null ? List.of() : sc.modules)))
+            for (String key : buildKeys(j, sc).values()) {
+                // build keys: a SQL scenario needs its own build of a commit, a plugin one of the pair
+                if (!built.add(key))
                     continue;
 
                 secs += build; // not built yet: this job (or an earlier one in the queue) builds it
@@ -1332,6 +1402,21 @@ public final class JobService {
         return secs.isEmpty() ? fallback : median(secs);
     }
 
+    /** The same for a scenario of a plugin, from the finished jobs of that plugin. */
+    private double pluginRunSeconds(Job j, Scenarios.Info sc) {
+        List<Double> secs = new ArrayList<>();
+
+        for (Job d : db.pluginJobs(j.plugin, j.scenario, null, true, 15)) {
+            if (d.startedAt != null && d.finishedAt != null && j.type.equals(d.type))
+                secs.add((double)java.time.Duration.between(java.time.Instant.parse(d.startedAt),
+                    java.time.Instant.parse(d.finishedAt)).toSeconds());
+        }
+
+        double fallback = sc == null ? 600 : (sc.totalSeconds() + 45) * (Job.ABBA.equals(j.type) ? 4 : 1);
+
+        return secs.isEmpty() ? fallback : median(secs);
+    }
+
     /**
      * What queuing {@code jobs} new jobs would cost, for the launch confirmation: run time from recent jobs, builds of
      * the given shas that are not built yet (plus {@code extraBuilds} for refs the caller cannot resolve), and the
@@ -1378,10 +1463,7 @@ public final class JobService {
                     start = end;
             }
 
-            Scenarios.Info jsc = scenarios.get(j.scenario);
-            List<String> mods = jsc == null ? List.of() : jsc.modules;
-            built.add(Builder.key(j.shaA, mods)); // the queue builds these before our jobs run
-            built.add(Builder.key(j.shaB, mods));
+            built.addAll(buildKeys(j, scenarioOf(j)).values()); // the queue builds these before our jobs run
         }
 
         long unbuilt = 0;

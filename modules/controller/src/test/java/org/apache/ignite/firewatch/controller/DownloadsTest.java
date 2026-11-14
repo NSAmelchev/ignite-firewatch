@@ -51,7 +51,8 @@ class DownloadsTest {
         cfg.dataDir = tmp.resolve("data");
         cfg.cacheDir = tmp.resolve("cache");
         db = Db.open(tmp.resolve("t.db"));
-        dl = new Downloads(cfg, db, new Scenarios(List.of(Scenarios.Info.of("smoke", 1, 1))));
+        dl = new Downloads(cfg, db, new JobService(cfg, db, null, new Scenarios(List.of(Scenarios.Info.of("smoke", 1,
+            1)))));
         job = new Job();
         job.type = Job.ABBA;
         job.source = "manual";

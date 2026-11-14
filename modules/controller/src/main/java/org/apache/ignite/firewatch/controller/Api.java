@@ -61,6 +61,9 @@ public final class Api {
     /** */
     private final GitMirror mirror;
 
+    /** None until {@link #plugins(Plugins)}: a stand without plugins has an empty set. */
+    private Plugins plugins;
+
     /** */
     private final Notifier notifier;
 
@@ -104,10 +107,23 @@ public final class Api {
         this.mirror = mirror;
     }
 
+    /**
+     * Sets the plugins of the stand; before {@link #start()}.
+     *
+     * @param p Plugins.
+     */
+    void plugins(Plugins p) {
+        plugins = p;
+    }
+
     /** */
     public void start() throws IOException {
+        if (plugins == null)
+            plugins = Plugins.none(db);
+
         Router r = new Router();
         r.get("/api/health", req -> health());
+        new PluginApi(cfg, db, plugins, jobs, mirror).routes(r);
         r.get("/api/storage", req -> Retention.usage(db, cfg.runsDir()));
         r.get("/api/log", req -> Log.recent(req.queryInt("lines", 100)));
         r.get("/api/scenarios", req -> scenarios.list());
@@ -131,11 +147,22 @@ public final class Api {
             if (applied.containsKey(Settings.RELEASE_TAG) && mirror.ready())
                 jobs.checkRelease(applied.get(Settings.RELEASE_TAG));
 
+            for (Map.Entry<String, String> e : applied.entrySet()) {
+                if (e.getKey().startsWith(Plugins.PREFIX))
+                    plugins.check(e.getKey(), e.getValue(), mirror);
+            }
+
             if (applied.containsKey(Settings.REPO_URL) || applied.containsKey(Settings.REPO_BRANCH))
                 watcher.follow(applied.getOrDefault(Settings.REPO_URL, cfg.repoUrl),
                     applied.getOrDefault(Settings.REPO_BRANCH, cfg.branch));
 
             applied.forEach(db::setSetting);
+
+            for (String k : applied.keySet()) {
+                if (k.startsWith(Plugins.PREFIX))
+                    plugins.applied(k);
+            }
+
             Map<String, String> logged = new LinkedHashMap<>(applied);
             Settings.SECRET.forEach(k -> logged.computeIfPresent(k, (kk, vv) -> vv.isEmpty() ? "" : Settings.MASK));
             Log.info("settings changed: " + logged);
@@ -278,7 +305,7 @@ public final class Api {
         r.get("/api/jobs/{id}/series", req -> jobSeries(req.paramLong("id")));
         r.get("/api/jobs/{id}/profile", req -> jobProfile(req.paramLong("id"), req.queryInt("limit", 40)));
         r.get("/api/noise", req -> jobs.noise(req.query("scenario", Settings.firstScenario(db))));
-        Downloads downloads = new Downloads(cfg, db, scenarios);
+        Downloads downloads = new Downloads(cfg, db, jobs);
         r.get("/api/jobs/{id}/downloads", req -> downloads.of(req.paramLong("id")));
         r.get("/api/jobs/{id}/zip", req -> downloads.jobZip(req.paramLong("id"), "1".equals(req.query("jfr", "0"))));
         r.get("/api/builds/{key}/log", req -> downloads.buildLog(req.param("key")));
@@ -584,6 +611,7 @@ public final class Api {
         m.put("watcher", watcher.status());
         m.put("jobs", db.jobCounts());
         m.put("bisects", bisector == null ? 0 : bisector.activeCount());
+        m.put("plugins", Map.of("count", plugins.list().size(), "errors", plugins.errors()));
         m.put("counts", Map.of("comparisons", db.count("comparisons"), "bisects", db.endedBisects()));
         m.put("bisectsDoneAt", bisector == null ? null : bisector.doneAt());
         List<Job> active = db.jobs("active", Integer.MAX_VALUE);

@@ -20,6 +20,11 @@
     </properties>
 
     <dependencies>
+        <!-- The types a scenario is written against; shaded into harness.jar, a plugin jar has them 'provided'. -->
+        <dependency>
+            <groupId>org.apache.ignite.firewatch</groupId>
+            <artifactId>ignite-firewatch-harness-api</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.apache.ignite</groupId>
             <artifactId>ignite-core</artifactId>

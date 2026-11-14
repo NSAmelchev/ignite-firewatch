@@ -48,7 +48,8 @@ public final class LoaderMain {
     /** */
     private static int run(String[] args) throws Exception {
         Cli cli = Cli.parse(args, 0);
-        Catalog.Entry entry = Catalog.get(cli.req("scenario"));
+        String plugin = cli.get("plugin", null);
+        Catalog.Entry entry = Catalog.get(cli.req("scenario"), plugin == null ? null : Path.of(plugin));
         Bench b = entry.bench;
         Scenario sc = entry.newInstance();
         Path out = Path.of(cli.req("out"));

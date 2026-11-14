@@ -94,6 +94,15 @@ public final class GitMirror {
     }
 
     /**
+     * Returns the URL the mirror follows.
+     *
+     * @return Repository URL.
+     */
+    public String url() {
+        return url;
+    }
+
+    /**
      * Returns the watched branch.
      *
      * @return Branch name.
@@ -574,6 +583,19 @@ public final class GitMirror {
             throw new IllegalArgumentException("no merge base between " + a + " and " + b);
 
         return r.out.trim();
+    }
+
+    /**
+     * The text of a file at a commit; null when the commit has no such file.
+     *
+     * @param sha Commit sha.
+     * @param path Path in the tree, with '/'.
+     * @return File text, or null.
+     */
+    public synchronized String show(String sha, String path) throws IOException {
+        Proc.Result r = run(SHORT, "show", sha + ":" + path);
+
+        return r.ok() ? r.out : null;
     }
 
     /**

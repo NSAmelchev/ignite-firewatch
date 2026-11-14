@@ -49,6 +49,13 @@ class RemoteHostTest {
         assertEquals("10.0.0.2", new RemoteHost(stand(), host("10.0.0.2", StandConfig.SERVERS), "run1").address());
     }
 
+    /** The jar of a plugin lies in the work directory of the host, under its own name. */
+    @Test void theJarOfAPluginGoesToThePluginsOfTheWorkDirectory() {
+        StandConfig.Host h = host("10.0.0.1", StandConfig.SERVERS);
+        assertEquals(h.workDir + "/plugins/firewatch-spring-data.jar", new RemoteHost(stand(h), h, "run1")
+            .pluginPath(java.nio.file.Path.of("/app/config/plugins/firewatch-spring-data.jar")));
+    }
+
     /** */
     @Test void theSweepLeavesThePhasesOfOtherStands() {
         StandConfig.Host h = host("a", StandConfig.SERVERS);

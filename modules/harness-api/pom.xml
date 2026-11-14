@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.apache.ignite.firewatch</groupId>
+        <artifactId>ignite-firewatch</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>ignite-firewatch-harness-api</artifactId>
+    <name>Firewatch harness API</name>
+    <description>What a scenario is written against: @Bench, Scenario, Session, Env, Scale. The jar of a plugin compiles
+        against it, the harness carries it.</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.apache.ignite</groupId>
+            <artifactId>ignite-core</artifactId>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+</project>

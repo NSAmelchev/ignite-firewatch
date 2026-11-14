@@ -12,13 +12,16 @@ mvn -q package                     # needs JDK 17
 ```
 
 The result is `modules/harness/target/harness.jar` (shaded: Jackson and HdrHistogram are relocated, Ignite is not in it).
+What a scenario is written against (`@Bench`, `Scenario`, `Session`, `Env`, `Scale`) is the module `modules/harness-api`:
+the harness carries it, the jar of a plugin compiles against it (see Plugins below).
 The harness is compiled against the `ignite-core` release of `pom.xml` (`ignite.version`) and runs with the jars of any
 2.x commit: it uses only public API that has been stable for long.
 
 ## Ignite jars
 
 - To debug locally without building Ignite: `modules/harness/dev-libs.sh` puts the `ignite-core` release with its
-  dependencies into `modules/harness/target/dev-libs`.
+  dependencies into `modules/harness/target/dev-libs`, and the same with `ignite-indexing` and `ignite-calcite` into
+  `dev-libs-sql`.
 - For a commit, in a clone of apache/ignite:
   `mvn -pl modules/core -am -Dmaven.test.skip=true -DskipTests -Dmaven.javadoc.skip=true -Dmaven.source.skip=true -Dcheckstyle.skip=true install`,
   then `mvn -pl modules/core dependency:copy-dependencies -DincludeScope=runtime -DoutputDirectory=LIBS`
@@ -31,12 +34,13 @@ java -Xmx128m -jar modules/harness/target/harness.jar run \
   --libs modules/harness/target/dev-libs --scenario putget-thin-t16 --quick \
   --out /tmp/smoke --run-id smoke-1 --phase S
 java -jar modules/harness/target/harness.jar list    # every scenario (JSON): id, version, topology, timings, sources
+java -jar modules/harness/target/harness.jar list --plugin JAR   # what a plugin says of itself, and its scenarios
 ```
 
 `--quick` is 2 s of warmup and 5 s of measurement instead of the values of the scenario: to try a scenario or the pipeline.
 `--stand FILE` runs the JVMs on the hosts of a remote stand (see below).
 `--scale MEMORY_MB,FILL_PCT,THREADS_FACTOR,1` gives the sizes of the stand (see below). `--warmup-sec` and `--measure-sec`
-give other timings than the scenario's.
+give other timings than the scenario's. `--plugin JAR` runs a scenario of a plugin (see below).
 
 ```bash
 java -jar modules/harness/target/harness.jar check --dir data       # this machine, the report as JSON
@@ -135,6 +139,30 @@ public class PutGetThinT16 extends PutGetInMemory {
 - Sizes of the stand: `Scale.current()` gives the region (`regionMb(base, sql)`) and the number of entries
   (`entries(base, bytes per entry, copies, sql)`). Without `--scale` these are the same base numbers, so the history
   does not break. A new scenario takes its sizes from here, not from constants.
+
+## Plugins
+
+A plugin is a jar of scenarios of its own that run Ignite together with an extension of another repository
+(ignite-extensions, say); `examples/spring-data` is one. The jar has its scenario classes (`@Bench`, in any package),
+their sources as resources (the UI shows them), and `META-INF/firewatch-plugin.properties`:
+
+```properties
+name=spring-data                                   # lowercase letters, digits, '-': build keys and URLs carry it
+title=Spring Data
+repo=https://github.com/apache/ignite-extensions.git
+branch=master
+module=modules/spring-data-ext/spring-data          # what the stand builds next to Ignite, as mvn -pl takes it
+package=org.apache.ignite.firewatch.examples.springdata   # optional: where the scenarios are, not the whole jar
+```
+
+Everything else is `provided`: the harness API, Ignite and the extension with what it leaves `provided` (Spring for
+spring-data-ext) come from the build of the pair under test. A library of the scenarios themselves is shaded into the
+jar with a relocation: the jar comes before the build on the classpath.
+
+`list --plugin JAR` prints `{plugin, scenarios}`; `run --plugin JAR` runs one of its scenarios, whose id is looked up
+among those of the plugin only, with the jar on the classpath of every JVM: `harness.jar:JAR:LIBS/*`. On a remote stand
+the jar goes to `<workDir>/plugins/` of every host. The hash of a scenario of a plugin is
+`sha256(plugin/id:version)`.
 
 ## Remote stand
 

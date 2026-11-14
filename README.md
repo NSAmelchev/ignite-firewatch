@@ -50,6 +50,8 @@ Open http://localhost:8090 and follow the setup wizard. Settings (port, director
 - [DEVELOPMENT.md](DEVELOPMENT.md): build, tests, adding a scenario.
 - [docs/DESIGN.md](docs/DESIGN.md): how the stand works and why.
 - Module details: [controller](modules/controller/README.md), [harness](modules/harness/README.md).
+- Plugins, scenarios that run Ignite together with an extension of another repository: the
+  [example of Spring Data](examples/spring-data/README.md).
 
 ## License
 

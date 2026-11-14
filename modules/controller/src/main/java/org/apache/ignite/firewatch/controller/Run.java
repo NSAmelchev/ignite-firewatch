@@ -82,4 +82,7 @@ public final class Run {
 
     /** Why the numbers of the phase may be off (foreign load, steal, throttling), "; "-separated; null when it was quiet. */
     public String noise;
+
+    /** A phase of a plugin: the commit of the extension next to {@link #sha}; null otherwise. */
+    public String extSha;
 }

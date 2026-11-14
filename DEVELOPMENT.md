@@ -4,7 +4,9 @@
 
 | Path | What |
 |---|---|
+| `modules/harness-api` | what a scenario is written against: `@Bench`, `Scenario`, `Session`, `Env`, `Scale` |
 | `modules/harness` | runs one phase: starts the Ignite server JVMs and a loader, writes `result.json`; the scenarios |
+| `examples/spring-data` | a plugin: scenarios with an extension of ignite-extensions, built next to Ignite |
 | `modules/controller` | queue, git mirror, builds, ABBA statistics, bisection, REST API, web UI |
 | `modules/assembly` | the distribution: `bin/`, `config/`, `libs/controller.jar` and `libs/harness.jar` in a zip |
 | `config/ignite-firewatch.properties` | settings of the controller |

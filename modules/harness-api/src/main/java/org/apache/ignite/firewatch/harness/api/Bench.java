@@ -6,9 +6,9 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Marks a {@link Scenario} class in {@code org.apache.ignite.firewatch.scenarios} and says what it runs on: the
- * harness finds every annotated class there, so adding a scenario is adding a file and removing one is deleting it.
- * Everything here is plain data: the controller reads it without Ignite on the classpath.
+ * Marks a {@link Scenario} class and says what it runs on: the harness finds every annotated class in
+ * {@code org.apache.ignite.firewatch.scenarios} and in the jar of a plugin, so adding a scenario is adding a file and
+ * removing one is deleting it. Everything here is plain data: the controller reads it without Ignite on the classpath.
  */
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.TYPE)

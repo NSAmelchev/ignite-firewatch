@@ -11,9 +11,12 @@
     <description>Synthetic load tests for Apache Ignite: commit queue, ABBA comparisons and a dashboard</description>
 
     <modules>
+        <module>modules/harness-api</module>
         <module>modules/harness</module>
         <module>modules/controller</module>
         <module>modules/assembly</module>
+        <!-- A plugin as a user writes one; not part of the distribution -->
+        <module>examples/spring-data</module>
     </modules>
 
     <properties>
@@ -30,6 +33,11 @@
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>org.apache.ignite.firewatch</groupId>
+                <artifactId>ignite-firewatch-harness-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
             <dependency>
                 <groupId>org.apache.ignite</groupId>
                 <artifactId>ignite-core</artifactId>

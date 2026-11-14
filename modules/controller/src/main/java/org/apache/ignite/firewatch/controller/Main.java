@@ -41,7 +41,13 @@ public final class Main {
         runner.notifier(notifier);
         bisector.notifier(notifier);
         comparisons.notifier(notifier);
+        Plugins plugins = Plugins.load(cfg, db);
+        builder.extension(new PluginBuild(cfg, plugins));
+        jobs.plugins(plugins);
+        runner.plugins(plugins);
+        watcher.plugins(plugins);
         Api api = new Api(cfg, db, jobs, runner, watcher, scenarios, mirror, notifier, bisector, comparisons);
+        api.plugins(plugins);
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             Log.info("shutting down");

@@ -109,11 +109,15 @@ final class RemoteHost implements Host {
     }
 
     /** {@inheritDoc} */
-    @Override public void prepare(Path harnessJar, Path libsDir, Path out) throws IOException {
+    @Override public void prepare(Path harnessJar, Path pluginJar, Path libsDir, Path out) throws IOException {
         sweep();
         String libs = libsOf(libsDir);
-        run(ssh("mkdir -p " + quote(dir(out)) + " " + quote(libs)));
+        run(ssh("mkdir -p " + quote(dir(out)) + " " + quote(libs) + " " + quote(h.workDir + "/plugins")));
         run(rsync(harnessJar.toAbsolutePath().toString(), remote(h.workDir + "/harness.jar")));
+
+        if (pluginJar != null)
+            run(rsync(pluginJar.toAbsolutePath().toString(), remote(pluginPath(pluginJar))));
+
         facts = readFacts(); // before the jars: a changed host fails the phase at once
         String changed = changed(stand.fingerprints.get(h.address), StandCheck.fingerprintOf(facts));
 
@@ -249,8 +253,14 @@ final class RemoteHost implements Host {
     }
 
     /** {@inheritDoc} */
+    @Override public String pluginPath(Path pluginJar) {
+        return h.workDir + "/plugins/" + pluginJar.getFileName();
+    }
+
+    /** {@inheritDoc} */
     @Override public JvmProcess start(JvmProcess.Spec s) throws IOException {
-        String classpath = h.workDir + "/harness.jar:" + libsOf(s.libsDir) + "/*";
+        String classpath = h.workDir + "/harness.jar:" + (s.pluginJar == null ? "" : pluginPath(s.pluginJar) + ":")
+            + libsOf(s.libsDir) + "/*";
         List<String> java = JvmProcess.javaCommand(s, h.javaHome + "/bin/java", classpath);
         String cmd = "mkdir -p " + quote(s.dir + "/work/tmp") + " " + quote(s.dir + "/work/jfr-" + s.label)
             + " && exec "

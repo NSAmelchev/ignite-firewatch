@@ -70,9 +70,14 @@ final class Jvm {
         return v == null ? "dev" : v;
     }
 
-    /** Classpath for child JVMs: this harness plus every jar of the Ignite build under test. */
-    static String classpath(Path harness, Path libsDir) {
-        return harness.toAbsolutePath() + File.pathSeparator + libsDir.toAbsolutePath().resolve("*");
+    /**
+     * Classpath for child JVMs: this harness, the jar of the plugin (null for a scenario of the harness) and every jar of
+     * the build under test. The plugin comes before the build: what it bundles wins over a library of the build.
+     */
+    static String classpath(Path harness, Path pluginJar, Path libsDir) {
+        return harness.toAbsolutePath() + File.pathSeparator
+            + (pluginJar == null ? "" : pluginJar.toAbsolutePath() + File.pathSeparator)
+            + libsDir.toAbsolutePath().resolve("*");
     }
 
     /** */

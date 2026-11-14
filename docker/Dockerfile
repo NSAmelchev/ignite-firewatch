@@ -5,14 +5,17 @@ FROM maven:3.9-eclipse-temurin-17 AS build
 WORKDIR /src
 # Dependency layer: re-downloaded only when a pom changes (no BuildKit cache mounts: the legacy builder must work too).
 COPY pom.xml .
+COPY modules/harness-api/pom.xml modules/harness-api/
 COPY modules/harness/pom.xml modules/harness/
 COPY modules/controller/pom.xml modules/controller/
 COPY modules/assembly/pom.xml modules/assembly/
-RUN mvn -B -q -ntp -DskipTests -pl modules/harness,modules/controller dependency:go-offline || true
+COPY examples/spring-data/pom.xml examples/spring-data/
+RUN mvn -B -q -ntp -DskipTests -pl modules/harness-api,modules/harness,modules/controller dependency:go-offline || true
 COPY modules modules
+COPY examples examples
 # Only the two jars: the image is the distribution of its own. The layout check belongs to the build of the sources
 # (CI): a deploy never fails on it.
-RUN mvn -B -q -ntp -DskipTests -Dcheckstyle.skip -pl modules/harness,modules/controller package
+RUN mvn -B -q -ntp -DskipTests -Dcheckstyle.skip -pl modules/harness-api,modules/harness,modules/controller package
 
 FROM maven:3.9-eclipse-temurin-17
 RUN apt-get update \

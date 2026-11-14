@@ -131,6 +131,9 @@ public final class Notifier {
         if (JobService.SRC_BISECT.equals(job.source) || job.comparisonId != null)
             return false; // bisections and comparisons report once, when they end
 
+        if (job.plugin != null)
+            return false; // a plugin is looked at on its page, its pairs are not the branch
+
         if (mode.equals("all"))
             return true;
 

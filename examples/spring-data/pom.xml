@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.apache.ignite.firewatch</groupId>
+        <artifactId>ignite-firewatch</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>ignite-firewatch-example-spring-data</artifactId>
+    <name>Firewatch plugin example: Spring Data</name>
+    <description>A plugin of Firewatch: scenarios that run Ignite together with spring-data-ext of ignite-extensions.
+        Everything is 'provided': the stand builds Ignite and the extension of every compared pair and puts them on the
+        classpath; the jar holds only the scenarios and META-INF/firewatch-plugin.properties.</description>
+
+    <properties>
+        <!-- The release the scenarios compile against; at run time the stand gives the jars of the pair under test. -->
+        <spring-data-ext.version>3.1.0</spring-data-ext.version>
+        <spring.version>6.1.15</spring.version>
+        <spring-data-commons.version>3.2.12</spring-data-commons.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.apache.ignite.firewatch</groupId>
+            <artifactId>ignite-firewatch-harness-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.ignite</groupId>
+            <artifactId>ignite-core</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.ignite</groupId>
+            <artifactId>ignite-spring-data-ext</artifactId>
+            <version>${spring-data-ext.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <!-- 'provided' by the extension too: an application brings its own Spring -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-context</artifactId>
+            <version>${spring.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-tx</artifactId>
+            <version>${spring.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.data</groupId>
+            <artifactId>spring-data-commons</artifactId>
+            <version>${spring-data-commons.version}</version>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>firewatch-spring-data</finalName>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <!-- The sources go into the jar too: the page of the plugin shows the code that actually runs. -->
+            <resource>
+                <directory>src/main/java</directory>
+                <includes>
+                    <include>**/*.java</include>
+                </includes>
+            </resource>
+        </resources>
+        <plugins>
+            <!-- target/firewatch-spring-data-libs: the extension and its Spring at the release above, from Maven
+                 Central. A stand with FAKE_BUILD takes them from next to the jar instead of building the extension. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.8.1</version>
+                <executions>
+                    <execution>
+                        <id>fake-build-libs</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>copy-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <includeScope>provided</includeScope>
+                            <excludeGroupIds>org.apache.ignite.firewatch</excludeGroupIds>
+                            <excludeArtifactIds>ignite-core,ignite-indexing</excludeArtifactIds>
+                            <outputDirectory>${project.build.directory}/firewatch-spring-data-libs</outputDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
