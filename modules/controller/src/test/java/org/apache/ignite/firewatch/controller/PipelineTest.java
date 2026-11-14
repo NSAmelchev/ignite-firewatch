@@ -1449,24 +1449,6 @@ class PipelineTest {
     }
 
     /** */
-    @Test void theStandFollowsAnotherBranchOnlyWithAnEmptyQueue() throws Exception {
-        origin.branch("other", origin.shas.get(0));
-        Watcher watcher = new Watcher(cfg, db, mirror, jobs);
-        watcher.poll();
-        Job j = jobs.enqueue(Job.ABBA, "master~1", "master", "smoke", 1, null, null);
-        assertThrows(IllegalArgumentException.class,
-            () -> watcher.follow(cfg.repoUrl, "other"), "a queued job would lose its commits");
-        jobs.cancel(j.id);
-        assertThrows(IllegalArgumentException.class, () -> watcher.follow(cfg.repoUrl, "nope"));
-        assertEquals("master", mirror.branch());
-
-        watcher.follow(cfg.repoUrl, "other");
-        assertEquals("other", cfg.branch);
-        assertEquals("other", mirror.branch());
-        assertEquals("", db.setting(Settings.WATCH_WATERMARK, "x"), "it starts from the new head");
-    }
-
-    /** */
     @Test void theLimitOfBisectionsCountsOnlyEndedOnes() throws Exception {
         List<String> c = eightCommits();
         throughput(c, 4, 9000);

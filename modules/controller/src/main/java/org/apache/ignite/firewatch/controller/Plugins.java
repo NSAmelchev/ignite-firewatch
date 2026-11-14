@@ -33,12 +33,6 @@ public final class Plugins {
     /** Ref of Ignite next to the release of the extension; empty: the version of Ignite its pom builds against. */
     static final String IGNITE = "ignite";
 
-    /** Repository of the extension; empty: the one of the jar. */
-    static final String REPO = "repo";
-
-    /** Branch of the extension the master pair takes; empty: the one of the jar. */
-    static final String BRANCH = "branch";
-
     /** {@code keep} or {@code off}, as the other recurring runs, see {@link Freshness}. */
     static final String MODE = "mode";
 
@@ -46,7 +40,7 @@ public final class Plugins {
     static final String KEEP_DAYS = "keepDays";
 
     /** */
-    private static final Set<String> FIELDS = Set.of(RELEASE, IGNITE, REPO, BRANCH, MODE, KEEP_DAYS);
+    private static final Set<String> FIELDS = Set.of(RELEASE, IGNITE, MODE, KEEP_DAYS);
 
     /** One plugin: its jar, what the jar says, its scenarios and the mirror of its extension. */
     public static final class Plugin {
@@ -67,6 +61,18 @@ public final class Plugins {
 
         /** */
         public String defaultBranch;
+
+        /**
+         * The repository of the extension: {@code plugin.<name>.repo} of the configuration, else {@link #defaultRepo}.
+         * Fixed for the life of the application, like the repository of Ignite.
+         */
+        public String repo;
+
+        /** The branch of the master pair: {@code plugin.<name>.branch} of the configuration, else the jar's. */
+        public String branch;
+
+        /** Whether the configuration sets the repository or the branch, rather than the jar. */
+        public boolean repoFromConfig;
 
         /** */
         @JsonIgnore public Path jar;
@@ -135,7 +141,12 @@ public final class Plugins {
                     throw new IllegalArgumentException("plugin " + p.name + " is named twice, here and by "
                         + out.byName.get(p.name).jar);
 
-                p.mirror = new GitMirror(cfg.pluginMirrorDir(p.name), out.repo(p), out.branch(p),
+                p.repo = cfg.pluginRepo(p.name, p.defaultRepo);
+                p.branch = cfg.pluginBranch(p.name, p.defaultBranch);
+                p.repoFromConfig = cfg.isSet(PREFIX + p.name + ".repo") || cfg.isSet(PREFIX + p.name + ".branch");
+                Config.checkRepoUrl(PREFIX + p.name + ".repo", p.repo);
+                Config.checkBranch(PREFIX + p.name + ".branch", p.branch);
+                p.mirror = new GitMirror(cfg.pluginMirrorDir(p.name), p.repo, p.branch,
                     Duration.ofMinutes(cfg.fetchTimeoutMin));
                 out.byName.put(p.name, p);
                 Log.info("plugin " + p.name + ": " + p.scenarios.list().stream().map(s -> s.name).toList() + " of "
@@ -260,14 +271,14 @@ public final class Plugins {
         return v.isBlank() ? def : v.trim();
     }
 
-    /** The repository in force. */
+    /** The repository of the extension, see {@link Plugin#repo}. */
     String repo(Plugin p) {
-        return setting(p, REPO, p.defaultRepo);
+        return p.repo != null ? p.repo : p.defaultRepo;
     }
 
-    /** The branch in force. */
+    /** The branch of the master pair, see {@link Plugin#branch}. */
     String branch(Plugin p) {
-        return setting(p, BRANCH, p.defaultBranch);
+        return p.branch != null ? p.branch : p.defaultBranch;
     }
 
     /** Ref of the release of the extension; null when it is not set. */
@@ -290,6 +301,10 @@ public final class Plugins {
         int dot = rest.lastIndexOf('.');
         String name = dot < 0 ? "" : rest.substring(0, dot), field = dot < 0 ? rest : rest.substring(dot + 1);
 
+        if (name.matches("[a-z][a-z0-9-]{0,39}") && ("repo".equals(field) || "branch".equals(field)))
+            throw new IllegalArgumentException(key + " is set in the configuration, not here: "
+                + "config/ignite-firewatch.properties, a restart applies it");
+
         if (!name.matches("[a-z][a-z0-9-]{0,39}") || !FIELDS.contains(field))
             throw new IllegalArgumentException("unknown setting: " + key);
 
@@ -303,16 +318,6 @@ public final class Plugins {
             case IGNITE:
                 if (!v.matches("[0-9A-Za-z._/-]{1,100}"))
                     throw new IllegalArgumentException(key + " must be a tag, a branch or a sha");
-
-                return v;
-            case REPO:
-                if (!v.matches("(https?://|ssh://|git@|file:/|/)\\S+"))
-                    throw new IllegalArgumentException(key + " must be a git URL");
-
-                return v;
-            case BRANCH:
-                if (!v.matches("[0-9A-Za-z._/][0-9A-Za-z._/-]{0,99}"))
-                    throw new IllegalArgumentException(key + " must be a branch name");
 
                 return v;
             case MODE:
@@ -348,19 +353,5 @@ public final class Plugins {
             p.mirror.resolve(p.mirror.normalize(value));
         else if (IGNITE.equals(field) && ignite.ready())
             ignite.resolve(ignite.normalize(value));
-    }
-
-    /**
-     * After the settings are saved: a new repository or branch is followed from now on.
-     *
-     * @param key Setting key.
-     */
-    void applied(String key) throws IOException {
-        String rest = key.substring(PREFIX.length());
-        Plugin p = get(rest.substring(0, rest.lastIndexOf('.')));
-        String field = rest.substring(rest.lastIndexOf('.') + 1);
-
-        if (p != null && (REPO.equals(field) || BRANCH.equals(field)))
-            p.mirror.follow(repo(p), branch(p));
     }
 }

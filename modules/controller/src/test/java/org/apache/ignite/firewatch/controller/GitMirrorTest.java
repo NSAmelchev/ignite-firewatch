@@ -56,10 +56,10 @@ class GitMirrorTest {
         assertTrue(GitMirror.progressOf("From /x\n * [new branch]      master     -> master\n").isEmpty(), "said nothing of its progress");
     }
 
-    /** */
-    @Test void aNewStandChoosesItsRepositoryBeforeThereIsAMirror() throws Exception {
-        GitMirror fresh = new GitMirror(tmp.resolve("fresh"), "https://example.invalid/other.git", "main", Duration.ofMinutes(2));
-        fresh.follow(origin.url(), "master");
+    /** The repository is the configuration's: a mirror made for another one follows it after a restart. */
+    @Test void aMirrorFollowsTheRepositoryItIsMadeWith() throws Exception {
+        new GitMirror(tmp.resolve("fresh"), "https://example.invalid/other.git", "main", Duration.ofMinutes(2)).ensure();
+        GitMirror fresh = new GitMirror(tmp.resolve("fresh"), origin.url(), "master", Duration.ofMinutes(2));
         fresh.fetch();
         assertTrue(fresh.ready());
         assertEquals(origin.shas.get(2), fresh.resolve("master"));
@@ -67,18 +67,16 @@ class GitMirrorTest {
 
     /** A stand without network fetches from its disk: a plain path to a repository or to a bundle of one. */
     @Test void aRepositoryOrABundleOnDiskIsASource() throws Exception {
-        GitMirror fromDir = new GitMirror(tmp.resolve("from-dir"), "https://example.invalid/other.git", "main",
+        GitMirror fromDir = new GitMirror(tmp.resolve("from-dir"), origin.repo.toString(), "master",
             Duration.ofMinutes(2));
-        fromDir.follow(origin.repo.toString(), "master");
         fromDir.fetch();
         assertEquals(origin.shas.get(2), fromDir.resolve("master"));
         assertEquals(origin.shas.get(1), fromDir.resolve("v1"));
 
         Path bundle = tmp.resolve("disk/ignite.bundle");
         putBundle(bundle);
-        GitMirror fromBundle = new GitMirror(tmp.resolve("from-bundle"), "https://example.invalid/other.git", "main",
+        GitMirror fromBundle = new GitMirror(tmp.resolve("from-bundle"), bundle.toString(), "master",
             Duration.ofMinutes(2));
-        fromBundle.follow(bundle.toString(), "master");
         fromBundle.fetch();
         assertEquals(origin.shas.get(2), fromBundle.resolve("master"));
 
@@ -89,19 +87,6 @@ class GitMirrorTest {
         assertEquals(c4, fromBundle.resolve("master"));
         assertEquals(origin.shas.get(1), fromBundle.resolve("v1"));
         assertEquals(c4, fromBundle.resolve("pr/7"));
-    }
-
-    /** */
-    @Test void followSaysWhyItCannotReadTheSource() throws Exception {
-        String missing = tmp.resolve("no-such").toString();
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> mirror.follow(missing, "master"));
-        assertTrue(e.getMessage().startsWith("cannot read " + missing + ": fatal: "), e.getMessage());
-
-        e = assertThrows(IllegalArgumentException.class, () -> mirror.follow(origin.repo.toString(), "nope"));
-        assertEquals("no branch nope at " + origin.repo, e.getMessage());
-
-        mirror.fetch(); // still the old source
-        assertEquals(origin.shas.get(2), mirror.resolve("master"));
     }
 
     /** Writes a bundle of the whole origin next to {@code dest}, then moves it in place, as a person would. */

@@ -154,12 +154,9 @@ function settingsTab(p) {
     <div class="mode-row"><label class="mode-opt"><input type="radio" name="mode" value="off" ${s.mode === 'keep' ? '' : 'checked'}><span>Only by hand</span></label>
       <label class="mode-opt"><input type="radio" name="mode" value="keep" ${s.mode === 'keep' ? 'checked' : ''}><span>Keep fresh</span></label>
       <label class="keep-days">when master moved, every <input name="keepDays" type="number" min="1" value="${esc(s.keepDays)}"> days</label></div>
-    <details ${p.repo !== p.defaultRepo || p.branch !== p.defaultBranch ? 'open' : ''}><summary class="muted">Repository <span class="small-text">the jar says ${esc(repoName(p.defaultRepo))}, ${esc(p.defaultBranch)}</span></summary>
-      <label for="pl-repo">URL</label>
-      <input id="pl-repo" name="repo" value="${p.repo === p.defaultRepo ? '' : esc(p.repo)}" placeholder="${esc(p.defaultRepo)}" autocomplete="off" spellcheck="false">
-      <label for="pl-branch">Branch of the master pair</label>
-      <input id="pl-branch" name="branch" value="${p.branch === p.defaultBranch ? '' : esc(p.branch)}" placeholder="${esc(p.defaultBranch)}" autocomplete="off" spellcheck="false">
-      <div class="hint">Empty: what the jar says. Another repository is a fork or a mirror of the same extension.</div></details>
+    <label>Repository <span class="muted">from the ${p.repoFromConfig ? 'configuration' : 'jar'}</span></label>
+    <div class="mono repo-fixed">${esc(p.repo)} · ${esc(p.branch)}</div>
+    <div class="hint">Another repository or branch (a fork, a mirror of the same extension): <code>plugin.${esc(p.name)}.repo</code> and <code>plugin.${esc(p.name)}.branch</code> in <code>config/ignite-firewatch.properties</code>; a restart applies them.</div>
     <div class="actions"><button class="primary">Save</button> <span class="muted small-text">jar ${esc(p.jar)} · module ${esc(p.module)}</span></div>
   </form>`;
 }
@@ -226,7 +223,7 @@ views.plugin = {
       const f = new FormData(st), key = (k) => `plugin.${p.name}.${k}`;
       await api.put('/api/settings', {
         [key('release')]: f.get('release').trim(), [key('ignite')]: f.get('ignite').trim(), [key('mode')]: f.get('mode'),
-        [key('keepDays')]: f.get('keepDays'), [key('repo')]: f.get('repo').trim(), [key('branch')]: f.get('branch').trim(),
+        [key('keepDays')]: f.get('keepDays'),
       });
       toast('saved');
       refresh(true);

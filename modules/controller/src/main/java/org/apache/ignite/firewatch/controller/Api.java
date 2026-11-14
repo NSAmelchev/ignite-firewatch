@@ -160,16 +160,7 @@ public final class Api {
                     plugins.check(e.getKey(), e.getValue(), mirror);
             }
 
-            if (applied.containsKey(Settings.REPO_URL) || applied.containsKey(Settings.REPO_BRANCH))
-                watcher.follow(applied.getOrDefault(Settings.REPO_URL, cfg.repoUrl),
-                    applied.getOrDefault(Settings.REPO_BRANCH, cfg.branch));
-
             applied.forEach(db::setSetting);
-
-            for (String k : applied.keySet()) {
-                if (k.startsWith(Plugins.PREFIX))
-                    plugins.applied(k);
-            }
 
             Map<String, String> logged = new LinkedHashMap<>(applied);
             Settings.SECRET.forEach(k -> logged.computeIfPresent(k, (kk, vv) -> vv.isEmpty() ? "" : Settings.MASK));
@@ -198,10 +189,9 @@ public final class Api {
         // the check of the builds only reads, and the last one is kept: the setup page runs it whenever it opens (the form may
         // hold an unsaved repository), Settings shows the kept one and runs it again on request
         r.get("/api/app/check", req -> Json.tree(db.setting(BuildCheck.SETTING, "null")));
+        r.get("/api/config", req -> cfg.describe());
         r.post("/api/app/check", req -> {
-            JsonNode b = req.json();
-            BuildCheck c = BuildCheck.run(cfg, Req.str(b, "url", db.setting(Settings.REPO_URL, cfg.repoUrl)),
-                Req.str(b, "branch", db.setting(Settings.REPO_BRANCH, cfg.branch)));
+            BuildCheck c = BuildCheck.run(cfg, cfg.repoUrl, cfg.branch); // the repository is the configuration's
             db.setSetting(BuildCheck.SETTING, Json.write(c));
 
             return c;

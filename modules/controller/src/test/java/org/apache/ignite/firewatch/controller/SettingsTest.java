@@ -8,6 +8,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Tests of {@link Settings}. */
 class SettingsTest {
@@ -38,14 +39,15 @@ class SettingsTest {
         assertEquals("2.17.0", Settings.validate("plugin.spring-data.ignite", "2.17.0", sc));
         assertEquals("keep", Settings.validate("plugin.spring-data.mode", "keep", sc));
         assertEquals("3", Settings.validate("plugin.spring-data.keepDays", "3", sc));
-        assertEquals("https://github.com/apache/ignite-extensions.git",
-            Settings.validate("plugin.spring-data.repo", "https://github.com/apache/ignite-extensions.git", sc));
+        assertTrue(assertThrows(IllegalArgumentException.class, () -> Settings.validate("plugin.spring-data.repo",
+            "https://github.com/apache/ignite-extensions.git", sc)).getMessage().contains("configuration"),
+            "the repository of a plugin is the configuration's");
+        assertThrows(IllegalArgumentException.class, () -> Settings.validate("plugin.spring-data.branch", "main", sc));
         assertThrows(IllegalArgumentException.class, () -> Settings.validate("plugin.spring-data.color", "red", sc));
         assertThrows(IllegalArgumentException.class, () -> Settings.validate("plugin.Spring.release", "x", sc));
         assertThrows(IllegalArgumentException.class, () -> Settings.validate("plugin.spring-data.mode", "on", sc));
         assertThrows(IllegalArgumentException.class, () -> Settings.validate("plugin.spring-data.keepDays", "0", sc));
         assertThrows(IllegalArgumentException.class, () -> Settings.validate("plugin.spring-data.release", "a b", sc));
-        assertThrows(IllegalArgumentException.class, () -> Settings.validate("plugin.spring-data.repo", "nope", sc));
     }
 
     /** */
@@ -80,13 +82,15 @@ class SettingsTest {
             () -> Settings.validate("master.at", "03:00", sc), "the time of a run is gone");
         assertEquals("", Settings.validate("calibration.scenarios", "", sc));
         assertThrows(IllegalArgumentException.class, () -> Settings.validate("calibration.scenarios", "nope", sc));
-        assertEquals("https://github.com/apache/ignite.git",
-            Settings.validate(Settings.REPO_URL, "https://github.com/apache/ignite.git", sc));
-        assertThrows(IllegalArgumentException.class, () -> Settings.validate(Settings.REPO_URL, "ext::sh -c id", sc));
-        assertEquals("/git/ignite.bundle", Settings.validate(Settings.REPO_URL, "/git/ignite.bundle", sc));
-        assertEquals("ignite-2.18", Settings.validate(Settings.REPO_BRANCH, "ignite-2.18", sc));
-        assertThrows(IllegalArgumentException.class,
-            () -> Settings.validate(Settings.REPO_BRANCH, "--upload-pack=x", sc));
+        assertTrue(assertThrows(IllegalArgumentException.class,
+            () -> Settings.validate(Settings.REPO_URL, "https://github.com/apache/ignite.git", sc)).getMessage()
+            .contains("configuration"), "the repository is the configuration's");
+        assertThrows(IllegalArgumentException.class, () -> Settings.validate(Settings.REPO_BRANCH, "master", sc));
+        Config.checkRepoUrl("repo.url", "https://github.com/apache/ignite.git");
+        Config.checkRepoUrl("repo.url", "/git/ignite.bundle");
+        assertThrows(IllegalArgumentException.class, () -> Config.checkRepoUrl("repo.url", "ext::sh -c id"));
+        Config.checkBranch("branch", "ignite-2.18");
+        assertThrows(IllegalArgumentException.class, () -> Config.checkBranch("branch", "--upload-pack=x"));
         assertThrows(IllegalArgumentException.class,
             () -> Settings.validate(Settings.RETENTION_KEEP_BISECTS, "-1", sc));
         assertThrows(IllegalArgumentException.class, () -> Settings.validate("no.such", "x", sc));

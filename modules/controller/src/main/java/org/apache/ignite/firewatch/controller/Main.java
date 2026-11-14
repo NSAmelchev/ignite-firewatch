@@ -25,8 +25,6 @@ public final class Main {
         Settings.seed(db, cfg);
         Stand.remember(db);
         cfg.instance = Stand.instance(db);
-        cfg.repoUrl = db.setting(Settings.REPO_URL, cfg.repoUrl);
-        cfg.branch = db.setting(Settings.REPO_BRANCH, cfg.branch);
         Scenarios scenarios = Scenarios.fromHarness(cfg);
         Log.info("scenarios: " + scenarios.list().stream().map(s -> s.name + " v" + s.version).toList());
         GitMirror mirror = new GitMirror(cfg.mirrorDir(), cfg.repoUrl, cfg.branch,

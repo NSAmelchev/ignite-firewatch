@@ -71,12 +71,12 @@ public final class Settings {
     public static final String WATCH_SEGMENT_BASE = "watch.segmentBase";
 
     /**
-     * The repository and the branch the stand follows; {@code IGNITE_FIREWATCH_REPO_URL} and
-     * {@code IGNITE_FIREWATCH_BRANCH} only seed them.
+     * Not a setting any more: the repository and the branch are those of the configuration ({@code repo.url},
+     * {@code branch}), and a setting of this name is refused. Rows a stand saved before stay in the database unread.
      */
     public static final String REPO_URL = "repo.url";
 
-    /** */
+    /** See {@link #REPO_URL}. */
     public static final String REPO_BRANCH = "repo.branch";
 
     /**
@@ -103,8 +103,6 @@ public final class Settings {
      */
     public static Map<String, String> defaults(Config cfg) {
         Map<String, String> d = new LinkedHashMap<>();
-        d.put(REPO_URL, cfg.repoUrl);
-        d.put(REPO_BRANCH, cfg.branch);
         d.put(AUTORUN_ENABLED, "false");
         d.put(AUTORUN_MODE, "abba-vs-parent");
         d.put(AUTORUN_SCENARIO, DEFAULT_SCENARIO);
@@ -211,15 +209,9 @@ public final class Settings {
 
                 return value;
             case REPO_URL:
-                if (!value.matches("(https?://|ssh://|git@|file:/|/)\\S+"))
-                    throw new IllegalArgumentException(key + " must be a git URL");
-
-                return value;
             case REPO_BRANCH:
-                if (!value.matches("[0-9A-Za-z._/][0-9A-Za-z._/-]{0,99}"))
-                    throw new IllegalArgumentException(key + " must be a branch name");
-
-                return value;
+                throw new IllegalArgumentException("the repository is set in the configuration, not here: repo.url and "
+                    + "branch of config/ignite-firewatch.properties, a restart applies them");
             case RELEASE_TAG:
                 if (!value.isBlank() && !value.trim().matches("[0-9A-Za-z._/*-]{1,64}"))
                     throw new IllegalArgumentException(key + " must be a tag, sha, branch, mask or empty");

@@ -621,3 +621,9 @@ label.check { display: flex; gap: 8px; align-items: baseline; color: var(--fg); 
 .plugin-settings input:not([type=radio]):not([type=number]) { width: 100%; }
 .plugin-settings .mode-row { margin-top: 12px; }
 .plugin-settings details { margin-top: 12px; }
+
+/* the configuration of the application, read-only: set where the application reads it */
+table.config-table td { padding: 3px 8px; }
+table.config-table td.config-key { white-space: nowrap; }
+table.config-table td.config-value { overflow-wrap: anywhere; }
+.repo-fixed { padding: 5px 0; overflow-wrap: anywhere; }

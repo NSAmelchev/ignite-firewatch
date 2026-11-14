@@ -95,6 +95,7 @@ final class PluginApi {
         m.put("module", p.module);
         m.put("repo", plugins.repo(p));
         m.put("branch", plugins.branch(p));
+        m.put("repoFromConfig", p.repoFromConfig); // else the jar's: either way fixed until a restart
         m.put("defaultRepo", p.defaultRepo);
         m.put("defaultBranch", p.defaultBranch);
         m.put("jar", p.jar.getFileName().toString());

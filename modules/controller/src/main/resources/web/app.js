@@ -39,6 +39,8 @@ const scTitles = new Map();
 export const scName = (id) => scTitles.get(id) || id;
 // the web page of the repository for links to commits and PRs, from the settings; null when the URL has none
 let repoWeb = null;
+// the configuration of the application, key: value; the repository and its branch are there, not in the settings
+let appConfig = {};
 // tickets in commit subjects, from the settings: "KEY=URL [PR URL]" per line. The ticket goes at the end of the URL, the
 // number of a PR at the end of the PR URL of the space its commit belongs to, by default that of the repository of the stand
 let ticketLinks = new Map(), ticketWord = null;
@@ -53,7 +55,8 @@ const webOf = (url) => { const m = /^(?:https?:\/\/|ssh:\/\/git@|git@)([^:/]+)[:
 export const api = {
   get: (p) => call('GET', p).then((d) => {
     if (p === '/api/scenarios' && Array.isArray(d)) d.forEach((x) => scTitles.set(x.name, x.title || x.name));
-    if (p === '/api/settings') { repoWeb = webOf(d['repo.url']); readTicketLinks(d['links.tickets']); }
+    if (p === '/api/settings') readTicketLinks(d['links.tickets']);
+    if (p === '/api/config' && Array.isArray(d)) { appConfig = Object.fromEntries(d.map((e) => [e.key, e.value])); repoWeb = webOf(appConfig['repo.url']); }
     return d;
   }),
   post: (p, b) => call('POST', p, b || {}),
@@ -130,6 +133,10 @@ const HELP = {
   serverStartMs: 'How long a node starts: noise of the stand, never a verdict.',
   preloadMs: 'How long the data loads: noise of the stand, never a verdict.',
 };
+// the configuration of the application: read-only in the UI, set where the application reads it
+const CONFIG_HINT = 'Set in <code>config/ignite-firewatch.properties</code> (or <code>IGNITE_FIREWATCH_*</code>, <code>-Dignite.firewatch.*</code>); a restart applies it.';
+const configTable = (rows) => `<table class="config-table"><thead><tr><th>Key</th><th>Value</th><th>Source</th></tr></thead>
+  <tbody>${rows.map((r) => `<tr><td class="mono config-key">${esc(r.key)}</td><td class="mono config-value">${r.value ? esc(r.value) : '<span class="muted">–</span>'}</td><td class="muted">${esc(r.source)}</td></tr>`).join('')}</tbody></table>`;
 // a commit subject with its ticket and PR as links; never inside another link
 // a stand without network fetches from its own disk: git takes a path as well as a URL
 const REPO_PATH_HINT = 'A stand without network takes a path on this machine: a mirror (<code>git clone --mirror</code>) or a bundle (<code>git bundle create ignite.bundle --all</code>); in Docker, under <code>/git</code>.';
@@ -1264,7 +1271,7 @@ views.commits = {
       <span class="muted">${page * COMMITS_PAGE + 1}–${page * COMMITS_PAGE + rows.length} of ${listed.length}</span>
       ${go(page + 1, 'Next', page >= pages - 1)} ${go(pages - 1, 'Last', page >= pages - 1)}</span>` : '';
     return `
-      <h1>Commits <span class="muted">${esc(settings['repo.branch'])}, first-parent history</span></h1>
+      <h1>Commits <span class="muted">${esc(appConfig.branch || '')}, first-parent history</span></h1>
       <div class="card actions-inline">
         Show <select id="scope">${rel.tag ? `<option value="release" ${since ? 'selected' : ''}>since ${esc(rel.tag)} (${rel.unreleased})</option>` : ''}
           <option value="all" ${since ? '' : 'selected'}>all (${commits.length})</option></select>
@@ -1774,7 +1781,7 @@ views.compare = {
   live() { return this.active; },
   async render() {
     const [settings, scenarios, list] = await Promise.all([api.get('/api/settings'), api.get('/api/scenarios'), api.get('/api/comparisons?limit=30')]);
-    const branch = settings['repo.branch'];
+    const branch = appConfig.branch || 'master';
     const form = this.formState || { base: '', target: '' };
     const mode = this.mode || 'pr';
     this.active = list.some((c) => comparisonActive(c) || c.doneAt);
@@ -2464,7 +2471,7 @@ const appCheck = (r, running, error) => `<table class="check tools"><tbody>${r ?
 let setupPending = false;
 views.setup = {
   async render() {
-    const [saved, settings] = await Promise.all([api.get('/api/stand'), api.get('/api/settings')]);
+    const [saved, settings] = await Promise.all([api.get('/api/stand'), api.get('/api/settings'), api.get('/api/config')]);
     const seen = saved.check && saved.check.checked;
     const stand = !saved.hosts.length && seen && seen.length ? { ...saved, mode: 'remote', hosts: seen } : saved; // a reload keeps the hosts Check saw
     this.check = saved.check;
@@ -2473,11 +2480,11 @@ views.setup = {
       <form id="setup">
         <div class="card step">${stepHead(1, 'Application', 'builds every commit on this machine', 'app')}
           <div class="repo-grid">
-            <label>Git URL or path<input name="repo.url" value="${esc(settings['repo.url'])}" autocomplete="off" spellcheck="false" required></label>
-            <label>Branch<input name="repo.branch" value="${esc(settings['repo.branch'])}" autocomplete="off" spellcheck="false" required></label>
+            <div><label>Repository</label><div class="mono repo-fixed">${esc(appConfig['repo.url'] || '')}</div></div>
+            <div><label>Branch</label><div class="mono repo-fixed">${esc(appConfig.branch || '')}</div></div>
             <label>Release to compare with<input name="release.tag" value="${esc(settings['release.tag'] || '')}" placeholder="the highest X.Y.Z tag" autocomplete="off" spellcheck="false"></label>
           </div>
-          <div class="hint">${REPO_PATH_HINT}</div>
+          <div class="hint">The repository and its branch are <code>repo.url</code> and <code>branch</code> of the configuration. ${CONFIG_HINT}</div>
           <div data-app-check>${appCheck(null, true)}</div></div>
         <div class="card step">${stepHead(2, 'Hosts', 'where the server nodes and the loader run', 'hosts')}
           ${standFields(stand)}${hostsCheck(stand.check)}</div>
@@ -2507,15 +2514,15 @@ views.setup = {
       paintStep(form, 'app', 1, this.app, this.appRunning);
       paintStart();
     };
-    // the repository of the form, saved or not; a later answer wins over an earlier one
+    // the repository of the configuration; a later answer wins over an earlier one
     let asked = 0;
     const checkApp = () => {
-      const n = ++asked, fd = new FormData(form);
+      const n = ++asked;
       this.appRunning = true;
       this.app = null;
       this.appError = null;
       paintApp();
-      api.post('/api/app/check', { url: String(fd.get('repo.url')).trim(), branch: String(fd.get('repo.branch')).trim() })
+      api.post('/api/app/check', {})
         .then((r) => { if (n === asked) this.app = r; }, (e) => { if (n === asked) this.appError = `Check of this machine did not run: ${e.message}`; })
         .finally(() => { if (n === asked) { this.appRunning = false; paintApp(); } });
     };
@@ -2530,7 +2537,6 @@ views.setup = {
     };
     bindStandFields(form, dropStale, (r) => { this.check = r; paintHosts(); });
     form.addEventListener('click', (e) => { if (e.target.closest('[data-app-check-run]')) checkApp(); });
-    ['repo.url', 'repo.branch'].forEach((n) => $(`[name="${n}"]`, form).addEventListener('change', checkApp));
     dropStale();
     checkApp();
     form.addEventListener('submit', (e) => {
@@ -2538,7 +2544,7 @@ views.setup = {
       if (blocker()) return;
       const fd = new FormData(form), stand = standOf(form);
       guarded(async () => {
-        await api.put('/api/settings', { 'repo.url': fd.get('repo.url'), 'repo.branch': fd.get('repo.branch'), 'release.tag': fd.get('release.tag') });
+        await api.put('/api/settings', { 'release.tag': fd.get('release.tag') });
         await api.put('/api/stand', stand);
         setupPending = false;
         $('header nav').hidden = false;
@@ -2553,8 +2559,8 @@ views.settings = {
   poll: 6000,
   async render() {
     const storage = await api.get('/api/storage').catch(() => null); // a walk over the runs: the page does not poll
-    const [settings, health, scenarios, builds, stand, appKept] = await Promise.all([api.get('/api/settings'), api.get('/api/health'), api.get('/api/scenarios'),
-      api.get('/api/builds?limit=20'), api.get('/api/stand'), api.get('/api/app/check').catch(() => null)]);
+    const [settings, health, scenarios, builds, stand, appKept, config] = await Promise.all([api.get('/api/settings'), api.get('/api/health'), api.get('/api/scenarios'),
+      api.get('/api/builds?limit=20'), api.get('/api/stand'), api.get('/api/app/check').catch(() => null), api.get('/api/config')]);
     this.stand = stand;
     if (!this.appRunning) this.appCheck = appKept; // the kept report; a running check paints its own
     // Check takes the ports of Ignite on the hosts: not during a job, and with jobs waiting only while the stand is closed for
@@ -2590,16 +2596,10 @@ views.settings = {
       ${standState(health, stand, builds, noises)}
       <div class="seg" role="tablist">${SETTINGS_TABS.map(([k, name]) => `<button type="button" data-settings-tab="${k}" class="${k === tab ? 'on' : ''}">${name}</button>`).join('')}</div>
       <section data-tab="repository" ${tab === 'repository' ? '' : 'hidden'}><div class="card">
-        <form id="repository">
-          <label>Git URL or path</label>
-          <input name="repo.url" value="${esc(settings['repo.url'])}" autocomplete="off" required>
-          <div class="muted small-text">${REPO_PATH_HINT}</div>
-          <label>Main branch</label>
-          <input name="repo.branch" value="${esc(settings['repo.branch'])}" autocomplete="off" required>
-          <div class="actions"><button class="primary">Save</button></div>
-          <div class="muted small-text">Both are checked before saving, and the queue has to be empty. After a change the stand follows the new head: runs of the old branch stay in the database but leave Commits and Timeline.
-            Every poll fetches from a path as from a URL: a fresh copy put in its place arrives by itself.</div>
-        </form>
+        <h2 style="margin-top:0">Application configuration <span class="muted">read-only: the repository and its branch, paths, tools, plugins</span></h2>
+        ${configTable(config)}
+        <div class="muted small-text" style="margin-top:8px">${CONFIG_HINT} The source says where a value comes from: the file, the environment, a system property, or the default.</div>
+        <div class="muted small-text">${REPO_PATH_HINT} Every poll fetches from a path as from a URL: a fresh copy put in its place arrives by itself.</div>
       </div>
       <div class="card">${stepHead(null, 'Builds', 'what builds every commit on this machine', 'app', checkState(this.appCheck, this.appRunning))}
         <div data-app-check>${appCheck(this.appCheck, this.appRunning, this.appError)}</div></div>
@@ -2608,7 +2608,7 @@ views.settings = {
         <table class="ticket-keys"><thead><tr><th>Key</th><th>Ticket URL</th><th>Pull request URL</th><th></th></tr></thead>
           <tbody>${(ticketLinks.size ? [...ticketLinks] : [['', { url: '', pr: '' }]]).map(([key, l]) => ticketRow(key, l)).join('')}</tbody></table>
         <div class="actions"><button type="button" class="small" data-ticket-add>Add key</button></div>
-        <div class="muted small-text">The ticket or the number goes at the end of its URL: IGNITE-123 leads to the ticket URL + IGNITE-123, a PR of a commit with that key to the pull request URL + the number. An empty pull request URL follows the Git URL above.</div>
+        <div class="muted small-text">The ticket or the number goes at the end of its URL: IGNITE-123 leads to the ticket URL + IGNITE-123, a PR of a commit with that key to the pull request URL + the number. An empty pull request URL follows <span class="mono">repo.url</span> of the configuration.</div>
         <div class="actions"><button class="primary">Save</button></div>
       </form></section>
       <section data-tab="automation" ${tab === 'automation' ? '' : 'hidden'}>
@@ -2723,8 +2723,7 @@ views.settings = {
         .finally(() => { this.appRunning = false; lastHtml = null; paint(); });
     };
     const showApp = () => {
-      if ((this.tab || SETTINGS_TABS[0][0]) !== 'repository' || this.appError || (this.appCheck && !this.appRecheck)) return;
-      this.appRecheck = false;
+      if ((this.tab || SETTINGS_TABS[0][0]) !== 'repository' || this.appError || this.appCheck) return;
       checkApp();
     };
     root.addEventListener('click', (e) => { if (e.target.closest('[data-app-check-run]')) checkApp(); });
@@ -2767,20 +2766,6 @@ views.settings = {
       $('[data-if-autorun]', root).hidden = m === 'off';
       $('[data-segments]', root).hidden = m !== 'segments';
     }));
-    $('#repository', root).addEventListener('submit', (e) => {
-      e.preventDefault();
-      const d = Object.fromEntries(new FormData(e.target));
-      guarded(async () => {
-        const now = await api.get('/api/settings');
-        if ((d['repo.url'] !== now['repo.url'] || d['repo.branch'] !== now['repo.branch'])
-          && !(await modal('Follow another repository?', `<div><span class="mono">${esc(d['repo.branch'])}</span> of <span class="mono">${esc(d['repo.url'])}</span>. Runs of the current branch leave Commits and Timeline.</div>`, 'Follow'))) return;
-        await api.put('/api/settings', d);
-        toast('repository saved');
-        this.appRecheck = true; // the builds are checked again against the new repository
-        this.appError = null;
-        refresh();
-      });
-    });
     const tickets = $('#tickets', root);
     tickets.addEventListener('click', (e) => {
       const remove = e.target.closest('[data-ticket-remove]');
@@ -3110,7 +3095,7 @@ export async function refresh(first) {
   rendering = true;
   const view = currentView, params = currentParams;
   try {
-    if (!scTitles.size) await Promise.all([api.get('/api/scenarios'), api.get('/api/settings')]).catch(() => null); // names and links before the first page
+    if (!scTitles.size) await Promise.all([api.get('/api/scenarios'), api.get('/api/settings'), api.get('/api/config')]).catch(() => null); // names and links before the first page
     const html = await view.render(params);
     if (view !== currentView) return;
     const active = document.activeElement;

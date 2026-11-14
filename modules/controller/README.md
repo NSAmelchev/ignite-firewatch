@@ -23,8 +23,8 @@ IGNITE_FIREWATCH_FAKE_BUILD=1 IGNITE_FIREWATCH_PORT=8085 IGNITE_FIREWATCH_DATA_D
   java -Xmx128m -jar modules/controller/target/controller.jar   # UI at http://localhost:8085
 ```
 
-On an empty DB the UI opens with the setup wizard: first the application (the repository, the release and the check of
-the builds on this machine), then the hosts and the sizes of the scenarios. Until the wizard is done, `Watcher` waits and
+On an empty DB the UI opens with the setup wizard: first the application (the repository of the configuration, the
+release and the check of the builds on this machine), then the hosts and the sizes of the scenarios. Until the wizard is done, `Watcher` waits and
 clones nothing. Then the controller makes a full clone of `apache/ignite` (≈0.5 GB, about 2 minutes), sets the watermark
 to the current head and runs nothing while auto-run is off (it is off by default). `FAKE_BUILD=1` replaces the build with
 a copy of the release jars, to debug the queue and the UI without Maven; the harness stays real.
@@ -42,7 +42,7 @@ and the image sets the paths and the port.
 | `IGNITE_FIREWATCH_CACHE_DIR` | `cache` | the mirror, `m2`, artifacts, build work directories (can be wiped) |
 | `IGNITE_FIREWATCH_HARNESS_JAR` | `modules/harness/target/harness.jar` | the harness |
 | `IGNITE_FIREWATCH_BIND_HOST`, `IGNITE_FIREWATCH_PORT` | `0.0.0.0`, `8090` (8080 in the container) | HTTP |
-| `IGNITE_FIREWATCH_REPO_URL`, `IGNITE_FIREWATCH_BRANCH` | `https://github.com/apache/ignite.git`, `master` | what is mirrored and followed; instead of a URL, a path to a git repository or bundle on this machine works (a stand without network) |
+| `IGNITE_FIREWATCH_REPO_URL`, `IGNITE_FIREWATCH_BRANCH` | `https://github.com/apache/ignite.git`, `master` | what is mirrored and followed, only here: the UI shows it read-only; instead of a URL, a path to a git repository or bundle on this machine works (a stand without network) |
 | `IGNITE_FIREWATCH_JAVA`, `IGNITE_FIREWATCH_MVN` | java of the current JVM, `mvn` | executables for the child processes |
 | `IGNITE_FIREWATCH_MAVEN_HEAP_MB` | `1536` | `-Xmx` of Maven when it builds a commit |
 | `IGNITE_FIREWATCH_MAVEN_SETTINGS` | empty | settings.xml for every build (`-s`): mirrors, proxies, credentials; a relative path starts in the directory of the application |
@@ -80,8 +80,8 @@ it (a JRE will not do: Maven compiles with the Java it runs on), `mvn -v` with e
 less than 5 GB is an error, less than 20 GB a warning. When Maven runs on another Java than `java`, it is an error below 17
 and a warning otherwise; the hint names the `JAVA_HOME=` line of `/usr/local/etc/mavenrc`, `/etc/mavenrc`, `~/.mavenrc` or
 `/etc/java/maven.conf` that the `mvn` script reads after the environment it was given. The last report is kept
-(`GET /api/app/check`), a new run replaces it. The commands only read: the wizard runs the check when it opens and when the
-repository changes, Settings → Application shows the kept one and runs it by itself only when there is none yet; the
+(`GET /api/app/check`), a new run replaces it. The commands only read: the wizard runs the check when it opens,
+Settings → Application shows the kept one and runs it by itself only when there is none yet; the
 answer holds `items` (`ok`/`warn`/`fail`, the text and `fix`, how to fix it) and the log of the commands in the format of
 Check. With `FAKE_BUILD` a single warning stands for Maven.
 
@@ -287,7 +287,9 @@ A plugin runs Ignite together with an extension of another repository, such as a
 master is not tied to the releases of Ignite. It is a jar of scenarios (see the harness README and `examples/spring-data`)
 that names the repository and the module of the extension. The configuration turns plugins on (`plugins`); at the start
 the controller reads each named jar with `harness.jar list --plugin`, and keeps a mirror of the repository of its
-extension in `cache/plugins/<name>/mirror`. A jar that cannot be read is an error of its own in `/api/health` and the
+extension in `cache/plugins/<name>/mirror`. That repository and the branch of the master pair are what the jar says,
+unless the configuration sets `plugin.<name>.repo` and `plugin.<name>.branch` (a fork, a mirror); like the repository of
+Ignite they are fixed until a restart. A jar that cannot be read is an error of its own in `/api/health` and the
 section; the stand starts all the same.
 
 A job of a plugin measures pairs: `sha_a` and `sha_b` stay the commits of Ignite, `ext_sha_a` and `ext_sha_b` (schema v6,
@@ -415,8 +417,8 @@ strength of the signal, commits.
   (`spread`), shifts at the noise threshold (`inconclusive`, with Deep search), ranges still being searched, and
   deviations without a bisection (with Bisect). The Bisects block: a row per bisection with the course of the search, the
   found commits and their Δ, the share of the total Δ or the reason it stopped; the page refreshes while at least one runs.
-- **Setup**: the wizard of a new stand in three steps: Application (repository, branch, release and the check of the
-  builds, which runs by itself on opening and when the address or the branch changes), Hosts (where to run and Check) and
+- **Setup**: the wizard of a new stand in three steps: Application (the repository and the branch of the configuration,
+  read-only, the release and the check of the builds, which runs by itself on opening), Hosts (where to run and Check) and
   Scenario sizes. The head of a step has its number (a tick once the check passed) and the state of its check; under each
   error is how to fix it. The menu is hidden and other pages are unavailable until the wizard is done. Start the stand is
   disabled until the check of the builds passed, and for remote hosts Check too; the reason is written next to the button.
@@ -424,10 +426,10 @@ strength of the signal, commits.
   over, builds, noise, stand and automation (`✓`, `!`, `✗`), with Poll now, Kill all and, in the worker line, Close for
   maintenance / Reopen with a confirmation: the dialog shows the state of the stand at the moment of the click (the current
   job runs to its end, new ones do not start). Below are the sections Automation, Release, Notifications, Storage, Stand,
-  System (builds with their log and jars, and the controller log), Application (the repository, the check of the builds
-  as in the wizard, and the ticket keys: `links.tickets`, a table of key, ticket URL and PR URL, in the setting lines
+  System (builds with their log and jars, the controller log, and the link to the OpenAPI document), Application (the
+  configuration of the application, the check of the builds as in the wizard, and the ticket keys: `links.tickets`, a table of key, ticket URL and PR URL, in the setting lines
   `KEY=URL [PR_URL]`, by default `IGNITE=https://issues.apache.org/jira/browse/`; the PR of a commit with that key leads to
-  PR_URL + its number, an empty PR_URL comes from the Git URL). In Release, with or without a mask, only a tag of exactly
+  PR_URL + its number, an empty PR_URL comes from `repo.url` of the configuration). In Release, with or without a mask, only a tag of exactly
   `X.Y.Z` counts: `2.18.0-rc0` does not, unless written in full.
   Stand: the same fields and Check as in the wizard, plus Measure load and Clean hosts, until the first finished phase;
   after it the hosts and sizes are only shown, while the last Check report and Check again stay. Both checks say next to
@@ -441,15 +443,15 @@ strength of the signal, commits.
   release per scenario. A/A short of the 3 its threshold needs are made up at once, and master vs release is skipped when
   there are no new commits. Each has its own set of scenarios, and a new scenario joins "all" by itself. While the stand is
   closed for maintenance nothing starts; a missed start goes after it reopens.
-  Application: the git address and the main branch, under them the check of the builds (Builds), which runs when the
-  section first opens and after the repository is saved. The values live in the DB; `IGNITE_FIREWATCH_REPO_URL` and
-  `IGNITE_FIREWATCH_BRANCH` only set them on the first start. A stand without network gets a path on its machine instead of
-  the address: a `git clone --mirror` directory or a `git bundle create … --all` file (under `/git` in Docker, `docker/git`
-  or `IGNITE_FIREWATCH_GIT_DIR` on the host). Every poll runs `git fetch` from there, so a fresh copy put in place of the
-  old one is picked up by itself; saving a path that does not read is refused with the error of git. A change is checked
-  with `git ls-remote`, needs an empty queue and applies at once: the stand follows the new head, runs of the old branch
-  stay in the DB but leave Commits and Timeline. Links to commits and PRs are built from this address. The auto-run modes
-  are described in the section itself.
+  Application: the configuration of the application, read-only (`GET /api/config`): every key with its value and where
+  it comes from (the file, the environment, a system property, the default), the repository and its branch among them,
+  then the check of the builds (Builds), which runs when the section first opens. The repository is set only there:
+  `repo.url` and `branch` of `config/ignite-firewatch.properties` (or `IGNITE_FIREWATCH_REPO_URL`/`_BRANCH`), a restart
+  applies it; rows of the database that an older stand kept are not read. A stand without network gets a path on its
+  machine instead of the address: a `git clone --mirror` directory or a `git bundle create … --all` file (under `/git` in
+  Docker, `docker/git` or `IGNITE_FIREWATCH_GIT_DIR` on the host). Every poll runs `git fetch` from there, so a fresh copy
+  put in place of the old one is picked up by itself. Links to commits and PRs are built from this address. The auto-run
+  modes are described in the section itself.
   Release: what the dashboard compares master with. Empty means the highest X.Y.Z tag, a mask `2.18.*` picks the highest
   one that fits, and any tag, sha or branch can be given. The value is checked when saved; runs against another release
   do not count on the dashboard.
@@ -501,7 +503,8 @@ strength of the signal, commits.
   Δ ops/s run by run, links to its history and to Compare; a pair that does not build is incompatible. The page of a
   plugin (`#/plugin?name=…`) has History (every run with the commits each side moved since the run before, linked to the
   diff), Compare (two pairs, split one side at a time), Scenarios (as the page Scenarios shows them) and Settings (the
-  release, the Ignite of the release, Keep fresh, the repository). A job of a plugin carries its name in Queue and its
+  release, the Ignite of the release, Keep fresh; the repository read-only, from the configuration or the jar). A job of a
+  plugin carries its name in Queue and its
   pairs on its page.
 - **Scenarios**: the scenarios of the harness (Java classes): servers, client and threads, warmup/measurement, version and
   the sources of the class and its base classes from `harness.jar` (`harness.jar list`, read at the start of the

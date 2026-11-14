@@ -1657,11 +1657,6 @@ public final class JobService {
     /** */
     private final Map<String, String> branchPointCache = new java.util.concurrent.ConcurrentHashMap<>();
 
-    /** */
-    void forgetBranchPoints() {
-        branchPointCache.clear();
-    }
-
     /** Point of the trend: one commit of the branch with its measured values. */
     public static final class TrendPoint {
         /** */

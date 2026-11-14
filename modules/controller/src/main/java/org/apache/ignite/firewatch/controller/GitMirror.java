@@ -150,24 +150,6 @@ public final class GitMirror {
     }
 
     /**
-     * Follows another repository or branch; refuses one the remote does not have. The remote may be a path on this
-     * machine: a git repository or a bundle of one ({@code git bundle create x.bundle --all}).
-     *
-     * @param newUrl Remote repository url or path.
-     * @param newBranch Branch to watch.
-     */
-    public synchronized void follow(String newUrl, String newBranch) throws IOException {
-        ensure(); // a new stand chooses its repository before anything was cloned
-        headOf(Proc.run(lsRemote(newUrl, newBranch), null, env(), SHORT), newUrl, newBranch);
-        git(SHORT, "remote", "set-url", "origin", newUrl);
-        git(SHORT, "symbolic-ref", "HEAD", "refs/heads/" + newBranch);
-        url = newUrl;
-        branch = newBranch;
-        ready = false;
-        Log.info("git mirror follows " + newBranch + " of " + newUrl);
-    }
-
-    /**
      * True once the watched branch exists locally (i.e. the first fetch has completed). Not synchronized on
      * purpose: the UI asks this while a fetch holds the lock, and git tolerates a concurrent read-only command.
      *

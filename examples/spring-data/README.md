@@ -23,6 +23,9 @@ Then in `config/ignite-firewatch.properties` (a restart applies it):
 
 ```properties
 plugins = firewatch-spring-data.jar
+# optional: another repository of the extension (a fork, a mirror) or another branch of its master pair
+#plugin.spring-data.repo = https://github.com/apache/ignite-extensions.git
+#plugin.spring-data.branch = master
 ```
 
 The section Plugins appears. On the page of the plugin, Settings, set the release of the extension, for example

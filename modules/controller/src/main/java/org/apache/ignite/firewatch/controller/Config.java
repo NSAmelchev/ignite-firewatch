@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Properties;
 
 /**
@@ -26,6 +27,21 @@ public final class Config {
 
     /** What the properties file says, read once. */
     private static Properties file;
+
+    /** Where a value comes from, see {@link #describe()}. */
+    static final String FILE = "file";
+
+    /** */
+    static final String ENVIRONMENT = "environment";
+
+    /** */
+    static final String PROPERTY = "system property";
+
+    /** */
+    static final String DEFAULT = "default";
+
+    /** The keys {@link #fromEnv()} read: {value, source} by key, in that order. */
+    private final Map<String, String[]> entries = java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<>());
 
     /** SQLite database and run results (valuable). */
     public Path dataDir = Path.of("data");
@@ -127,42 +143,140 @@ public final class Config {
      */
     public static Config fromEnv() {
         Config c = new Config();
-        c.dataDir = Path.of(get("DATA_DIR", c.dataDir.toString()));
-        c.cacheDir = Path.of(get("CACHE_DIR", c.cacheDir.toString()));
-        c.harnessJar = Path.of(get("HARNESS_JAR", c.harnessJar.toString()));
-        c.bindHost = get("BIND_HOST", c.bindHost);
-        c.port = Integer.parseInt(get("PORT", String.valueOf(c.port)));
-        c.repoUrl = get("REPO_URL", c.repoUrl);
-        c.branch = get("BRANCH", c.branch);
-        c.javaExe = get("JAVA", c.javaExe);
-        c.mvnExe = get("MVN", c.mvnExe);
-        c.mavenHeapMb = Integer.parseInt(get("MAVEN_HEAP_MB", String.valueOf(c.mavenHeapMb)));
-        c.mavenSettings = mavenSettings(get("MAVEN_SETTINGS", ""));
-        c.mavenArgs = words(get("MAVEN_ARGS", ""));
-        c.buildTimeoutMin = Integer.parseInt(get("BUILD_TIMEOUT_MIN", String.valueOf(c.buildTimeoutMin)));
-        c.fetchTimeoutMin = Integer.parseInt(get("FETCH_TIMEOUT_MIN", String.valueOf(c.fetchTimeoutMin)));
-        c.harnessHeapMb = Integer.parseInt(get("HARNESS_HEAP_MB", String.valueOf(c.harnessHeapMb)));
-        c.fakeBuild = isTrue(get("FAKE_BUILD", "0"));
-        c.plugins = Arrays.stream(get("PLUGINS", "").split(",")).map(String::trim).filter(x -> !x.isEmpty()).toList();
-        c.pluginsDir = Path.of(get("PLUGINS_DIR", c.pluginsDir.toString()));
-        c.fakeLibsDir = Path.of(get("FAKE_LIBS_DIR", c.fakeLibsDir.toString()));
-        c.phaseGraceSec = Integer.parseInt(get("PHASE_GRACE_SEC", String.valueOf(c.phaseGraceSec)));
-        c.sshKey = get("SSH_KEY", c.sshKey);
-        c.sshKnownHosts = get("SSH_KNOWN_HOSTS", c.sshKnownHosts);
-        c.sshAcceptNewHosts = isTrue(get("SSH_ACCEPT_NEW_HOSTS", "false"));
+        c.dataDir = Path.of(c.read("DATA_DIR", c.dataDir.toString()));
+        c.cacheDir = Path.of(c.read("CACHE_DIR", c.cacheDir.toString()));
+        c.harnessJar = Path.of(c.read("HARNESS_JAR", c.harnessJar.toString()));
+        c.bindHost = c.read("BIND_HOST", c.bindHost);
+        c.port = Integer.parseInt(c.read("PORT", String.valueOf(c.port)));
+        c.repoUrl = c.read("REPO_URL", c.repoUrl);
+        c.branch = c.read("BRANCH", c.branch);
+        c.javaExe = c.read("JAVA", c.javaExe);
+        c.mvnExe = c.read("MVN", c.mvnExe);
+        c.mavenHeapMb = Integer.parseInt(c.read("MAVEN_HEAP_MB", String.valueOf(c.mavenHeapMb)));
+        c.mavenSettings = mavenSettings(c.read("MAVEN_SETTINGS", ""));
+        c.mavenArgs = words(c.read("MAVEN_ARGS", ""));
+        c.buildTimeoutMin = Integer.parseInt(c.read("BUILD_TIMEOUT_MIN", String.valueOf(c.buildTimeoutMin)));
+        c.fetchTimeoutMin = Integer.parseInt(c.read("FETCH_TIMEOUT_MIN", String.valueOf(c.fetchTimeoutMin)));
+        c.harnessHeapMb = Integer.parseInt(c.read("HARNESS_HEAP_MB", String.valueOf(c.harnessHeapMb)));
+        c.fakeBuild = isTrue(c.read("FAKE_BUILD", "0"));
+        c.plugins = Arrays.stream(c.read("PLUGINS", "").split(",")).map(String::trim).filter(x -> !x.isEmpty())
+            .toList();
+        c.pluginsDir = Path.of(c.read("PLUGINS_DIR", c.pluginsDir.toString()));
+        c.fakeLibsDir = Path.of(c.read("FAKE_LIBS_DIR", c.fakeLibsDir.toString()));
+        c.phaseGraceSec = Integer.parseInt(c.read("PHASE_GRACE_SEC", String.valueOf(c.phaseGraceSec)));
+        c.sshKey = c.read("SSH_KEY", c.sshKey);
+        c.sshKnownHosts = c.read("SSH_KNOWN_HOSTS", c.sshKnownHosts);
+        c.sshAcceptNewHosts = isTrue(c.read("SSH_ACCEPT_NEW_HOSTS", "false"));
 
         return c;
     }
 
     /** */
     static String get(String name, String def) {
+        return resolve(name, def)[0];
+    }
+
+    /** The value of a key and where it comes from: a system property, then the environment, then the file. */
+    private static String[] resolve(String name, String def) {
         String key = name.toLowerCase(Locale.ROOT).replace('_', '.');
-        String v = override(name);
+        String prop = System.getProperty("ignite.firewatch." + key);
+        String v = prop != null ? prop : System.getenv("IGNITE_FIREWATCH_" + name);
+        String src = prop != null ? PROPERTY : ENVIRONMENT;
 
-        if (v == null)
+        if (v == null) {
             v = file().getProperty(key);
+            src = FILE;
+        }
 
-        return v == null || v.isBlank() ? def : v.trim();
+        return v == null || v.isBlank() ? new String[] {def, DEFAULT} : new String[] {v.trim(), src};
+    }
+
+    /** Reads a key and keeps what it is and where it came from, for {@link #describe()}. */
+    private String read(String name, String def) {
+        String[] v = resolve(name, def);
+        entries.put(name.toLowerCase(Locale.ROOT).replace('_', '.'), new String[] {v[0] == null ? "" : v[0], v[1]});
+
+        return v[0];
+    }
+
+    /**
+     * The configuration as {@link #fromEnv()} read it: every key with its value and where it comes from, the file
+     * itself first. Read-only for the UI: it is changed in the file, the environment or the system properties, and a
+     * restart applies it.
+     *
+     * @return {key, value, source} of each.
+     */
+    public List<Map<String, String>> describe() {
+        List<Map<String, String>> out = new ArrayList<>();
+        out.add(Map.of("key", "config", "value", configFile().toAbsolutePath().toString(), "source",
+            System.getProperty("ignite.firewatch.config") != null ? PROPERTY
+                : System.getenv("IGNITE_FIREWATCH_CONFIG") != null ? ENVIRONMENT : DEFAULT));
+
+        synchronized (entries) {
+            entries.forEach((k, v) -> out.add(Map.of("key", k, "value", v[0], "source", v[1])));
+        }
+
+        return out;
+    }
+
+    /**
+     * The repository of the extension of a plugin: {@code plugin.<name>.repo} of the configuration, else what its jar
+     * says.
+     *
+     * @param plugin Plugin name.
+     * @param def What the jar says.
+     * @return Repository.
+     */
+    public String pluginRepo(String plugin, String def) {
+        return read("PLUGIN_" + plugin.toUpperCase(Locale.ROOT) + "_REPO", def);
+    }
+
+    /**
+     * The branch of the master pair of a plugin: {@code plugin.<name>.branch} of the configuration, else what its jar
+     * says.
+     *
+     * @param plugin Plugin name.
+     * @param def What the jar says.
+     * @return Branch.
+     */
+    public String pluginBranch(String plugin, String def) {
+        return read("PLUGIN_" + plugin.toUpperCase(Locale.ROOT) + "_BRANCH", def);
+    }
+
+    /**
+     * Whether the value of a configuration key came from anywhere but its default.
+     *
+     * @param key Key, as {@link #describe()} names it.
+     * @return Whether it is set.
+     */
+    boolean isSet(String key) {
+        synchronized (entries) {
+            String[] v = entries.get(key);
+
+            return v != null && !DEFAULT.equals(v[1]);
+        }
+    }
+
+    /**
+     * Checks a repository: a URL or a path of git, nothing git would take for an option or a command.
+     *
+     * @param key Key, for the message.
+     * @param url Repository.
+     */
+    static void checkRepoUrl(String key, String url) {
+        if (url == null || !url.matches("(https?://|ssh://|git@|file:/|/)\\S+"))
+            throw new IllegalArgumentException(key + " must be a git URL");
+    }
+
+    /**
+     * Checks a branch name.
+     *
+     * @param key Key, for the message.
+     * @param branch Branch.
+     */
+    static void checkBranch(String key, String branch) {
+        if (branch == null || !branch.matches("[0-9A-Za-z._/][0-9A-Za-z._/-]{0,99}"))
+            throw new IllegalArgumentException(key + " must be a branch name");
     }
 
     /**
@@ -257,11 +371,18 @@ public final class Config {
         return v != null ? v : System.getenv("IGNITE_FIREWATCH_" + name);
     }
 
+    /** The properties file: {@link #CONFIG_FILE}, or the one {@code IGNITE_FIREWATCH_CONFIG} names. */
+    static Path configFile() {
+        String named = override("CONFIG");
+
+        return Path.of(named == null || named.isBlank() ? CONFIG_FILE : named.trim());
+    }
+
     /** The properties file; the default one may be absent, a file named explicitly has to exist. */
     private static synchronized Properties file() {
         if (file == null) {
             String named = override("CONFIG");
-            Path p = Path.of(named == null || named.isBlank() ? CONFIG_FILE : named.trim());
+            Path p = configFile();
             Properties props = new Properties();
 
             if (Files.isRegularFile(p)) {

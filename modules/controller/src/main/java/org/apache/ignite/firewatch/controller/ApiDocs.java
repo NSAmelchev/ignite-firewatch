@@ -363,10 +363,15 @@ final class ApiDocs {
         list.add(new Op("GET /api/app/check", "getBuildCheck", "Stand", Effect.READ,
             "The last check of what builds the commits").returns(any("the report, or null: items, log, ok, at")));
         list.add(new Op("POST /api/app/check", "checkBuilds", "Stand", Effect.CHANGE,
-            "Checks what builds the commits: the repository, Java, Maven, git, the disk")
-            .body(obj("what to check", f("url", STRING, "repository (default: the one of the stand)"),
-                f("branch", STRING, "branch (default: the one of the stand)")), false)
+            "Checks what builds the commits: the repository of the configuration, Java, Maven, git, the disk")
             .returns(any("the report: items, log, ok, at")));
+        list.add(new Op("GET /api/config", "getConfig", "Stand", Effect.READ,
+            "The configuration of the application, read-only: the repository and its branch, paths, tools, plugins")
+            .desc("Set in config/ignite-firewatch.properties, IGNITE_FIREWATCH_* or -Dignite.firewatch.*; a restart "
+                + "applies it. Each key says where its value comes from.")
+            .returns(new Shape("key, value, source", JSON, s -> Map.of("type", "array", "items", Map.of("type",
+                "object", "properties", Map.of("key", Map.of("type", STRING), "value", Map.of("type", STRING),
+                    "source", Map.of("type", STRING, "description", "file, environment, system property or default")))))));
         list.add(new Op("POST /api/stand/measure", "measureLoad", "Stand", Effect.QUEUE,
             "Measures the load of the stand: the main scenario with more and more threads")
             .returns(of(Job.class, "the queued job")));
@@ -578,7 +583,8 @@ final class ApiDocs {
         list.add(new Op("PUT /api/settings", "saveSettings", "Settings", Effect.CHANGE, "Changes settings")
             .desc("Only the keys given change. Among them: autorun.enabled, autorun.mode, autorun.scenario, "
                 + "autorun.pathFilter, release.tag, calibration.* and master.* (mode, keepDays, scenarios), "
-                + "retention.*, notify.*, plugin.<name>.* (release, ignite, mode, keepDays, repo, branch).")
+                + "retention.*, notify.*, plugin.<name>.* (release, ignite, mode, keepDays). The repositories are not "
+                + "settings: they are those of the configuration, GET /api/config.")
             .body(new Shape("key: value", JSON, s -> Map.of("type", "object", "additionalProperties",
                 Map.of("type", STRING))), true).returns(any("every setting, secrets masked")));
         list.add(new Op("GET /api/scenarios", "listScenarios", "Settings", Effect.READ, "The scenarios of the harness")

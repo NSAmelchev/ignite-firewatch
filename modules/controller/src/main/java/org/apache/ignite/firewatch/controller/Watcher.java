@@ -98,30 +98,6 @@ public final class Watcher implements Runnable {
         thread.interrupt();
     }
 
-    /**
-     * Follows another repository or branch from its head: runs of the old one stay in the database. Refused while jobs
-     * are active, they would lose their commits halfway.
-     *
-     * @param url Repository URL.
-     * @param branch Branch name.
-     */
-    public void follow(String url, String branch) throws IOException {
-        if (url.equals(cfg.repoUrl) && branch.equals(cfg.branch))
-            return;
-
-        if (!db.jobs("active", 1).isEmpty())
-            throw new IllegalArgumentException("the queue is not empty: finish or cancel its jobs before changing the "
-                + "repository");
-
-        mirror.follow(url, branch);
-        cfg.repoUrl = url;
-        cfg.branch = branch;
-        db.setSetting(Settings.WATCH_WATERMARK, "");
-        db.setSetting(Settings.WATCH_SEGMENT_BASE, "");
-        jobs.forgetBranchPoints();
-        pollNow();
-    }
-
     /** */
     public void pollNow() {
         synchronized (lock) {

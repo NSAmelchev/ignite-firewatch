@@ -151,8 +151,8 @@ public final class BuildCheck {
     /** */
     private void repository(String url, String branch) {
         try {
-            Settings.validate(Settings.REPO_URL, url, null);
-            Settings.validate(Settings.REPO_BRANCH, branch, null);
+            Config.checkRepoUrl(Settings.REPO_URL, url);
+            Config.checkBranch("branch", branch);
             String sha = GitMirror.headOf(exec(GitMirror.lsRemote(url, branch), Map.of(), null), url, branch);
             add("repository", OK, branch + " at " + sha.substring(0, Math.min(7, sha.length())), null);
         }
