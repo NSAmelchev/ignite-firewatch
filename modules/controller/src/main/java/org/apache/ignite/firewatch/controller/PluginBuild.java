@@ -13,7 +13,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeSet;
 import java.util.stream.Stream;
 
 import org.w3c.dom.Element;
@@ -68,7 +67,8 @@ final class PluginBuild implements Builder.Extension {
 
             ignitePoms(step);
             List<Path> poms = poms(ext);
-            checkIgniteDeps(ext.resolve(p.module).resolve("pom.xml"), poms, Builder.modulesOf(key), step.group);
+            checkIgniteDeps(ext.resolve(p.module).resolve("pom.xml"), poms, builtModules(step.ignite, key),
+                step.group);
             step.emptyTestJars(ext, reactorOf(ext.resolve(p.module).resolve("pom.xml"), poms));
             // -nsu: the extension may name the snapshot repository of Apache, whose Ignite of another commit must not
             // replace the one of this build
@@ -182,33 +182,58 @@ final class PluginBuild implements Builder.Extension {
      *
      * @param modulePom Pom of the module of the extension.
      * @param poms Every pom of its repository: their artifacts are built with it.
-     * @param modules Modules of Ignite this build has.
+     * @param modules Modules of Ignite this build has, see {@link #builtModules}.
      * @param group Group of the Ignite of this build.
      */
     static void checkIgniteDeps(Path modulePom, List<Path> poms, List<String> modules, String group)
         throws IOException {
-        Set<String> own = new TreeSet<>();
+        Map<String, Element> repo = new HashMap<>();
 
-        for (Path pom : poms)
-            own.add(Builder.childText(Builder.parsePom(pom), "artifactId"));
+        for (Path pom : poms) {
+            Element project = Builder.parsePom(pom);
+            repo.put(Builder.childText(project, "artifactId"), project);
+        }
 
         Element project = Builder.parsePom(modulePom);
+        Map<String, String> props = Builder.properties(project, repo);
 
         for (Element deps : Builder.children(project, "dependencies")) {
             for (Element d : Builder.children(deps, "dependency")) {
                 String grp = Builder.childText(d, "groupId"), a = Builder.childText(d, "artifactId");
 
                 if ("test".equals(Builder.childText(d, "scope")) || a == null || !a.startsWith("ignite-")
-                    || !(group.equals(grp) || "${project.groupId}".equals(grp)))
+                    || !Builder.ownGroup(group, grp, props))
                     continue;
 
-                if (a.equals("ignite-core") || own.contains(a) || modules.contains(a.substring("ignite-".length())))
+                if (a.equals("ignite-core") || repo.containsKey(a) || modules.contains(a.substring("ignite-".length())))
                     continue;
 
                 throw new IOException("the extension needs " + a + ", which this build does not have: add \""
                     + a.substring("ignite-".length()) + "\" to modules of the scenario");
             }
         }
+    }
+
+    /**
+     * The modules of Ignite a build has: those of the scenario, and what the install of core builds with it
+     * ({@code -am}: a module core depends on, as ignite-commons of a shaded core). Not whatever lies in the local
+     * repository: that may be of another commit.
+     *
+     * @param ignite Work tree of Ignite.
+     * @param key Build key.
+     * @return Module names, as {@code @Bench(modules)} spells them.
+     */
+    static List<String> builtModules(Path ignite, String key) throws IOException {
+        List<String> out = new ArrayList<>(Builder.modulesOf(key));
+
+        for (Path pom : reactorOf(ignite.resolve("modules/core/pom.xml"), poms(ignite))) {
+            String a = Builder.childText(Builder.parsePom(pom), "artifactId");
+
+            if (a != null && a.startsWith("ignite-"))
+                out.add(a.substring("ignite-".length()));
+        }
+
+        return out;
     }
 
     /** The jar of the module in its target: not the sources, the tests or the javadoc. */

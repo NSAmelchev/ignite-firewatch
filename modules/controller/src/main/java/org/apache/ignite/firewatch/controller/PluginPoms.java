@@ -28,6 +28,12 @@ final class PluginPoms {
     private static final Pattern PARENT_VERSION =
         Pattern.compile("(<parent>(?:(?!</parent>).)*?<version>)([^<]*)(</version>)", Pattern.DOTALL);
 
+    /**
+     * A CI-friendly version of a whole build, {@code ${revision}}: a repository that versions itself after the Ignite it
+     * extends names {@code ignite-parent} with it, and the two are the same version by definition.
+     */
+    private static final Pattern VERSION_PROPERTY = Pattern.compile("\\$\\{[^}]+}");
+
     /** Reads a file of the repository by its path; null when there is none. */
     interface Repo {
         /**
@@ -80,7 +86,9 @@ final class PluginPoms {
             if (PARENT.equals(Builder.childText(parent, "artifactId"))) {
                 String v = Builder.childText(parent, "version");
 
-                if (v == null || v.isEmpty() || v.contains("${"))
+                // a CI-friendly version goes on as it is: it is the version of the build, and a build of the extension
+                // writes its own over it (see PluginBuild); a release pair has to be told the Ignite it is compared with
+                if (v == null || v.isEmpty() || v.contains("${") && !VERSION_PROPERTY.matcher(v).matches())
                     throw new IOException(path + " names " + PARENT + " without a plain version: " + v);
 
                 return new Found(path, v);

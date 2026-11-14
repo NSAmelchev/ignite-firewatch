@@ -136,6 +136,24 @@ class BuilderTest {
             "org.apache.ignite is another group there");
     }
 
+    /** A fork names the group of its Ignite in its properties, and the poms of its modules follow them. */
+    @Test void theGroupOfTheIgniteOfAForkIsAPropertyOfItsPoms() throws Exception {
+        String dep = "<dependency><groupId>%s</groupId><artifactId>%s</artifactId>%s<scope>%s</scope></dependency>";
+        Files.createDirectories(tmp.resolve("modules/core"));
+        Files.writeString(tmp.resolve("modules/core/pom.xml"),
+            "<project><artifactId>ignite-core</artifactId><properties>"
+            + "<ignite.groupId>org.example.ignite</ignite.groupId></properties><dependencies>"
+            + String.format(dep, "${ignite.groupId}", "ignite-control-utility", "<type>test-jar</type>", "test")
+            + String.format(dep, "${ignite.groupId}", "ignite-indexing", "", "test")
+            + "</dependencies></project>");
+
+        assertEquals(List.of("ignite-control-utility:tests", "ignite-indexing:"),
+            Builder.testOnlyArtifacts(tmp, List.of("core"), "org.example.ignite").stream()
+                .map(a -> a[0] + ":" + a[1]).toList(), "${ignite.groupId} is the group of this build");
+        assertEquals(List.of(), Builder.testOnlyArtifacts(tmp, List.of("core"), "org.apache.ignite"),
+            "and not the one of Apache");
+    }
+
     /** */
     @Test void modulesGetABuildOfTheirOwnThatEvictionKeepsWithTheCommit() throws Exception {
         Config cfg = new Config();

@@ -70,6 +70,36 @@ class PluginBuildTest {
         assertNull(Builder.coordinates(tmp.resolve("x.jar")));
     }
 
+    /** A shaded jar says of every library it carries, and the one its file is named after is the jar itself. */
+    @Test void aShadedJarIsTheOneItsNameSpells() throws IOException {
+        Path f = tmp.resolve("ignite-core-2.20.0.jar");
+
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(f))) {
+            for (String a : List.of("ignite-core", "ignite-commons", "ignite-nio")) {
+                out.putNextEntry(new JarEntry("META-INF/maven/org.example.ignite/" + a + "/pom.properties"));
+                out.write(("groupId=org.example.ignite\nartifactId=" + a + "\nversion=2.20.0\n")
+                    .getBytes(StandardCharsets.UTF_8));
+                out.closeEntry();
+            }
+        }
+
+        assertEquals(List.of("org.example.ignite", "ignite-core", "2.20.0"), List.of(Builder.coordinates(f)),
+            "the one of the three its name spells, not the first of them");
+
+        Path other = tmp.resolve("nothing-like-it-1.0.jar");
+
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(other))) {
+            for (String a : List.of("ignite-core", "ignite-commons")) {
+                out.putNextEntry(new JarEntry("META-INF/maven/org.example.ignite/" + a + "/pom.properties"));
+                out.write(("groupId=org.example.ignite\nartifactId=" + a + "\nversion=2.20.0\n")
+                    .getBytes(StandardCharsets.UTF_8));
+                out.closeEntry();
+            }
+        }
+
+        assertNull(Builder.coordinates(other), "a name that matches none of them says nothing");
+    }
+
     /** Maven builds the module with what it needs of its repository, and their parents: their test scope counts. */
     @Test void theBuildOfTheModuleIsItsReactorNotTheWholeRepository() throws IOException {
         String p = "<project><parent><artifactId>%s</artifactId></parent><artifactId>%s</artifactId><dependencies>%s"
@@ -116,5 +146,43 @@ class PluginBuildTest {
         assertFalse(e.getMessage().contains("spring"), "test scope and the own modules of the extension are fine");
         assertDoesNotThrow(() -> PluginBuild.checkIgniteDeps(module, poms, List.of(), "org.example.ignite"),
             "a build of another group: Ignite artifacts of Apache are not its own");
+    }
+
+    /** What the install of core builds with it ({@code -am}) is of the build too; the rest of the repository is not. */
+    @Test void theModulesOfABuildAreThoseOfTheScenarioAndWhatCoreNeeds() throws IOException {
+        String p = "<project><parent><artifactId>ignite-parent</artifactId></parent><artifactId>%s</artifactId>"
+            + "<dependencies>%s</dependencies></project>";
+        pom("ignite/parent", "<project><artifactId>ignite-parent</artifactId></project>");
+        pom("ignite/modules/core", String.format(p, "ignite-core",
+            "<dependency><artifactId>ignite-commons</artifactId></dependency>"));
+        pom("ignite/modules/commons", String.format(p, "ignite-commons", ""));
+        pom("ignite/modules/indexing", String.format(p, "ignite-indexing", ""));
+
+        assertEquals(List.of("calcite", "core", "parent", "commons"),
+            PluginBuild.builtModules(tmp.resolve("ignite"), "abc123+calcite"), "not indexing: core does not need it");
+    }
+
+    /** The group of the Ignite of a fork is a property of the poms of its extension, not of the dependency alone. */
+    @Test void theExtensionThatNamesTheGroupOfIgniteByAPropertyIsCheckedAllTheSame() throws IOException {
+        String dep = "<dependency><groupId>%s</groupId><artifactId>%s</artifactId><scope>%s</scope></dependency>";
+        Path module = pom("security_plugin/modules/core",
+            "<project><parent><artifactId>ignite-security-plugin</artifactId></parent>"
+            + "<artifactId>security-core</artifactId><dependencies>"
+            + String.format(dep, "${ignite.groupId}", "ignite-rest-http", "provided")
+            + String.format(dep, "${ignite.groupId}", "ignite-spring", "compile")
+            + String.format(dep, "${ignite.groupId}", "ignite-indexing", "test")
+            + "</dependencies></project>");
+        Path parent = pom("security_plugin",
+            "<project><artifactId>ignite-security-plugin</artifactId><properties>"
+            + "<ignite.groupId>org.example.ignite</ignite.groupId></properties></project>");
+        List<Path> poms = List.of(module, parent);
+
+        IOException e = assertThrows(IOException.class, () -> PluginBuild.checkIgniteDeps(module, poms,
+            List.of("spring"), "org.example.ignite"));
+        assertTrue(e.getMessage().contains("add \"rest-http\" to modules of the scenario"), e.getMessage());
+        assertDoesNotThrow(() -> PluginBuild.checkIgniteDeps(module, poms, List.of("spring", "rest-http"),
+            "org.example.ignite"));
+        assertDoesNotThrow(() -> PluginBuild.checkIgniteDeps(module, poms, List.of("spring"), Builder.GROUP),
+            "org.example.ignite is not the group of Apache, whose build owes the extension nothing of it");
     }
 }

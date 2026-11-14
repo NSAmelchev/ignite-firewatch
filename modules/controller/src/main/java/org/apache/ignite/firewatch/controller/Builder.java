@@ -8,6 +8,8 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -35,6 +37,9 @@ public final class Builder {
 
     /** */
     private static final Pattern MODULE = Pattern.compile("[a-z][a-z0-9-]*");
+
+    /** {@code ${name}} of a pom: the group of the Ignite of a fork is often named so. */
+    private static final Pattern PROPERTY = Pattern.compile("\\$\\{([^}]+)}");
 
     /**
      * The group of Apache Ignite. A build of another group (a fork, a distribution) is built all the same: the group of
@@ -567,33 +572,47 @@ public final class Builder {
     }
 
     /**
-     * What Maven put into a jar about itself: {groupId, artifactId, version}; null when the jar does not say, or says it
-     * of several (a shaded jar).
+     * What Maven put into a jar about itself: {groupId, artifactId, version}; null when the jar does not say. A shaded
+     * jar says of every library it carries: the one the name of the file spells is the jar itself
+     * ({@code ignite-core.jar} among the {@code pom.properties} of ignite-core, ignite-commons, ...).
      *
      * @param jar Jar.
      * @return Coordinates, or {@code null}.
      */
     static String[] coordinates(Path jar) {
+        String name = jar.getFileName().toString();
+        List<String[]> said = new ArrayList<>();
+
         try (java.util.jar.JarFile f = new java.util.jar.JarFile(jar.toFile())) {
             List<java.util.jar.JarEntry> props = f.stream().filter(e -> e.getName().startsWith("META-INF/maven/")
                 && e.getName().endsWith("/pom.properties")).toList();
 
-            if (props.size() != 1)
-                return null;
+            for (java.util.jar.JarEntry e : props) {
+                java.util.Properties p = new java.util.Properties();
 
-            java.util.Properties p = new java.util.Properties();
+                try (java.io.InputStream in = f.getInputStream(e)) {
+                    p.load(in);
+                }
 
-            try (java.io.InputStream in = f.getInputStream(props.get(0))) {
-                p.load(in);
+                String g = p.getProperty("groupId"), a = p.getProperty("artifactId"), v = p.getProperty("version");
+
+                if (g != null && a != null && v != null)
+                    said.add(new String[] {g, a, v});
             }
-
-            String g = p.getProperty("groupId"), a = p.getProperty("artifactId"), v = p.getProperty("version");
-
-            return g == null || a == null || v == null ? null : new String[] {g, a, v};
         }
         catch (IOException e) {
             return null;
         }
+
+        if (said.size() == 1)
+            return said.get(0);
+
+        for (String[] c : said) {
+            if (name.equals(c[1] + "-" + c[2] + ".jar") || name.startsWith(c[1] + "-" + c[2] + "-"))
+                return c;
+        }
+
+        return null;
     }
 
     /**
@@ -696,24 +715,26 @@ public final class Builder {
      */
     static List<String[]> testOnlyArtifacts(List<Path> pomFiles, String group) throws IOException {
         List<org.w3c.dom.Element> poms = new ArrayList<>();
-        Set<String> reactor = new TreeSet<>();
+        Map<String, org.w3c.dom.Element> repo = new HashMap<>();
 
         for (Path pom : pomFiles) {
             org.w3c.dom.Element project = parsePom(pom);
             poms.add(project);
-            reactor.add(childText(project, "artifactId"));
+            repo.put(childText(project, "artifactId"), project);
         }
 
         List<String[]> out = new ArrayList<>();
         Set<String> seen = new TreeSet<>();
 
         for (org.w3c.dom.Element project : poms) {
+            Map<String, String> props = properties(project, repo);
+
             for (org.w3c.dom.Element deps : children(project, "dependencies")) {
                 for (org.w3c.dom.Element d : children(deps, "dependency")) {
                     String grp = childText(d, "groupId"), artifact = childText(d, "artifactId");
 
                     if (!"test".equals(childText(d, "scope")) || artifact == null || !artifact.startsWith("ignite-")
-                        || !(group.equals(grp) || "${project.groupId}".equals(grp)))
+                        || !ownGroup(group, grp, props))
                         continue;
 
                     String classifier = childText(d, "classifier");
@@ -721,13 +742,83 @@ public final class Builder {
                     if (classifier == null)
                         classifier = "test-jar".equals(childText(d, "type")) ? "tests" : "";
 
-                    if (classifier.isEmpty() && reactor.contains(artifact))
+                    if (classifier.isEmpty() && repo.containsKey(artifact))
                         continue;
 
                     if (seen.add(artifact + ":" + classifier))
                         out.add(new String[] {artifact, classifier});
                 }
             }
+        }
+
+        return out;
+    }
+
+    /**
+     * Whether a dependency of {@code dependencyGroup} is of the Ignite of this build: the group spelled out, or named by
+     * a property of the poms, as the repository of an extension names it ({@code ${ignite.groupId}}).
+     *
+     * @param group Group of the Ignite of the build.
+     * @param dependencyGroup Group of a dependency, as its pom spells it.
+     * @param properties Properties of that pom, see {@link #properties(org.w3c.dom.Element, Map)}.
+     * @return True if the dependency is of this build.
+     */
+    static boolean ownGroup(String group, String dependencyGroup, Map<String, String> properties) {
+        return dependencyGroup != null
+            && ("${project.groupId}".equals(dependencyGroup) || group.equals(resolve(dependencyGroup, properties)));
+    }
+
+    /**
+     * The properties a pom can name: those of its parents in {@code repo} first, then its own, which override them.
+     *
+     * @param project Pom.
+     * @param repo Every pom of its repository, by artifactId.
+     * @return Properties by name.
+     */
+    static Map<String, String> properties(org.w3c.dom.Element project, Map<String, org.w3c.dom.Element> repo) {
+        Map<String, String> out = new HashMap<>();
+
+        properties(project, repo, out, new HashSet<>());
+
+        return out;
+    }
+
+    /** */
+    private static void properties(org.w3c.dom.Element project, Map<String, org.w3c.dom.Element> repo,
+        Map<String, String> out, Set<org.w3c.dom.Element> seen) {
+        if (project == null || !seen.add(project))
+            return;
+
+        for (org.w3c.dom.Element parent : children(project, "parent"))
+            properties(repo.get(childText(parent, "artifactId")), repo, out, seen);
+
+        for (org.w3c.dom.Element props : children(project, "properties")) {
+            for (org.w3c.dom.Node n = props.getFirstChild(); n != null; n = n.getNextSibling()) {
+                if (n instanceof org.w3c.dom.Element p)
+                    out.put(p.getTagName(), p.getTextContent().trim());
+            }
+        }
+    }
+
+    /**
+     * {@code text} with every {@code ${name}} replaced by the property, as far as the properties reach it: what they say
+     * nothing of is left as it is, and so is {@code ${project.groupId}} and the like.
+     *
+     * @param text Text of a pom.
+     * @param properties Properties, see {@link #properties(org.w3c.dom.Element, Map)}.
+     * @return The text.
+     */
+    static String resolve(String text, Map<String, String> properties) {
+        String out = text;
+
+        for (int i = 0; i < 10; i++) { // a property may name another; a loop of them stops here
+            String next = PROPERTY.matcher(out)
+                .replaceAll(m -> Matcher.quoteReplacement(properties.getOrDefault(m.group(1), m.group())));
+
+            if (next.equals(out))
+                break;
+
+            out = next;
         }
 
         return out;

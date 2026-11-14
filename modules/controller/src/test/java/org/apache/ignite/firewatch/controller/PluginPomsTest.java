@@ -61,6 +61,25 @@ class PluginPomsTest {
         assertTrue(assertThrows(IOException.class, () -> PluginPoms.igniteParent(other::get, "m")).getMessage()
             .contains("never name"));
         assertThrows(IOException.class, () -> PluginPoms.igniteParent(repo::get, "no/such"));
+
+        Map<String, String> mixed = springData("2.20.0-${suffix}");
+        assertThrows(IOException.class,
+            () -> PluginPoms.igniteParent(mixed::get, "modules/spring-data-ext/spring-data"));
+    }
+
+    /**
+     * A repository that versions itself after the Ignite it extends names the parent with {@code ${revision}}: the
+     * version of the build, which a build writes over it.
+     */
+    @Test void aCiFriendlyVersionIsTheVersionOfTheBuild() throws IOException {
+        Map<String, String> repo = springData("${revision}");
+        PluginPoms.Found f = PluginPoms.igniteParent(repo::get, "modules/spring-data-ext/spring-data");
+        assertEquals("parent-internal/pom.xml", f.pom());
+        assertEquals("${revision}", f.version());
+
+        String pom = repo.get(f.pom());
+        String got = PluginPoms.withParentVersion(pom, "2.20.0-SNAPSHOT");
+        assertTrue(got.contains("<version>2.20.0-SNAPSHOT</version>"), got);
     }
 
     /** */

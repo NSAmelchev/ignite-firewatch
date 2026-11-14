@@ -61,7 +61,7 @@ final class PluginSchedule {
         if (igniteRef.isEmpty()) {
             igniteRef = PluginPoms.igniteParent(path -> p.mirror.show(extRel, path), p.module).version();
 
-            if (igniteRef.contains("SNAPSHOT"))
+            if (igniteRef.contains("SNAPSHOT") || igniteRef.contains("${"))
                 throw new IllegalStateException(rel + " of " + p.name + " builds against Ignite " + igniteRef
                     + ", which is no release: set the Ignite of the release on the page of the plugin");
         }
