@@ -508,6 +508,21 @@ public final class GitMirror {
     }
 
     /**
+     * The tags of the mirror, the newest first.
+     *
+     * @param n How many at most.
+     * @return Tags.
+     */
+    public synchronized List<String> recentTags(int n) throws IOException {
+        Proc.Result r = run(SHORT, "tag", "-l", "--sort=-creatordate");
+
+        if (!r.ok())
+            throw new IOException("git tag -l failed: " + r.tail(3).trim());
+
+        return Arrays.stream(r.out.split("\n")).map(String::trim).filter(t -> !t.isEmpty()).limit(n).toList();
+    }
+
+    /**
      * Highest release tag X.Y.Z of the mirror (release candidates and other tags are ignored), or null.
      *
      * @return Release tag, or {@code null} if there is none.

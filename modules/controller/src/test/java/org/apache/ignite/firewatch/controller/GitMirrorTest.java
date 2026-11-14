@@ -56,6 +56,15 @@ class GitMirrorTest {
         assertTrue(GitMirror.progressOf("From /x\n * [new branch]      master     -> master\n").isEmpty(), "said nothing of its progress");
     }
 
+    /** The tags the release of a plugin is chosen from: all of them, as many as asked. */
+    @Test void recentTagsAreTheTagsOfTheMirror() throws Exception {
+        origin.tag("ext-2.0");
+        mirror.fetch();
+
+        assertEquals(java.util.Set.of("v1", "ext-2.0"), java.util.Set.copyOf(mirror.recentTags(10)));
+        assertEquals(1, mirror.recentTags(1).size());
+    }
+
     /** The repository is the configuration's: a mirror made for another one follows it after a restart. */
     @Test void aMirrorFollowsTheRepositoryItIsMadeWith() throws Exception {
         new GitMirror(tmp.resolve("fresh"), "https://example.invalid/other.git", "main", Duration.ofMinutes(2)).ensure();

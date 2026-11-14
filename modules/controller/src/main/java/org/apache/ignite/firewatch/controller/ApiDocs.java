@@ -538,7 +538,8 @@ final class ApiDocs {
         list.add(new Op("GET /api/plugins/{name}", "getPlugin", "Plugins", Effect.READ,
             "A plugin: per scenario its last result against the release and its history")
             .returns(any("what GET /api/plugins says of it, and rows: scenario, active, last, failed, history (job, "
-                + "igniteMoved, extMoved); compares")));
+                + "igniteMoved, extMoved); comparisons: the jobs of Compare by request (a, b, createdAt, status, jobs, "
+                + "scenarios: per scenario the job of each step, ignite and ext); tags: recent tags of the extension")));
         list.add(new Op("GET /api/plugins/{name}/scenarios/{scenario}", "describePluginScenario", "Plugins",
             Effect.READ, "A scenario of a plugin as the harness lists it").returns(any("the scenario with its sources")));
         list.add(new Op("POST /api/plugins/{name}/run", "runPlugin", "Plugins", Effect.QUEUE,
@@ -547,11 +548,12 @@ final class ApiDocs {
                 f("priority", INTEGER, "default 1")), false).returns(listOf(Job.class, "the queued jobs")));
         list.add(new Op("POST /api/plugins/{name}/compare", "comparePluginPairs", "Plugins", Effect.QUEUE,
             "Compares two pairs of Ignite and the extension")
-            .desc("With split the change goes one side at a time: Ignite first (the extension of A on both sides), "
-                + "then the extension (the Ignite of B on both sides).")
+            .desc("The change goes one side at a time, so the result says which side moved: Ignite first (the "
+                + "extension of A on both sides), then the extension (the Ignite of B on both sides); a step that "
+                + "changes nothing is left out.")
             .body(obj("the pairs", f("a", pair, "A"), f("b", pair, "B"),
-                f("split", BOOLEAN, "one side at a time"), f("scenarios", "string[]", "ids (default: all)"),
-                f("priority", INTEGER, "default 1")), true).returns(listOf(Job.class, "the queued jobs")));
+                f("scenarios", "string[]", "ids (default: all)"), f("priority", INTEGER, "default 1")), true)
+            .returns(listOf(Job.class, "the queued jobs")));
 
         // ---- files
         list.add(new Op("GET /api/jobs/{id}/downloads", "getJobDownloads", "Files", Effect.READ,

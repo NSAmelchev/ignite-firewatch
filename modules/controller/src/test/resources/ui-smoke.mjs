@@ -26,8 +26,8 @@ const comparisons = await get('/api/comparisons');
 const pages = [['dashboard'], ['timeline'], ['commits'], ['bisects'], ['queue'], ['noise'], ['compare'], ['scenarios'], ['settings'], ['setup'],
   ['job', { id: done && done.id }], ['job', { id: active && active.id }], ['commit', { id: done && done.shaB }],
   ['bisect', { id: bisect && bisect.id }], ...comparisons.map((c) => ['comparison', { id: c.id }]), ['plugins'],
-  ...(await get('/api/plugins')).plugins.flatMap((p) => ['history', 'compare', 'scenarios', 'settings']
-    .map((tab) => ['plugin', { hash: `#/plugin?name=${encodeURIComponent(p.name)}&tab=${tab}` }]))];
+  ...(await get('/api/plugins')).plugins.flatMap((p) => ['', '&tab=settings', `&job=${done && done.id}`]
+    .map((extra) => ['plugin', { hash: `#/plugin?name=${encodeURIComponent(p.name)}${extra}` }]))];
 let failed = 0;
 for (const [name, params = {}] of pages) {
   if (Object.values(params).some((v) => v == null)) { console.log(`FAIL ${name}: no data to render it with`); failed++; continue; }

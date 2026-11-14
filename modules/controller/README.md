@@ -301,8 +301,10 @@ with `plugin`) are those of the extension next to them, and `runs.ext_sha` says 
   `plugin.<name>.branch` (the jar's by default). The watcher fetches the repositories of the plugins with its poll and
   queues a pair by `Freshness` (`plugin.<name>.mode` `keep` | `off`, `keepDays` 1): nothing while one waits, nothing when
   neither master moved since the last run or since a failure of the same pairs.
-- **Compare** (source `plugin-compare`): two pairs given as refs of both repositories; `split` goes one side at a time,
-  Ignite first (the extension of A on both sides), then the extension (the Ignite of B on both sides).
+- **Compare** (source `plugin-compare`): two pairs given as refs of both repositories, one side at a time so the result
+  says which side moved: Ignite first (the extension of A on both sides), then the extension (the Ignite of B on both
+  sides); a step that changes nothing is left out. The page groups the jobs by the request that queued them (the same
+  ends, queued within a minute).
 - Both sides of a pair move, so a result says how the two masters do together, not which commit moved them. A job of a
   plugin is never bisected, never notified, has no segment, and stays out of every view of the branch: the queries of the
   trend, Commits, a commit, the matrix, Noise and Release are of jobs without a plugin. The queue is shared. The threshold
@@ -498,17 +500,23 @@ strength of the signal, commits.
   the metrics that decide the verdict have one. A broken phase is marked. Overlaid per-second series: three charts, the
   others on a button, one legend for all with the values of the chart under the cursor. Files (logs, JFR). On a remote
   stand there is also a Layout block: which JVM is on which host, what that machine is, the CPU, GC and heap of each.
-- **Plugins** (`#/plugins`, only when a plugin is on; its code is `plugins.js`, loaded only then): a card per plugin
-  with its two pairs (or why there are none), and a row per scenario: master against the release now, when, the history of
-  Δ ops/s run by run, links to its history and to Compare; a pair that does not build is incompatible. The page of a
-  plugin (`#/plugin?name=…`) has History (every run with the commits each side moved since the run before, linked to the
-  diff), Compare (two pairs, split one side at a time), Scenarios (as the page Scenarios shows them) and Settings (the
-  release, the Ignite of the release, Keep fresh; the repository read-only, from the configuration or the jar). A job of a
-  plugin carries its name in Queue and its
-  pairs on its page.
+- **Plugins** (`#/plugins`, only when a plugin is on; its code is `plugins.js`, loaded only then; with one plugin the
+  section is its page, with several a card per plugin). The page of a plugin (`#/plugin?name=…`) is a dashboard and
+  Compare under it, as the page Compare is:
+  - its two pairs (or why there are none), Run now and Settings;
+  - a row per scenario: master against the release now, when, the history of Δ ops/s run by run; a pair that does not
+    build is incompatible. A click unfolds the row: every run with the commits each side moved since the run before
+    (linked to the diff), and the scenario as the page Scenarios shows it;
+  - Compare: two pairs and the scenarios on the left, the requests on the right with the Δ of each side per scenario.
+    compare on a row (its release pair against its master pair) and on a run of the history (the run before against it)
+    fill the form in;
+  - Settings, a dialog: the release (recent tags of the extension offered), the Ignite of the release, Keep fresh; the
+    repository read-only, from the configuration or the jar.
+
+  A job of a plugin carries its name in Queue and its pairs on its page.
 - **Scenarios**: the scenarios of the harness (Java classes): servers, client and threads, warmup/measurement, version and
   the sources of the class and its base classes from `harness.jar` (`harness.jar list`, read at the start of the
-  controller).
+  controller). Below them the scenarios of each plugin that is on, from its jar.
 
 Everything that queues jobs (Run again, Retry, split, Measure the commit, A/A, Compare, master vs release, Bisect and
 deep search) shows a dialog first: what is queued, how long it takes, when it ends, and Priority: "as usual" (the default:

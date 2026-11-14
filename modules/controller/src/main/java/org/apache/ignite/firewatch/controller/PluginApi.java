@@ -1,6 +1,8 @@
 package org.apache.ignite.firewatch.controller;
 
 import java.io.IOException;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -15,6 +17,21 @@ import com.fasterxml.jackson.databind.JsonNode;
 final class PluginApi {
     /** Runs a plugin page shows in its history. */
     private static final int HISTORY = 30;
+
+    /** Tags of the extension a page offers for its release. */
+    private static final int TAGS = 15;
+
+    /** A step of Compare that moves Ignite: the extension of A on both sides. */
+    static final String IGNITE = "ignite";
+
+    /** A step of Compare that moves the extension: the Ignite of B on both sides. */
+    static final String EXT = "ext";
+
+    /** A compare that moves both sides at once, as an older stand queued it. */
+    static final String BOTH = "both";
+
+    /** How far apart the jobs of one request of Compare are queued at most. */
+    private static final Duration ONE_REQUEST = Duration.ofMinutes(1);
 
     /** */
     private final Config cfg;
@@ -160,9 +177,166 @@ final class PluginApi {
         }
 
         m.put("rows", rows);
-        m.put("compares", db.pluginJobs(p.name, null, JobService.SRC_PLUGIN_COMPARE, false, HISTORY));
+        m.put("comparisons", comparisons(db.pluginJobs(p.name, null, JobService.SRC_PLUGIN_COMPARE, false,
+            4 * HISTORY)));
+        m.put("tags", tags(p));
 
         return m;
+    }
+
+    /** Recent tags of the extension for the release to choose: those of its module when the names tell. */
+    private static List<String> tags(Plugins.Plugin p) {
+        if (!p.mirror.ready())
+            return List.of();
+
+        try {
+            List<String> all = p.mirror.recentTags(500);
+            // modules/spring-data-ext/spring-data: the tags of ignite-extensions are ignite-spring-data-ext-X.Y.Z
+            String dir = p.module.replaceFirst("^modules/", "").replaceFirst("/.*", "");
+            List<String> own = all.stream().filter(t -> t.contains(dir)).toList();
+
+            return (own.isEmpty() ? all : own).stream().limit(TAGS).toList();
+        }
+        catch (IOException | RuntimeException e) {
+            return List.of();
+        }
+    }
+
+    /**
+     * The jobs of Compare grouped by the request that queued them, the newest first: its two pairs and, per scenario,
+     * the job of each step. A step moves one side: {@link #IGNITE} (the extension the same on both sides) or
+     * {@link #EXT} (the Ignite the same); a compare of an older stand moves {@link #BOTH} in one job.
+     *
+     * @param jobs Jobs of Compare.
+     * @return {a, b, createdAt, status, jobs, scenarios: [{scenario, ignite, ext, both}]} of each request.
+     */
+    static List<Map<String, Object>> comparisons(List<Job> jobs) {
+        List<Request> out = new ArrayList<>();
+
+        for (Job j : jobs.stream().sorted(java.util.Comparator.comparingLong((Job x) -> x.id)).toList()) {
+            String side = !j.shaA.equals(j.shaB) && j.extShaA.equals(j.extShaB) ? IGNITE
+                : j.shaA.equals(j.shaB) ? EXT : BOTH;
+            Request r = null;
+
+            for (int i = out.size() - 1; i >= 0 && r == null; i--)
+                r = out.get(i).fits(j, side) ? out.get(i) : null;
+
+            if (r == null)
+                out.add(r = new Request(j));
+
+            r.add(j, side);
+        }
+
+        List<Map<String, Object>> res = new ArrayList<>();
+
+        for (int i = out.size() - 1; i >= 0; i--)
+            res.add(out.get(i).view());
+
+        return res;
+    }
+
+    /** One request of Compare: what is known of its pairs so far, and its jobs. */
+    private static final class Request {
+        /** The Ignite of A, as far as the steps tell. */
+        private String aIgnite;
+
+        /** The extension of A. */
+        private String aExt;
+
+        /** The Ignite of B. */
+        private String bIgnite;
+
+        /** The extension of B. */
+        private String bExt;
+
+        /** When its first job was queued. */
+        private final Instant first;
+
+        /** Jobs by scenario and side. */
+        private final Map<String, Map<String, Job>> steps = new LinkedHashMap<>();
+
+        /** */
+        private final List<Job> jobs = new ArrayList<>();
+
+        /** */
+        Request(Job j) {
+            first = Instant.parse(j.createdAt);
+        }
+
+        /** Whether the job is a step of this request: queued with it, a scenario and side not yet taken, its pairs. */
+        boolean fits(Job j, String side) {
+            if (Duration.between(first, Instant.parse(j.createdAt)).compareTo(ONE_REQUEST) > 0
+                || steps.getOrDefault(j.scenario, Map.of()).containsKey(side))
+                return false;
+
+            return switch (side) {
+                case IGNITE -> same(aIgnite, j.shaA) && same(aExt, j.extShaA) && same(bIgnite, j.shaB);
+                case EXT -> same(bIgnite, j.shaA) && same(aExt, j.extShaA) && same(bExt, j.extShaB);
+                default -> same(aIgnite, j.shaA) && same(aExt, j.extShaA) && same(bIgnite, j.shaB)
+                    && same(bExt, j.extShaB);
+            };
+        }
+
+        /** */
+        void add(Job j, String side) {
+            if (!EXT.equals(side))
+                aIgnite = j.shaA;
+
+            if (!IGNITE.equals(side))
+                bExt = j.extShaB;
+
+            aExt = j.extShaA;
+            bIgnite = j.shaB;
+            steps.computeIfAbsent(j.scenario, k -> new LinkedHashMap<>()).put(side, j);
+            jobs.add(j);
+        }
+
+        /** */
+        Map<String, Object> view() {
+            Job firstStep = null, lastStep = null;
+            List<Map<String, Object>> rows = new ArrayList<>();
+
+            for (Map.Entry<String, Map<String, Job>> e : steps.entrySet()) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("scenario", e.getKey());
+
+                for (String side : List.of(IGNITE, EXT, BOTH))
+                    row.put(side, e.getValue().get(side));
+
+                rows.add(row);
+                Map<String, Job> s = e.getValue();
+                firstStep = firstStep != null ? firstStep : s.getOrDefault(IGNITE, s.getOrDefault(BOTH, s.get(EXT)));
+                lastStep = lastStep != null ? lastStep : s.getOrDefault(EXT, s.getOrDefault(BOTH, s.get(IGNITE)));
+            }
+
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("a", sides(firstStep)[1]); // a step that changes nothing is not queued: A of the first, B of the last
+            m.put("b", sides(lastStep)[0]);
+            m.put("createdAt", jobs.get(0).createdAt);
+            m.put("status", jobs.stream().anyMatch(j -> Job.RUNNING.equals(j.status)) ? Job.RUNNING
+                : jobs.stream().anyMatch(Job::active) ? Job.QUEUED
+                : jobs.stream().anyMatch(j -> Job.FAILED.equals(j.status)) ? Job.FAILED : Job.DONE);
+            m.put("jobs", jobs.stream().map(j -> j.id).toList());
+            m.put("scenarios", rows);
+
+            return m;
+        }
+    }
+
+    /** {B, A} of the label of a job of a plugin, "name: B vs A" (see PluginSchedule#queue). */
+    private static String[] sides(Job j) {
+        String l = j.label == null ? "" : j.label;
+        int vs = l.indexOf(" vs "), colon = l.indexOf(": ");
+
+        if (vs < 0)
+            return new String[] {Job.shortSha(j.shaB), Job.shortSha(j.shaA)};
+
+        return new String[] {l.substring(colon < 0 || colon > vs ? 0 : colon + 2, vs), l.substring(vs + 4)};
+    }
+
+    /** {@code null} is not known yet: anything fits it. */
+    private static boolean same(String known, String sha) {
+        return known == null || known.equals(sha);
     }
 
     /** Commits of the branch from one run to the next; null when the mirror cannot tell. */
@@ -182,27 +356,22 @@ final class PluginApi {
     }
 
     /**
-     * Two pairs from the Compare of the page: {@code a} and {@code b} as {@code {ignite, ext}} refs. With {@code split}
-     * the change goes in two steps, one side at a time: Ignite first (the extension of A on both sides), then the
-     * extension (the Ignite of B on both sides); a step that changes nothing is left out.
+     * Two pairs from the Compare of the page: {@code a} and {@code b} as {@code {ignite, ext}} refs. The change goes
+     * one side at a time, so the result says which side moved: Ignite first (the extension of A on both sides), then
+     * the extension (the Ignite of B on both sides); a step that changes nothing is left out.
      */
     private List<Job> compare(Plugins.Plugin p, JsonNode b) throws IOException {
         PluginSchedule.Pair a = pair(p, b.path("a")), bb = pair(p, b.path("b"));
         List<String> names = names(b);
         int priority = Router.Req.integer(b, "priority", 1);
         List<PluginSchedule.Pair[]> steps = new ArrayList<>();
+        PluginSchedule.Pair mid = new PluginSchedule.Pair(bb.igniteRef(), bb.igniteSha(), a.extRef(), a.extSha());
 
-        if (b.path("split").asBoolean(false)) {
-            PluginSchedule.Pair mid = new PluginSchedule.Pair(bb.igniteRef(), bb.igniteSha(), a.extRef(), a.extSha());
+        if (!mid.igniteSha().equals(a.igniteSha()))
+            steps.add(new PluginSchedule.Pair[] {a, mid});
 
-            if (!mid.igniteSha().equals(a.igniteSha()))
-                steps.add(new PluginSchedule.Pair[] {a, mid});
-
-            if (!mid.extSha().equals(bb.extSha()))
-                steps.add(new PluginSchedule.Pair[] {mid, bb});
-        }
-        else
-            steps.add(new PluginSchedule.Pair[] {a, bb});
+        if (!mid.extSha().equals(bb.extSha()))
+            steps.add(new PluginSchedule.Pair[] {mid, bb});
 
         if (steps.isEmpty())
             throw new IllegalArgumentException("the two pairs are the same");

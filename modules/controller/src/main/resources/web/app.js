@@ -2087,18 +2087,24 @@ export function scenarioDetail(d) {
 }
 views.scenarios = {
   async render() {
-    const scenarios = await api.get('/api/scenarios');
-    const described = await Promise.all(scenarios.map((sc) => api.get(`/api/scenarios/${encodeURIComponent(sc.name)}/describe`).catch((e) => ({ name: sc.name, error: e.message }))));
+    const [scenarios, plugins] = await Promise.all([api.get('/api/scenarios'), api.get('/api/plugins').catch(() => ({ plugins: [] }))]);
+    const describe = (url, name) => api.get(url).catch((e) => ({ name, error: e.message }));
+    const described = await Promise.all(scenarios.map((sc) => describe(`/api/scenarios/${encodeURIComponent(sc.name)}/describe`, sc.name)));
+    // the scenarios of the plugins come below, each with its plugin: they run Ignite together with an extension
+    const pluginDescribed = await Promise.all(plugins.plugins.map((p) => Promise.all(p.scenarios.map((sc) =>
+      describe(`/api/plugins/${encodeURIComponent(p.name)}/scenarios/${encodeURIComponent(sc.name)}`, sc.name)))));
     if (!this.open) this.open = new Set(); // all folded at first; opened rows stay open across re-renders
-    const detail = scenarioDetail;
-    const row = (s) => {
-      const d = described.find((x) => x.name === s.name), open = this.open.has(s.name);
+    const row = (d, key = d.name) => {
+      const open = this.open.has(key);
       if (d.error) return `<tr><td colspan="2" class="error">${esc(d.name)}: ${esc(d.error)}</td></tr>`;
-      return `<tr class="click-row" data-scenario="${esc(d.name)}"><td class="sc-name"><span class="chev">${open ? '▾' : '▸'}</span> <b>${esc(d.title || d.name)}</b></td><td class="muted">${esc(d.description || '')}</td></tr>
-        <tr class="row-detail" ${open ? '' : 'hidden'}><td colspan="2">${detail(d)}</td></tr>`;
+      return `<tr class="click-row" data-scenario="${esc(key)}"><td class="sc-name"><span class="chev">${open ? '▾' : '▸'}</span> <b>${esc(d.title || d.name)}</b></td><td class="muted">${esc(d.description || '')}</td></tr>
+        <tr class="row-detail" ${open ? '' : 'hidden'}><td colspan="2">${scenarioDetail(d)}</td></tr>`;
     };
+    const own = (s) => row(described.find((x) => x.name === s.name));
     return `<h1>Scenarios <span class="muted">Java classes in the harness: add a file to add a scenario, delete it to remove one</span></h1>
-      ${scenarioGroups(scenarios).families.map((g) => `<h2>${esc(g.name)}</h2><table class="scenario-list"><tbody>${g.scenarios.map(row).join('')}</tbody></table>`).join('')}`;
+      ${scenarioGroups(scenarios).families.map((g) => `<h2>${esc(g.name)}</h2><table class="scenario-list"><tbody>${g.scenarios.map(own).join('')}</tbody></table>`).join('')}
+      ${plugins.plugins.map((p, i) => `<h2>Plugin ${esc(p.title)} <span class="muted">Ignite with ${esc(p.module)} of ${esc(p.repo.replace(/\.git$/, '').replace(/^.*github\.com[/:]/, ''))}: the scenarios of <a href="#/plugin?name=${encodeURIComponent(p.name)}">its section</a>, in ${esc(p.jar)}</span></h2>
+        <table class="scenario-list"><tbody>${pluginDescribed[i].map((d) => row(d, `${p.name}/${d.name}`)).join('')}</tbody></table>`).join('')}`;
   },
   bind(root) {
     root.addEventListener('click', (e) => {
