@@ -211,6 +211,10 @@ a.job-title:hover { text-decoration: underline; }
 .chart-grid.two-col { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (max-width: 1000px) { .chart-grid.two-col { grid-template-columns: minmax(0, 1fr); } }
 .nav-count { display: inline-block; min-width: 18px; padding: 0 6px; border-radius: 9px; font-size: 12px; line-height: 17px; text-align: center; background: var(--line); color: var(--fg); margin-left: 3px; vertical-align: 1px; }
+/* none yet, or none at all: not even an empty pill on the first paint */
+.nav-count:empty { display: none; }
+/* Settings: something on the stand needs a hand */
+.nav-count.bad { background: var(--bad); color: var(--bg); font-weight: 600; }
 .tile button.small { margin-top: 6px; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px 16px; margin-top: 8px; }
 .form-grid label { display: flex; flex-direction: column; gap: 4px; margin: 0; }

@@ -2274,10 +2274,18 @@ function scheduleForm(p, title, text, settings, scenarios, picked) {
     <div class="actions"><button class="primary">Save</button></div>
   </form>`;
 }
+// Free space of the fuller of the disks of data and cache, and how bad it is
+const freeGbOf = (s) => Math.min(s.dataFreeMb, s.cacheFreeMb) / 1024;
+const diskLevel = (gb) => (gb < 2 ? 'bad' : gb < 5 ? 'warn' : 'ok');
+// What needs a hand now, from the health alone: the header marks Settings with it. The checks of Settings say the same
+function standProblems(health) {
+  const w = health.watcher || {}, s = health.system, freeGb = s ? freeGbOf(s) : Infinity;
+  return [w.lastError && `Watcher: ${w.lastError}`, diskLevel(freeGb) === 'bad' && `Disk: ${fmt.num(freeGb, 1)} GB free`].filter(Boolean);
+}
 // What can go wrong with the stand, a line each: ok, warn (worth a look), bad (needs a hand), info (a fact, not a state)
 function standChecks(health, stand, builds, noises) {
   const w = health.watcher, s = health.system, cur = health.worker.job;
-  const freeGb = Math.min(s.dataFreeMb, s.cacheFreeMb) / 1024, failed = builds.filter((b) => b.status === 'failed').length;
+  const freeGb = freeGbOf(s), failed = builds.filter((b) => b.status === 'failed').length;
   const few = noises.filter((n) => (n.calibrations || []).length < OWN_FLOORS).length;
   const over = noises.filter((n) => { const l = (n.calibrations || [])[0]; return l && VERDICT_KEYS.some((k) => l.deltaPct[k] != null && Math.abs(l.deltaPct[k]) > (n.floors || {})[k]); }).length;
   const lastAa = noises.map((n) => (n.calibrations || [])[0]).filter(Boolean).map((c) => c.finishedAt).sort().pop();
@@ -2287,7 +2295,7 @@ function standChecks(health, stand, builds, noises) {
     { name: 'Watcher', level: w.lastError ? 'bad' : w.mirrorReady ? 'ok' : 'warn', hint: w.lastError || w.head || '', text: w.lastError ? esc(w.lastError)
       : w.mirrorReady ? `${esc(w.branch)} <span class="mono">${fmt.sha(w.head)}</span> · ${w.polling ? 'polling…' : fmt.ago(w.lastPollAt)}` : 'the mirror is being cloned',
     action: w.lastError ? '' : '<button class="small" id="poll">Poll now</button>' },
-    { name: 'Disk', level: freeGb < 2 ? 'bad' : freeGb < 5 ? 'warn' : 'ok', text: `${fmt.num(freeGb, 1)} GB free · runs ${fmt.num(s.runsMb / 1024, 1)} GB · builds ${fmt.num(s.artifactsMb / 1024, 1)} GB` },
+    { name: 'Disk', level: diskLevel(freeGb), text: `${fmt.num(freeGb, 1)} GB free · runs ${fmt.num(s.runsMb / 1024, 1)} GB · builds ${fmt.num(s.artifactsMb / 1024, 1)} GB` },
     { name: 'Memory', level: 'ok', text: `${fmt.num(s.memFreeMb)} of ${fmt.num(s.memTotalMb)} MB free · load ${fmt.num(s.loadAvg, 2)}` },
     { name: 'JVMs', level: s.strayJvms && !health.worker.busy ? 'warn' : 'ok', text: !s.strayJvms ? 'none left over' : health.worker.busy ? `${s.strayJvms} of the running job` : `${s.strayJvms} left over`,
       action: s.strayJvms && !health.worker.busy ? '<button class="small" id="kill" title="no job is running: these JVMs are leftovers">Kill all</button>' : '' },
@@ -3267,13 +3275,20 @@ export async function refresh(first) {
     else document.body.classList.remove('loading');
   }
 }
-// header: number of queued jobs next to Queue (hidden when empty), refreshed on every render and every 20 s
+// header: number of queued jobs next to Queue, of active bisections next to Bisects and of problems that need a hand next to
+// Settings (each hidden when none), refreshed on every render and every 20 s
+const navCount = (el, n, title) => {
+  if (!el) return;
+  el.textContent = n ? String(n) : '';
+  el.style.display = n ? '' : 'none';
+  if (title !== undefined) el.title = title;
+};
 async function updateQueueCount() {
   try {
-    const h = await api.get('/api/health');
-    const n = ((h.jobs && h.jobs.queued) || 0) + ((h.jobs && h.jobs.running) || 0), el = $('#queue-count'), bisects = $('#bisect-count'); // waiting + the one running
-    if (el) { el.textContent = n ? String(n) : ''; el.style.display = n ? '' : 'none'; }
-    if (bisects) { bisects.textContent = h.bisects ? String(h.bisects) : ''; bisects.style.display = h.bisects ? '' : 'none'; }
+    const h = await api.get('/api/health'), problems = standProblems(h);
+    navCount($('#queue-count'), ((h.jobs && h.jobs.queued) || 0) + ((h.jobs && h.jobs.running) || 0)); // waiting + the one running
+    navCount($('#bisect-count'), h.bisects);
+    navCount($('#settings-alarm'), problems.length, `${plural(problems.length, 'thing')} to fix:\n${problems.join('\n')}`);
   } catch (e) { /* keep the last value */ }
 }
 setInterval(() => { if (document.visibilityState === 'visible') updateQueueCount(); }, 20000);
