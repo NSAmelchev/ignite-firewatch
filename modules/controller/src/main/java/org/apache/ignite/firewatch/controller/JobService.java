@@ -1388,7 +1388,8 @@ public final class JobService {
      * {@link Durations} has them, the builds of the given shas that are not built yet (plus {@code extraBuilds} for
      * refs the caller cannot resolve), and the start after the active jobs of the same or higher priority.
      * {@code scenario} may be a comma-separated list: the run time is their mean, and every module set they need is
-     * built.
+     * built. The scenarios of a plugin build pairs: {@code pairs} are {@code igniteRef:extRef}, a pair that does not
+     * resolve here (a pull request, a ref not fetched yet) counts as a build of each side's kind.
      *
      * @param scenario Scenario name, or a comma-separated list of them.
      * @param type Job type.
@@ -1396,19 +1397,46 @@ public final class JobService {
      * @param shas Shas the jobs need built.
      * @param extraBuilds Number of builds for refs the caller cannot resolve.
      * @param priority Queue priority.
+     * @param plugin Plugin of the scenarios, or {@code null} for those of Ignite.
+     * @param pairs Pairs a plugin needs built, as {@code igniteRef:extRef}.
      * @return Estimate of the run time, builds and start.
      */
     public Map<String, Object> estimate(String scenario, String type, int jobs, List<String> shas, int extraBuilds,
-        int priority) {
+        int priority, String plugin, List<String> pairs) {
+        Plugins ps = plugins;
+        Plugins.Plugin p = plugin == null ? null : ps == null ? null : ps.require(plugin);
+
+        if (plugin != null && p == null)
+            throw new IllegalArgumentException("unknown plugin: " + plugin);
+
         List<Scenarios.Info> set = new ArrayList<>();
 
         for (String name : scenario.split(",")) {
-            Scenarios.Info sc = scenarios.get(name.trim());
+            Scenarios.Info sc = p == null ? scenarios.get(name.trim()) : ps.scenario(plugin, name.trim());
 
             if (sc == null)
                 throw new IllegalArgumentException("unknown scenario: " + name);
 
             set.add(sc);
+        }
+
+        List<String[]> resolved = new ArrayList<>(); // {ignite sha, extension sha}
+        int unresolved = 0;
+
+        if (p != null) {
+            for (String pair : pairs.stream().filter(x -> x != null && x.contains(":")).distinct().toList()) {
+                String[] refs = pair.split(":", 2);
+
+                try {
+                    if (refs[0].toLowerCase().startsWith("pr/"))
+                        throw new IllegalArgumentException("a pull request is fetched when it is queued");
+
+                    resolved.add(new String[] {mirror.resolve(refs[0].trim()), p.mirror.resolve(refs[1].trim())});
+                }
+                catch (IOException | RuntimeException e) {
+                    unresolved++;
+                }
+            }
         }
 
         java.util.Set<String> built = db.okBuildShas(); // build keys: a SQL scenario needs its own build of a commit
@@ -1442,20 +1470,24 @@ public final class JobService {
             byModules.putIfAbsent(sc.modules, sc);
 
         for (Scenarios.Info sc : byModules.values()) {
-            for (String sha : shas.stream().filter(s -> s != null && !s.isBlank()).distinct().toList()) {
-                String key = Builder.key(sha, sc.modules);
+            List<String> keys = p == null
+                ? shas.stream().filter(s -> s != null && !s.isBlank()).distinct().map(s -> Builder.key(s, sc.modules))
+                    .toList()
+                : resolved.stream().map(r -> Builder.key(r[0], sc.modules, plugin, r[1])).distinct().toList();
 
+            for (String key : keys) {
                 if (!built.contains(key)) {
                     unbuilt++;
                     buildSecs += d.buildSeconds(key);
                 }
             }
 
-            unbuilt += Math.max(0, extraBuilds);
-            buildSecs += Math.max(0, extraBuilds) * d.buildSeconds(sc, null);
+            int extra = Math.max(0, extraBuilds) + unresolved;
+            unbuilt += extra;
+            buildSecs += extra * d.buildSeconds(sc, plugin);
         }
 
-        double run = set.stream().mapToDouble(s -> d.runSeconds(s, null, type)).average().orElse(0);
+        double run = set.stream().mapToDouble(s -> d.runSeconds(s, plugin, type)).average().orElse(0);
         long total = Math.round(run * Math.max(1, jobs) + buildSecs);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("jobs", Math.max(1, jobs));

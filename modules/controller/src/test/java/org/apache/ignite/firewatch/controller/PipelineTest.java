@@ -799,6 +799,30 @@ class PipelineTest {
         assertEquals(queued, db.pluginJobs(p.name, null, null, false, 100).size(), "the step of Ignite is not alone");
     }
 
+    /** A launch of a plugin builds pairs: those not built yet count, a pull request too, as it is not fetched yet. */
+    @Test void aLaunchOfAPluginCountsTheBuildsOfItsPairs() throws Exception {
+        Plugins plugins = plugin();
+        Plugins.Plugin p = plugins.get("spring-data");
+        p.mirror.fetch();
+        List<String> pairs = List.of("2.17.0:ext-1.0", "master:master");
+
+        Map<String, Object> e = jobs.estimate("point", Job.ABBA, 1, List.of(), 0, 1, p.name, pairs);
+        assertEquals(2L, e.get("builds"), "both pairs are new");
+        assertTrue((Long)e.get("runSec") > 0);
+        assertEquals(3L, jobs.estimate("point", Job.ABBA, 1, List.of(), 0, 1, p.name,
+            List.of("2.17.0:ext-1.0", "master:master", "pr/7:master")).get("builds"));
+        assertThrows(IllegalArgumentException.class,
+            () -> jobs.estimate("point", Job.ABBA, 1, List.of(), 0, 1, null, List.of()), "not a scenario of Ignite");
+
+        db.setSetting("plugin.spring-data.release", "ext-1.0");
+        assertEquals(1, PluginSchedule.runIfDue(db, jobs, plugins, mirror));
+        Job j = db.nextQueued();
+        runner.runJob(j);
+        assertEquals(Job.DONE, db.job(j.id).status, db.job(j.id).error);
+        assertEquals(0L, jobs.estimate("point", Job.ABBA, 2, List.of(), 0, 1, p.name, pairs).get("builds"),
+            "both pairs are built now");
+    }
+
     /** */
     @SuppressWarnings("unchecked")
     private static List<Map<String, Object>> runsOf(Map<String, Object> page) {

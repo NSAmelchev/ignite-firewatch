@@ -597,9 +597,10 @@ function paintWho() {
 // The confirmation of every launch: what is queued, the Δ it re-checks, where it goes in the queue, how long it takes and when
 // it should be done. Resolves to { priority, scenarios } (false on cancel): the priority chosen, as usual by default (`priority`
 // is the usual one of its kind). With `choose` ([{name, checked}]) the Scenario row is a set of checkboxes and `scenarios` the
-// chosen names; with `scenarios` (names) it covers all of them. The estimate follows the choices.
-export async function confirmLaunch({ title, what, job, note, scenario, scenarios, choose, type = 'abba', jobs = 1, shas = [], extraBuilds = 0, priority = 1, ok = 'Queue' }) {
-  const estimate = (sc, n, prio) => estimateRows({ scenario: sc, type, jobs: n, shas, extraBuilds, priority: prio });
+// chosen names; with `scenarios` (names) it covers all of them. The estimate follows the choices; the scenarios of a `plugin`
+// build `pairs` (igniteRef:extRef) instead of `shas`.
+export async function confirmLaunch({ title, what, job, note, scenario, scenarios, choose, type = 'abba', jobs = 1, shas = [], extraBuilds = 0, priority = 1, ok = 'Queue', plugin = null, pairs = [] }) {
+  const estimate = (sc, n, prio) => estimateRows({ scenario: sc, type, jobs: n, shas, extraBuilds, priority: prio, plugin, pairs });
   const picked = choose ? choose.filter((c) => c.checked).map((c) => c.name) : null;
   const chosen = (w) => (choose ? [...w.querySelectorAll('input[name=sc]:checked')].map((i) => i.value) : scenarios || [scenario]);
   const estimateOf = (list, prio) => (choose ? (list.length ? estimate(list.join(','), list.length, prio) : Promise.resolve(''))
@@ -1780,8 +1781,9 @@ const comparisonActive = (c) => c.status === 'queued' || c.status === 'running';
 const comparisonBadge = (c) => badge(c.status === 'done' && c.searching ? 'searching' : c.status);
 
 // How long a launch takes and when it is done, as the rows of a dialog: nothing when the stand cannot tell
-async function estimateRows({ scenario, type = 'abba', jobs = 1, shas = [], extraBuilds = 0, priority = 1 }) {
-  const q = new URLSearchParams({ scenario, type, jobs, shas: shas.filter(Boolean).join(','), extraBuilds, priority });
+export async function estimateRows({ scenario, type = 'abba', jobs = 1, shas = [], extraBuilds = 0, priority = 1, plugin = null, pairs = [] }) {
+  const q = new URLSearchParams({ scenario, type, jobs, shas: shas.filter(Boolean).join(','), extraBuilds, priority, pairs: pairs.join(',') });
+  if (plugin) q.set('plugin', plugin);
   const e = await api.get(`/api/estimate?${q}`).catch(() => null);
   return e ? `<dt>Takes</dt><dd>~${mins(e.totalSec)} <span class="muted">(${e.jobs > 1 ? `${e.jobs} jobs × ` : ''}${mins(e.runSec)}${e.builds ? ` + ${e.builds} build${e.builds > 1 ? 's' : ''} × ${mins(e.buildSec)}` : ''})</span></dd>
     <dt>Done</dt><dd>${etaStart(e.endAt)} <span class="muted">· starts ${e.ahead ? `after ${e.ahead} job${e.ahead > 1 ? 's' : ''} in the queue, ${etaStart(e.startAt)}` : 'right away'}</span></dd>` : '';

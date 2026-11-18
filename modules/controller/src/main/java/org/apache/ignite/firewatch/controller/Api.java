@@ -248,7 +248,7 @@ public final class Api {
         r.get("/api/estimate",
             req -> jobs.estimate(req.query("scenario", Settings.firstScenario(db)), req.query("type", Job.ABBA),
                 req.queryInt("jobs", 1), List.of(req.query("shas", "").split(",")), req.queryInt("extraBuilds", 0),
-                req.queryInt("priority", 1)));
+                req.queryInt("priority", 1), req.query("plugin", null), List.of(req.query("pairs", "").split(","))));
         r.post("/api/jobs/{id}/split", req -> {
             JsonNode b = req.json();
 

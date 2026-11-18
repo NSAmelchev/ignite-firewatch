@@ -3,7 +3,7 @@
 import {
   api, esc, fmt, badge, jobLink, toast, guarded, views, refresh, confirmLaunch, deltaClass, modal, plural, unfoldRow,
   METRIC_COLS, metricHead, calmLine, priorityField, priorityOf, frontPriority, scenarioPicker, bindScenarioPicker,
-  familiesByWord,
+  familiesByWord, estimateRows,
 } from './app.js';
 
 const query = () => new URLSearchParams(location.hash.split('?')[1] || '');
@@ -87,7 +87,8 @@ async function runNow(p, names) {
   const all = names.length > 1;
   const v = await confirmLaunch({ title: all ? `Run ${p.title}: master vs release` : `Run ${names[0]}: master vs release`,
     what: `master pair vs release pair<div class="muted small-text">${pairHtml(p, p.pairs.master)}<br>vs ${pairHtml(p, p.pairs.release)}</div>`,
-    ...(all ? { choose: p.scenarios.map((s) => ({ name: s.name, checked: true })) } : { scenarios: names }), jobs: names.length });
+    ...(all ? { choose: p.scenarios.map((s) => ({ name: s.name, checked: true })) } : { scenarios: names }), jobs: names.length,
+    plugin: p.name, pairs: [p.pairs.master, p.pairs.release].map((x) => `${x.igniteSha}:${x.extSha}`) });
   if (!v) return;
   const jobs = await api.post(`/api/plugins/${encodeURIComponent(p.name)}/run`, { scenarios: v.scenarios, priority: v.priority });
   toast(`${plural(jobs.length, 'job')} queued`);
@@ -214,7 +215,7 @@ async function compareDialog(p, preset = {}) {
     <dl class="kv"><dt>A · baseline</dt><dd>${pair('a', a)}</dd><dt>B · target</dt><dd>${pair('b', b)}</dd>
       <dt>Steps</dt><dd data-steps></dd>
       <dt>Scenarios</dt><dd>${scenarioPicker(p.scenarios, picked, { title: '', own: familiesByWord(p.scenarios), extra: [{ name: 'Not settled', scenarios: p.scenarios.filter((s) => loose.includes(s.name)) }] })}</dd>
-      <dt>Priority</dt><dd>${priorityField(1, front)}</dd><dt>Jobs</dt><dd data-jobs></dd></dl></div>`;
+      <dt>Priority</dt><dd>${priorityField(1, front)}</dd><dt>Jobs</dt><dd data-jobs></dd></dl><dl class="kv est"></dl></div>`;
   const read = (w) => {
     const v = (n) => w.querySelector(`[name="${n}"]`).value.trim();
     return { a: { ignite: v('a.ignite'), ext: v('a.ext') }, b: { ignite: v('b.ignite'), ext: v('b.ext') } };
@@ -223,6 +224,16 @@ async function compareDialog(p, preset = {}) {
     asWho: true,
     open: (w) => {
       const yes = w.querySelector('[data-yes]');
+      // how long: the pairs the steps build (the middle one when both sides move), after a pause in the typing
+      let timer = null, asked = 0;
+      const estimate = (pa, pb, n) => {
+        clearTimeout(timer);
+        timer = setTimeout(async () => {
+          const me = ++asked, pairs = [...new Set([pa, { ignite: pb.ignite, ext: pa.ext }, pb].map((x) => `${x.ignite}:${x.ext}`))];
+          const rows = n ? await estimateRows({ scenario: [...picked].join(','), jobs: n, plugin: p.name, pairs, priority: priorityOf(w) }) : '';
+          if (me === asked) w.querySelector('.est').innerHTML = rows;
+        }, 300);
+      };
       const sync = () => {
         const { a: pa, b: pb } = read(w), filled = pa.ignite && pa.ext && pb.ignite && pb.ext, steps = filled ? stepsOf(p, pa, pb) : [];
         w.querySelector('[data-steps]').innerHTML = !filled ? '<span class="muted">both refs of both pairs</span>'
@@ -232,8 +243,10 @@ async function compareDialog(p, preset = {}) {
         w.querySelector('[data-jobs]').innerHTML = n ? `${n} <span class="muted">(${plural(picked.size, 'scenario')} × ${plural(steps.length, 'step')}, ABBA each)</span>` : '<span class="muted">–</span>';
         yes.disabled = !n;
         yes.textContent = n ? `Queue ${plural(n, 'job')}` : 'Queue';
+        estimate(pa, pb, n);
       };
       w.addEventListener('input', sync);
+      w.addEventListener('change', (e) => { if (e.target.name === 'prio') sync(); });
       bindScenarioPicker(w, picked, { estimate: false, then: sync });
       sync();
     },

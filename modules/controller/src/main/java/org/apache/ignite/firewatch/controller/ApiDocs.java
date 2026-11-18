@@ -436,6 +436,8 @@ final class ApiDocs {
             .query("shas", STRING, "commits to build, comma-separated", "")
             .query("extraBuilds", INTEGER, "builds of refs not resolved yet", 0)
             .query("priority", INTEGER, "the priority they would have", 1)
+            .query("plugin", STRING, "the plugin the scenarios are of", null)
+            .query("pairs", STRING, "pairs of a plugin to build, igniteRef:extRef comma-separated", "")
             .returns(any("jobs, runSec, builds, buildSec, totalSec, ahead, startAt, endAt")));
 
         // ---- commits
