@@ -654,13 +654,23 @@ table.plugin-cmp .dlt, table.plugin-runs .dlt { margin: 0; }
 /* Compare: a row per comparison, unfolded into its scenarios; New comparison is one dialog */
 .cmp-tools { align-items: center; }
 .cmp-tools input[type=search] { width: 240px; padding: 3px 8px; font-size: 13px; }
-table.cmp-list { margin-top: 8px; }
-table.cmp-list td.nowrap { white-space: nowrap; }
-table.cmp-list .one-line { max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-table.cmp-list tr.row-detail > td { background: var(--bg); white-space: normal; padding: 6px 12px 10px 28px; }
-table.cmp-list table.cmp-rows { margin: 2px 0 6px; }
-table.cmp-list td.row-action button { visibility: hidden; }
-table.cmp-list tr:hover td.row-action button, table.cmp-list tr:focus-within td.row-action button { visibility: visible; }
+/* the list of comparisons: a row per comparison that says what it found, the whole row leads to its page */
+.cx-list { display: flex; flex-direction: column; margin-top: 8px; }
+.cx-row { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.3fr) auto; gap: 16px; align-items: start; padding: 9px 10px;
+  border-top: 1px solid var(--line); border-radius: 4px; cursor: pointer; }
+.cx-row:hover, .cx-row:focus-visible { background: var(--card); outline: none; }
+a.cx-title { display: block; color: var(--fg); font-weight: 600; text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cx-row:hover a.cx-title, a.cx-title:focus-visible { color: var(--accent); }
+.cx-sub { margin-top: 2px; color: var(--faint); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cx-sub a { color: inherit; }
+.cx-found { min-width: 0; font-size: 13px; }
+.cx-hit { display: flex; gap: 6px; align-items: baseline; white-space: nowrap; overflow: hidden; }
+.cx-mark.regression { color: var(--bad); }
+.cx-mark.improvement { color: var(--ok); }
+.cx-sc { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cx-rest { margin-top: 1px; color: var(--faint); font-size: 12px; }
+.cx-tools { visibility: hidden; }
+.cx-row:hover .cx-tools, .cx-row:focus-within .cx-tools { visibility: visible; }
 .modal.wide { width: min(760px, 100%); }
 .cmp-dialog input:not([type=checkbox]):not([type=radio]) { width: 100%; }
 .cmp-dialog .seg { margin: 0; }

@@ -411,16 +411,18 @@ strength of the signal, commits.
 - **Commit** (`#/commits/<sha>`): under the title a line of the builds of the commit (core and with the modules of
   scenarios): version, size, log and jars. "Runs vs parent": a "pooled" row over all the repeats and every run; below,
   "Other runs": calibrations, this commit as the baseline.
-- **Compare**: manual debugging. A table of the comparisons, newest first: the ends B and A (a PR linked to GitHub, the
-  subject of the commit), the scenarios, the result (how far a running one got and when it ends, bisections included),
-  who queued it; Again (the same refs and scenarios in the dialog) or Cancel on the hovered row, a filter over what is
-  loaded, show more. A click unfolds the row into its scenarios with the Δ of the dashboard's four metrics, those without
-  a change folded, and a link to the comparison. New comparison is one dialog: the modes "PR vs master" (the default:
-  master against master + PR) and "Ref vs ref", each ref shown resolved to its commit once typed; the scenarios by family
-  with the chips All, Put/get, Transactions, SQL H2, SQL Calcite, 1 server and 2+ servers (the groups come from the
-  catalog, so a new scenario joins them by itself); the priority and how long it takes. A ref the stand cannot resolve
-  opens the dialog again as it was. Jobs with the source `compare` stay off Dashboard, Commits, the repeats of the branch
-  and the thresholds.
+- **Compare**: manual debugging. A list of the comparisons, newest first, a row each that says what it found: its name
+  with a line of facts (#, when, who queued it, the scenarios, a PR linked to GitHub, the subject of the commit), and
+  what moved, regressions first, the largest first, up to two scenarios with their metrics, then how many more moved,
+  how many stayed, how many failed, how far a running one got and when it ends, bisections included. The whole row
+  leads to the page of the comparison (its name is a link, so a modified click opens a new tab; Enter does it from the
+  keyboard); Again (the same refs and scenarios in the dialog) or Cancel on the hovered row, a filter over what is
+  loaded, show more. New comparison is one dialog: the modes "PR vs master" (the default: master against master + PR)
+  and "Ref vs ref", each ref shown resolved to its commit once typed; the scenarios by family with the chips All,
+  Put/get, Transactions, SQL H2, SQL Calcite, 1 server and 2+ servers (the groups come from the catalog, so a new
+  scenario joins them by itself); the priority and how long it takes. A ref the stand cannot resolve opens the dialog
+  again as it was. Jobs with the source `compare` stay off Dashboard, Commits, the repeats of the branch and the
+  thresholds.
 - **Comparison** (`#/comparisons/N`, the link can be shared): refs A and B, the status (`searching` when everything is
   measured and bisections run; the API keeps `done`, so the notification of the end does not wait for the searches), how
   many scenarios are measured, the verdict counters, what runs now and when everything ends, bisections included (the

@@ -1914,53 +1914,43 @@ async function cancelComparison(b) {
   refresh();
 }
 const shortRef = (ref) => (/^[0-9a-f]{40}$/i.test(ref || '') ? fmt.sha(ref) : ref || '');
-// a scenario of a comparison folds when nothing in it is to look at, as on the dashboard
-const cmpCalm = (r) => r.job.status === 'done' && r.verdict === 'no-change' && METRIC_COLS.slice(0, 4).every(([k]) => {
-  const m = r.comparison && r.comparison.metrics && r.comparison.metrics[k];
-  return !m || m.deltaPct == null || !deltaClass(k, m.deltaPct, m.thresholdPct, m.verdict);
-});
-// The scenarios of a comparison under its row: the Δ of the dashboard's four metrics, the quiet ones folded
-function comparisonDetail(c, showCalm) {
-  const cols = METRIC_COLS.slice(0, 4), quiet = c.rows.filter(cmpCalm);
-  const cell = (r, k) => {
-    const m = r.comparison && r.comparison.metrics && r.comparison.metrics[k];
-    return m && m.deltaPct != null ? `<td class="num"><a class="rel-delta" href="#/jobs/${r.job.id}" title="threshold ±${fmt.num(m.thresholdPct, 1)}%">${`<span class="dlt ${deltaClass(k, m.deltaPct, m.thresholdPct, m.verdict)}">${fmt.pct(m.deltaPct)}</span>`}<b class="att-mark"></b></a></td>`
-      : '<td class="num muted">–<b class="att-mark"></b></td>';
-  };
-  const rows = c.rows.map((r) => {
-    const calm = cmpCalm(r);
-    return `<tr class="${calm ? 'rel-calm' : ''}" ${calm && !showCalm ? 'hidden' : ''}><td><b>${esc(scName(r.scenario))}</b>${runsMark(r)}${r.job.error ? `<div class="error one-line" title="${esc(r.job.error)}">${esc(r.job.error)}</div>` : ''}</td>
-      ${cols.map(([k]) => cell(r, k)).join('')}<td>${r.job.status === 'done' ? badge(r.verdict) : badge(r.job.status)}</td><td class="row-action" style="opacity:1">${jobLink(r.job)}</td></tr>`;
-  }).join('');
-  return `<table class="release-table cmp-rows"><thead><tr><th>Scenario</th>${cols.map(metricHead).join('')}<th>Verdict</th><th></th></tr></thead>
-    <tbody>${rows}${quiet.length ? calmLine(`data-cmp-calm="${c.id}"`, cols.length + 3, showCalm, quiet.map((r) => scName(r.scenario))) : ''}</tbody></table>
-    <div class="small-text"><a href="#/comparisons/${c.id}">Open comparison #${c.id}</a> <span class="muted">· bisects, runs, profile</span></div>`;
+// A comparison in the list is one row that answers what it found: its name and a line of facts on the left, on the right what
+// moved, regressions first, the largest first, up to MOVED_SHOWN scenarios with their metrics, and how much more. The whole row
+// leads to its page; its name is a real link, so a modified click opens a new tab.
+const MOVED_SHOWN = 2;
+const shortMetric = (k) => (k === 'throughput' ? 'ops/s' : METRIC_NAMES[k] || k);
+function movedOf(c) {
+  return c.rows.filter((r) => r.job.status === 'done' && MOVED.has(r.verdict)).map((r) => {
+    const m = (r.comparison && r.comparison.metrics) || {};
+    const ms = METRIC_COLS.slice(0, 4).map(([k]) => [k, m[k]]).filter(([, x]) => x && MOVED.has(x.verdict));
+    return { r, ms, most: Math.max(0, ...ms.map(([, x]) => Math.abs(x.deltaPct))) };
+  }).sort((x, y) => (x.r.verdict === 'regression' ? 0 : 1) - (y.r.verdict === 'regression' ? 0 : 1) || y.most - x.most);
 }
-// A row of a comparison: its ends, how far it got and what it found
-function comparisonRow(c, open, showCalm) {
-  const going = comparisonActive(c), jobs = c.rows.map((r) => r.job);
-  const result = going ? `${badge(c.status)} <span class="muted">${c.measured} of ${c.total}${c.doneAt ? ` · ends ${etaStart(c.doneAt)}` : ''}</span> ${compareResult(c)}`
-    : `${c.status !== 'done' ? `${badge(c.status)} ` : c.searching ? `${comparisonBadge(c)} ` : ''}${compareResult(c)}${c.doneAt ? ` <span class="muted">· ends ${etaStart(c.doneAt)}</span>` : ''}`;
+function comparisonRow(c) {
+  const going = comparisonActive(c), jobs = c.rows.map((r) => r.job), moved = movedOf(c), shown = moved.slice(0, MOVED_SHOWN);
+  const failed = jobs.filter((j) => j.status === 'failed').length, quiet = c.rows.filter((r) => r.job.status === 'done' && r.verdict === 'no-change').length;
+  const hit = ({ r, ms }) => `<div class="cx-hit"><span class="cx-mark ${r.verdict}">${r.verdict === 'regression' ? '▼' : '▲'}</span><span class="cx-sc">${esc(scName(r.scenario))}</span>
+    ${ms.map(([k, x]) => `<span class="dlt ${deltaClass(k, x.deltaPct, x.thresholdPct, x.verdict, false)}">${esc(shortMetric(k))} ${fmt.pct(x.deltaPct)}</span>`).join(' ')}</div>`;
+  const state = going ? `${badge(c.status)} ${c.measured} of ${c.total}${c.doneAt ? ` · ends ${etaStart(c.doneAt)}` : ''}`
+    : c.searching ? `${comparisonBadge(c)}${c.doneAt ? ` ends ${etaStart(c.doneAt)}` : ''}` : c.status === 'cancelled' ? badge('cancelled') : '';
+  const bad = failed ? `<span class="badge failed">${failed} failed</span>` : '';
+  const rest = !moved.length && !going && quiet ? [state, `nothing moved in ${plural(quiet, 'scenario')}`, bad]
+    : [state, moved.length > shown.length ? `+${moved.length - shown.length} more moved` : '', quiet ? `${quiet} without a change` : '', bad];
   const act = going || c.searching
     ? `<button class="small" data-comparison-cancel="${c.id}" data-running="${jobs.some((j) => j.status === 'running') ? 1 : 0}" data-queued="${jobs.filter((j) => j.status === 'queued').length}" data-bisects="${c.searching ? 'some' : 0}">Cancel</button>`
     : `<button class="small" data-again="${c.id}" title="the same refs and scenarios in the dialog">Again</button>`;
   const text = [c.label, c.refA, c.refB, c.subjectA, c.subjectB, c.requestedBy, `#${c.id}`, ...c.rows.map((r) => r.scenario)].join(' ').toLowerCase();
-  const subA = /^[0-9a-f]{7,40}$|^merge-base/i.test(c.refA || '') && c.subjectA;
-  return `<tr class="click-row" data-cmp-row="${c.id}" data-text="${esc(text)}"><td class="muted nowrap"><span class="chev">${open ? '▾' : '▸'}</span> #${c.id}</td><td class="nowrap">${fmt.ago(c.createdAt)}</td>
-    <td><b>${esc(shortRef(c.refB))}</b>${prLink(c.refB)}${c.subjectB ? `<div class="muted small-text one-line" title="${esc(c.subjectB)}">${esc(c.subjectB)}</div>` : ''}</td>
-    <td><b>${esc(shortRef(c.refA))}</b>${subA ? `<div class="muted small-text one-line" title="${esc(c.subjectA)}">${esc(c.subjectA)}</div>` : ''}</td>
-    <td class="num">${c.measured < c.total && !going ? `${c.measured} of ${c.total}` : c.total}</td><td>${result}</td><td class="muted">${esc(c.requestedBy || '')}</td>
-    <td class="row-action">${act}</td></tr>
-    <tr class="row-detail" ${open ? '' : 'hidden'}><td colspan="8">${comparisonDetail(c, showCalm)}</td></tr>`;
+  const href = `#/comparisons/${c.id}`, pr = prLink(c.refB);
+  return `<div class="cx-row" data-cmp-row="${c.id}" data-href="${href}" data-text="${esc(text)}" tabindex="0">
+    <div class="cx-main"><a class="cx-title" href="${href}" title="${esc(c.label)}">${esc(c.label)}</a>
+      <div class="cx-sub">#${c.id} · ${fmt.ago(c.createdAt)}${c.requestedBy ? ` · ${esc(c.requestedBy)}` : ''} · ${plural(c.total, 'scenario')}${pr ? ` ·${pr}` : ''}${c.subjectB ? ` · <span title="${esc(c.subjectB)}">${esc(c.subjectB)}</span>` : ''}</div></div>
+    <div class="cx-found">${shown.map(hit).join('')}${rest.some(Boolean) ? `<div class="cx-rest">${rest.filter(Boolean).join(' · ')}</div>` : ''}</div>
+    <div class="cx-tools">${act}</div></div>`;
 }
-// The filter of the list: on what is loaded, a row and its unfolded scenarios together
-function filterComparisons(root, text, open) {
+// The filter of the list: on what is loaded
+function filterComparisons(root, text) {
   const t = text.trim().toLowerCase();
-  root.querySelectorAll('tr[data-cmp-row]').forEach((r) => {
-    const hit = !t || r.dataset.text.includes(t);
-    r.hidden = !hit;
-    r.nextElementSibling.hidden = !hit || !open.has(r.dataset.cmpRow);
-  });
+  root.querySelectorAll('[data-cmp-row]').forEach((r) => { r.hidden = Boolean(t) && !r.dataset.text.includes(t); });
 }
 // a comparison again: a PR merged into the branch is the PR again, a merge base an empty baseline
 const presetOf = (c) => {
@@ -2065,23 +2055,23 @@ views.compare = {
   poll: 15000,
   live() { return this.active; },
   async render() {
-    if (!this.open) { this.open = new Set(); this.calmOpen = new Set(); this.limit = 20; this.filter = ''; }
+    if (!this.limit) { this.limit = 20; this.filter = ''; }
     const [settings, list] = await Promise.all([api.get('/api/settings'), api.get(`/api/comparisons?limit=${this.limit}`)]);
     this.list = list;
     this.picked = this.picked || new Set([settings['autorun.scenario'].split(',')[0].trim()]);
     this.active = list.some((c) => comparisonActive(c) || c.doneAt);
-    const rows = list.map((c) => comparisonRow(c, this.open.has(String(c.id)), this.calmOpen.has(String(c.id)))).join('');
+    const rows = list.map(comparisonRow).join('');
     return `<h1>Compare <span class="muted">PR vs master or any two refs, over a set of scenarios: not shown on Dashboard, Timeline or Commits</span></h1>
       <div class="card">
         <div class="release-head"><div><span class="release-title">Comparisons</span><span class="muted">newest first</span></div>
           <div class="release-tools cmp-tools"><input type="search" data-filter value="${esc(this.filter)}" placeholder="filter: PR, ref, scenario, name" aria-label="filter the comparisons"><button class="small primary" data-new>New comparison</button></div></div>
-        ${rows ? `<table class="commits runs-table cmp-list"><thead><tr><th>#</th><th>Queued</th><th>B · target</th><th>A · baseline</th><th class="num">Scenarios</th><th>Result</th><th>By</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+        ${rows ? `<div class="cx-list">${rows}</div>
           ${list.length >= this.limit ? `<div class="muted small-text more-line">${list.length} shown · <a href="#" data-more>show 20 more</a></div>` : ''}`
         : '<div class="muted">No comparison yet: New comparison measures a pull request against master, or any two refs.</div>'}
       </div>`;
   },
   bind(root) {
-    filterComparisons(root, this.filter, this.open);
+    filterComparisons(root, this.filter);
     root.addEventListener('click', (e) => {
       if (e.target.closest('[data-new]')) { guarded(() => compareDialog(this)); return; }
       const again = e.target.closest('[data-again]');
@@ -2089,22 +2079,18 @@ views.compare = {
       const cancel = e.target.closest('[data-comparison-cancel]');
       if (cancel) { guarded(() => cancelComparison(cancel)); return; }
       if (e.target.closest('[data-more]')) { e.preventDefault(); this.limit += 20; refresh(); return; }
-      const calm = e.target.closest('[data-cmp-calm]');
-      if (calm) {
-        const id = calm.dataset.cmpCalm, show = !this.calmOpen.has(id);
-        if (show) this.calmOpen.add(id); else this.calmOpen.delete(id);
-        calm.closest('table').querySelectorAll('tr.rel-calm').forEach((t) => { t.hidden = !show; });
-        calm.querySelector('.chev').textContent = show ? '▾' : '▸';
-        return;
-      }
-      const r = e.target.closest('tr[data-cmp-row]');
+      // the whole row leads to the page of the comparison, a modified click to a new tab, as its name does
+      const r = e.target.closest('[data-cmp-row]');
       if (!r || e.target.closest('a, button')) return;
-      const open = !this.open.has(r.dataset.cmpRow);
-      if (open) this.open.add(r.dataset.cmpRow); else this.open.delete(r.dataset.cmpRow);
-      unfoldRow(r, open);
+      if (e.metaKey || e.ctrlKey) window.open(r.dataset.href, '_blank');
+      else location.hash = r.dataset.href;
+    });
+    root.addEventListener('keydown', (e) => {
+      const r = e.key === 'Enter' && e.target.matches('[data-cmp-row]') ? e.target : null;
+      if (r) location.hash = r.dataset.href;
     });
     const f = $('[data-filter]', root);
-    if (f) f.addEventListener('input', () => { this.filter = f.value; filterComparisons(root, this.filter, this.open); });
+    if (f) f.addEventListener('input', () => { this.filter = f.value; filterComparisons(root, this.filter); });
   },
 };
 
