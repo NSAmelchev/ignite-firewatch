@@ -473,7 +473,7 @@ final class ApiDocs {
         list.add(new Op("GET /api/attention", "getAttention", "Dashboard", Effect.READ,
             "What needs attention: master against the release per scenario and what was found on the branch")
             .returns(any("rows per scenario with the metrics of master vs the release, their status and the commits "
-                + "found; runs newer than it")));
+                + "found; runs newer than it; activeBisect of a metric: the search another one of it waits for")));
         list.add(new Op("GET /api/schedule", "getSchedule", "Jobs", Effect.READ,
             "What the schedules queue next and when: auto-run, master vs release, the A/A, the plugins")
             .returns(any("items: kind, title, plugin, the scenarios that go next (scenarios, jobs, builds, runSec, "
@@ -504,12 +504,14 @@ final class ApiDocs {
         list.add(new Op("GET /api/bisects/{id}", "getBisect", "Bisects", Effect.READ, "A bisection with its steps")
             .returns(of(Bisect.class, "the bisection")));
         list.add(new Op("POST /api/bisects", "startBisect", "Bisects", Effect.QUEUE,
-            "Starts a bisection of a finished segment that moved a metric: one half per step, queued by itself")
+            "Starts a bisection of a finished segment that moved a metric: one half per step, queued by itself; one "
+                + "search per metric of a scenario at a time, searches of its other metrics share their steps")
             .body(obj("what to bisect", f("jobId", INTEGER, "the finished ABBA of the segment"),
                 f("metric", STRING, "throughput (default), p99Us, serverCpuUsPerOp, allocKbPerOp, heapAfterGcMb"),
                 f("priority", INTEGER, "of its steps")), true).returns(of(Bisect.class, "the bisection")));
         list.add(new Op("POST /api/bisects/{id}/cancel", "cancelBisect", "Bisects", Effect.DESTRUCTIVE,
-            "Stops a bisection").body(obj("how", f("stopRunning", BOOLEAN, "stop its running step (default true)"),
+            "Stops a bisection; a step that a search of another metric waits for goes to that search")
+            .body(obj("how", f("stopRunning", BOOLEAN, "stop its running step (default true)"),
                 f("deleteFinished", BOOLEAN, "delete its finished steps (default false)")), false)
             .returns(of(Bisect.class, "the bisection")));
         list.add(new Op("POST /api/bisects/{id}/resume", "resumeBisect", "Bisects", Effect.QUEUE,

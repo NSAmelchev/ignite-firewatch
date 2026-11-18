@@ -322,7 +322,9 @@ async function startBisect(jobId, metric) {
   const j = await api.get(`/api/jobs/${jobId}`);
   const c = j.comparisonId ? await api.get(`/api/comparisons/${j.comparisonId}`) : null;
   const row = c && c.rows.find((r) => r.job.id === j.id); // repeats are pooled there
-  const m = ((row || j).comparison || {}).metrics || {}, moved = rankedMetrics(m);
+  // a metric that a search of the comparison follows now waits for it, the others of the scenario do not
+  const busy = new Set(c ? c.bisects.filter((b) => b.scenario === j.scenario && bisectActive(b)).map((b) => b.metric) : []);
+  const m = ((row || j).comparison || {}).metrics || {}, moved = rankedMetrics(m).filter((k) => !busy.has(k));
   if (!moved.length) { toast(`job #${jobId} shows no verdict to follow`, true); return; }
   if (c && c.commits < 2) { toast(`${c.label}: ${plural(c.commits, 'commit')} between the two sides, nothing to bisect`, true); return; }
   const pick = moved.includes(metric) ? metric : moved[0];
@@ -347,10 +349,13 @@ async function startBisect(jobId, metric) {
   toast(`bisect #${b.id} started`);
   if (c) refresh(); else location.hash = `#/bisects/${b.id}`;
 }
-// what a comparison can still bisect: a scenario with a moved metric and no bisection yet (a cancelled one does not count)
+// what a comparison can still bisect: a scenario with moved metrics that no bisection followed yet (a cancelled one does not
+// count); `free` are those metrics, the cleanest signal first
 function bisectCandidates(c) {
-  const taken = new Set(c.bisects.filter((b) => b.status !== 'cancelled').map((b) => b.scenario));
-  return c.rows.filter((r) => r.job.status === 'done' && !taken.has(r.scenario) && rankedMetrics((r.comparison || {}).metrics || {}).length);
+  const taken = new Set(c.bisects.filter((b) => b.status !== 'cancelled').map((b) => `${b.scenario}|${b.metric}`));
+  return c.rows.filter((r) => r.job.status === 'done')
+    .map((r) => ({ ...r, free: rankedMetrics((r.comparison || {}).metrics || {}).filter((k) => !taken.has(`${r.scenario}|${k}`)) }))
+    .filter((r) => r.free.length);
 }
 // Several bisections at once. rows: [{ scenario, checked, busy, options: [{ jobId, metric, x, commits }] }], an option is what a
 // bisection of the scenario can follow, busy the bisect the scenario waits for; a step costs a run and a build, the number of
@@ -404,7 +409,7 @@ async function startBisects(id) {
   if (!rows.length) { toast('nothing left to bisect', true); return; }
   const started = await pickBisects({ title: `Bisect the deviations of ${esc(c.label)}`, note: `${c.commits} commits, the metric with the cleanest signal is chosen.`,
     rows: rows.map((r) => ({ scenario: r.scenario, checked: MOVED.has(r.verdict),
-      options: rankedMetrics(r.comparison.metrics).map((k) => ({ jobId: r.job.id, metric: k, x: r.comparison.metrics[k], commits: c.commits })) })) });
+      options: r.free.map((k) => ({ jobId: r.job.id, metric: k, x: r.comparison.metrics[k], commits: c.commits })) })) });
   if (started) refresh();
 }
 // What the master card can still search: a scenario with a moved metric that nothing explains. A scenario with a bisection going on
@@ -412,10 +417,10 @@ async function startBisects(id) {
 const OPEN_LINES = new Set(['unexplored', 'narrowed', 'partial', 'new']);
 const canBisect = (l) => OPEN_LINES.has(l.status) && MOVED.has(l.verdict) && l.rangeCommits > 1;
 function openBisects(a) {
-  const opts = (r) => r.lines.filter(canBisect).sort((x, y) => signalOf(y) - signalOf(x))
+  const opts = (r) => r.lines.filter((l) => canBisect(l) && !l.activeBisect).sort((x, y) => signalOf(y) - signalOf(x))
     .map((l) => ({ jobId: l.jobId, metric: l.metric, x: l, commits: l.rangeCommits, note: plural(l.rangeCommits, 'commit') }));
-  const all = a.rows.map((r) => ({ scenario: r.scenario, options: opts(r), busy: r.activeBisect })).filter((r) => r.options.length);
-  return [...all.filter((r) => !r.busy).map((r) => ({ ...r, checked: signalOf(r.options[0].x) >= WEAK_SIGNAL })), ...all.filter((r) => r.busy)];
+  return a.rows.map((r) => ({ scenario: r.scenario, options: opts(r) })).filter((r) => r.options.length)
+    .map((r) => ({ ...r, checked: signalOf(r.options[0].x) >= WEAK_SIGNAL }));
 }
 async function startOpenBisects(view) {
   const a = await api.get('/api/attention'), rows = openBisects(a);
@@ -455,7 +460,8 @@ async function resumeBisect(id) {
 const DEEP_STATES = new Set(['inconclusive', 'spread', 'lost']);
 const canGoDeep = (b) => DEEP_STATES.has(b.status) && !b.state.deep;
 const deepButton = (id) => `<button class="small" data-bisect-deep="${id}"${hint('deep')}>Deep search</button>`;
-// What a line of the master card can do next; a scenario takes one bisect at a time, so a busy one says what it waits for
+// What a line of the master card can do next; a metric of a scenario takes one search at a time, so a busy one says what it
+// waits for
 function attentionAction(l, busy) {
   const deep = DEEP_STATES.has(l.status) && !l.deep;
   if (!deep && !canBisect(l)) return '';
@@ -1697,9 +1703,9 @@ views.timeline = {
       const level = runs.map((x) => stripBlock(sc, x.a, x.b, x.p.jobId, x.cls === 'over' ? 'over' : since != null && x.a >= since && end && x.a < end.seq ? `after ${held}` : '', tip(x))).join('');
       const changes = steps.map((x) => stripBlock(sc, x.a, x.b, x.p.jobId, `${x.b - x.a > 1 ? 'range ' : ''}${x.cls}`, tip(x))).join('');
       const nowhere = held && !same.length && end ? stripBlock(sc, lo, end.seq, r.job.id, `range ${held}`, `${esc(rel.tag || 'release')}: Δ ${fmt.pct(whole.deltaPct)} over ${end.seq - lo} commits, somewhere in here`) : '';
-      const search = branchBisects.find((b) => b.scenario === sc);
+      const searches = branchBisects.filter((b) => b.scenario === sc).sort((x, y) => (y.metric === metric) - (x.metric === metric));
       return `<div class="ov-row${this.open && sc === scenario ? ' on' : ''}${firsts.has(sc) ? ' first' : ''}" data-ov-row="${esc(sc)}">
-        <div class="ov-name" title="${esc(sc)}">${esc(scName(sc))}${search ? ` <a class="bisect-mark" href="#/bisects/${search.id}" title="bisect #${search.id} is searching">${BISECT_MARKS[search.status]} #${search.id}</a>` : ''}</div>
+        <div class="ov-name" title="${esc(sc)}">${esc(scName(sc))}${searches.map((x) => ` <a class="bisect-mark" href="#/bisects/${x.id}" title="bisect #${x.id} is searching ${esc(METRIC_NAMES[x.metric] || x.metric)}">${BISECT_MARKS[x.status]} #${x.id}</a>`).join('')}</div>
         <div class="ov-strip">${level}${changes}${nowhere}</div>
         <div class="ov-delta">${whole && whole.deltaPct != null ? `<span class="dlt ${deltaClass(metric, whole.deltaPct, whole.thresholdPct, whole.verdict, true)}" title="master vs ${esc(rel.tag || 'the release')}">${fmt.pct(whole.deltaPct)}</span>` : ''}</div></div>`;
     }).join('');
@@ -2109,7 +2115,7 @@ function comparisonResult(searches, c) {
     if (bisectActive(b)) b.state.open.forEach((r) => { const d = r.cur ? r.cur.deltaPct : r.est; add(b.status, b.scenario, r.commits, r.a, r.b, effectChip(b.metric, d, b.id), Math.abs(d)); });
   });
   bisectCandidates(c).forEach((r) => {
-    const m = r.comparison.metrics, moved = rankedMetrics(m).filter((k) => k !== 'heapAfterGcMb'); // heap after GC alone says little
+    const m = r.comparison.metrics, moved = r.free.filter((k) => k !== 'heapAfterGcMb'); // heap after GC alone says little
     if (moved.length) add('unexplored', r.scenario, c.commits, c.shaA, c.shaB, moved.map((k) => effectChip(k, m[k].deltaPct)).join(''), Math.max(...moved.map((k) => Math.abs(m[k].deltaPct))), bisectBtn(r.job.id));
   });
   return resultBlock(`Result <span class="muted">${esc(c.label)}</span>`, found, loose, { going: searches.some(({ b }) => bisectActive(b)), openTitle: 'Not pinned down' });
@@ -2117,7 +2123,7 @@ function comparisonResult(searches, c) {
 // What the master card comes to: the commits that explain master, then what is worth a look.
 // The metrics of a scenario that wait for the same search share a row.
 function attentionResult(a) {
-  const lines = a.rows.flatMap((r) => r.lines.map((l) => ({ ...l, scenario: r.scenario, busy: r.activeBisect })));
+  const lines = a.rows.flatMap((r) => r.lines.map((l) => ({ ...l, scenario: r.scenario, busy: l.activeBisect })));
   const found = lines.flatMap((l) => l.commits.map((c) => ({ sha: c.sha, subject: c.subject, scenario: l.scenario, metric: l.metric, d: c.deltaPct, id: c.bisectId || l.bisectId })));
   const open = new Map();
   lines.filter((l) => l.status !== 'explained').forEach((l) => {
@@ -2142,13 +2148,15 @@ views.comparison = {
     this.active = going || c.bisects.some((b) => b.status === 'running');
     const jobs = c.rows.map((r) => r.job), running = jobs.find((j) => j.status === 'running');
     const queued = jobs.filter((j) => j.status === 'queued').length;
-    const latest = new Map(c.bisects.map((b) => [b.scenario, b])); // oldest first: the latest one of a scenario stays
+    const latest = new Map(c.bisects.map((b) => [`${b.scenario}|${b.metric}`, b])); // oldest first: the latest one of a metric stays
+    const marksOf = (sc) => [...latest.values()].filter((b) => b.scenario === sc);
     const settled = jobs.every((j) => j.status === 'done'); // then a status per scenario says nothing
     const searches = latestBisects(c.bisects);
     const cols = this.allCols ? METRIC_COLS : METRIC_COLS.slice(0, 4); // how long nodes start and load is noise of the stand
     const rows = c.rows.map((r) => {
-      const j = r.job, m = (r.comparison && r.comparison.metrics) || {}, b = latest.get(r.scenario);
-      const moved = j.status === 'done' && c.commits > 1 && !(b && bisectActive(b)) ? rankedMetrics(m) : [];
+      const j = r.job, m = (r.comparison && r.comparison.metrics) || {}, marks = marksOf(r.scenario);
+      const busy = new Set(marks.filter(bisectActive).map((b) => b.metric)); // another metric does not wait for them
+      const moved = j.status === 'done' && c.commits > 1 ? rankedMetrics(m).filter((k) => !busy.has(k)) : [];
       const cells = cols.map(([k, , dg]) => {
         const v = m[k] ? valDelta(k, m[k].meanB, dg, m[k].deltaPct, m[k].verdict, m[k].thresholdPct) : '–';
         return `<td class="num">${moved.includes(k) ? `<button class="cell-btn" data-bisect="${j.id}" data-metric="${k}" title="bisect ${esc(METRIC_NAMES[k])}">${v}</button>` : v}</td>`;
@@ -2156,7 +2164,7 @@ views.comparison = {
       const state = j.status === 'running' ? `<div class="muted">${esc(j.stage || '')} · ${j.progress || 0}%</div>` : j.status === 'queued' ? `<div class="muted">${etaStart(j.etaStartAt)}</div>` : '';
       const status = settled ? '' : `<td>${badge(j.status)}${state}</td>`;
       return `<tr>
-        <td class="job-cell"><a href="#/jobs/${j.id}">${esc(scName(r.scenario))}</a>${runsMark(r)}${b ? ` <a class="bisect-mark" href="#/bisects/${b.id}" title="bisect #${b.id} of ${esc(METRIC_NAMES[b.metric] || b.metric)}: ${esc(b.status)}">${BISECT_MARKS[b.status] || ''} #${b.id}</a>` : ''}${j.error ? `<div class="error one-line" title="${esc(j.error)}">${esc(j.error)}</div>` : ''}</td>
+        <td class="job-cell"><a href="#/jobs/${j.id}">${esc(scName(r.scenario))}</a>${runsMark(r)}${marks.map((b) => ` <a class="bisect-mark" href="#/bisects/${b.id}" title="bisect #${b.id} of ${esc(METRIC_NAMES[b.metric] || b.metric)}: ${esc(b.status)}">${BISECT_MARKS[b.status] || ''} #${b.id}</a>`).join('')}${j.error ? `<div class="error one-line" title="${esc(j.error)}">${esc(j.error)}</div>` : ''}</td>
         ${status}${cells}<td>${badge(r.verdict)}</td>
         <td class="row-action">${j.status === 'queued' || j.status === 'running' ? '' : r.comparison ? `${moreRunBtn(j.id)}${moved.length ? ` ${bisectBtn(j.id)}` : ''}` : `<button class="small" data-retry="${j.id}">Retry</button>`}</td></tr>`;
     }).join('');
@@ -3140,7 +3148,7 @@ function masterCard(rels, a, branch, autorun, open, showCalm, next) {
       title="${esc(`${name}: ${HELP[l.status]}`)} · ${levels} · click for details">${chip}<b class="att-mark">${ATT_GROUPS[group][0]}</b></button></td>`;
   };
   const details = (x) => cols.filter(([k]) => linesOf(x).some((l) => l.metric === k)).map(([k]) => `<tr class="att-detail" data-att-for="${esc(`${x.scenario}|${k}`)}" ${`${x.scenario}|${k}` === open ? '' : 'hidden'}>
-    <td colspan="${width}">${linesOf(x).filter((l) => l.metric === k).map((l) => attentionLine(l, rowOf(x).activeBisect)).join('')}<div class="att-foot"><a href="${timeline(x, k)}">Open on Timeline</a></div></td></tr>`).join('');
+    <td colspan="${width}">${linesOf(x).filter((l) => l.metric === k).map((l) => attentionLine(l, l.activeBisect)).join('')}<div class="att-foot"><a href="${timeline(x, k)}">Open on Timeline</a></div></td></tr>`).join('');
   const place = (x) => { const i = a.rows.findIndex((y) => y.scenario === x.scenario); return i < 0 ? a.rows.length : i; };
   const rows = [...rels].sort((x, y) => place(x) - place(y)).map((x) => {
     const j = x.job, hide = folds(x) && !showCalm;

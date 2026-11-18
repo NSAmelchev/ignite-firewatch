@@ -4,9 +4,11 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Automatic bisection of a measured segment that moved a metric. It follows every part of the segment that moves the
@@ -123,11 +125,7 @@ public final class Bisector {
         if (Stats.METRICS.stream().noneMatch(d -> d.key.equals(m)))
             throw new IllegalArgumentException("unknown metric: " + m);
 
-        List<Bisect> active = db.bisects(root.scenario, true, 1);
-
-        if (!active.isEmpty())
-            throw new IllegalArgumentException("bisect #" + active.get(0).id + " of " + root.scenario
-                + " is still active: cancel it first");
+        requireIdle(root.scenario, m);
 
         List<String> range = mirror.revList(root.shaA, root.shaB);
 
@@ -165,9 +163,35 @@ public final class Bisector {
     }
 
     /**
+     * One search of a metric of a scenario at a time, of the branch or of a comparison: a second one would measure the
+     * same pairs for the same answer. Searches of other metrics of the scenario go on at once and share the steps
+     * their paths have in common.
+     */
+    private void requireIdle(String scenario, String metric) {
+        Bisect busy = activeOf(scenario, metric);
+
+        if (busy != null)
+            throw new IllegalArgumentException("bisect #" + busy.id + " of " + scenario + " (" + busy.metric
+                + ") is still active: cancel it first");
+    }
+
+    /**
+     * Returns the running or stopped bisection of the metric of the scenario, if any.
+     *
+     * @param scenario Scenario name.
+     * @param metric Metric key.
+     * @return The active bisection, or {@code null}.
+     */
+    public Bisect activeOf(String scenario, String metric) {
+        return db.bisects(scenario, true, 1000).stream().filter(b -> metric.equals(b.metric)).findFirst()
+            .orElse(null);
+    }
+
+    /**
      * Cancels a bisection: no new steps; its queued step leaves the queue, the running one is stopped too unless
      * {@code stopRunning} is false (then it finishes as an ordinary run). Finished steps stay on the map as ordinary
-     * runs unless {@code deleteFinished}.
+     * runs unless {@code deleteFinished}. A search of another metric of the scenario may wait for the same step: it
+     * gets the step instead, and a finished step that another search counts on is not deleted.
      *
      * @param id Bisection id.
      * @param stopRunning Whether to stop its running job.
@@ -185,23 +209,43 @@ public final class Bisector {
         b.finishedAt = Db.now();
         b.state.waitJob = null;
         db.updateBisect(b); // first: the steps cancelled below must not move it any more
-        int cancelled = 0, deleted = 0;
+        int cancelled = 0, deleted = 0, handed = 0;
+        List<Bisect> others = db.bisects(null, false, Integer.MAX_VALUE).stream().filter(o -> o.id != id).toList();
 
         for (Job j : db.jobsOfBisect(id)) {
-            if (Job.QUEUED.equals(j.status) || (Job.RUNNING.equals(j.status) && stopRunning)) {
+            Bisect waiter = j.active() ? others.stream()
+                .filter(o -> Bisect.RUNNING.equals(o.status) && Long.valueOf(j.id).equals(o.state.waitJob))
+                .findFirst().orElse(null) : null;
+
+            if (waiter != null) {
+                db.setJobBisect(j.id, waiter.id, waiter.state.steps.size() + 1);
+                handed++;
+            }
+            else if (Job.QUEUED.equals(j.status) || (Job.RUNNING.equals(j.status) && stopRunning)) {
                 if (jobs.cancel(j.id))
                     cancelled++;
             }
         }
 
         if (deleteFinished) {
+            Set<Long> used = new HashSet<>();
+
+            for (Bisect o : others) {
+                if (Bisect.CANCELLED.equals(o.status))
+                    continue; // it counts on nothing any more
+
+                o.state.steps.forEach(st -> used.add(st.jobId));
+                used.add(o.state.waitJob);
+            }
+
             for (Job j : db.jobsOfBisect(id)) {
-                if (!j.active() && jobs.delete(j.id))
+                if (!j.active() && !used.contains(j.id) && jobs.delete(j.id))
                     deleted++;
             }
         }
 
-        Log.info("bisect #" + id + " cancelled: " + cancelled + " job(s) cancelled, " + deleted + " deleted");
+        Log.info("bisect #" + id + " cancelled: " + cancelled + " job(s) cancelled, " + deleted + " deleted"
+            + (handed > 0 ? ", " + handed + " handed to another search of the scenario" : ""));
 
         return view(b);
     }
@@ -222,11 +266,7 @@ public final class Bisector {
             throw new IllegalArgumentException("bisect #" + id + " is " + b.status
                 + (s.deep ? " after a deep search" : "") + ": no deep search for it");
 
-        List<Bisect> active = db.bisects(b.scenario, true, 1);
-
-        if (!active.isEmpty())
-            throw new IllegalArgumentException("bisect #" + active.get(0).id + " of " + b.scenario
-                + " is still active: cancel it first");
+        requireIdle(b.scenario, b.metric);
 
         int commits = mirror.revList(b.shaA, b.shaB).size();
         s.deep = true;
@@ -412,12 +452,24 @@ public final class Bisector {
             return null;
 
         Map<String, Long> step = new HashMap<>();
+        Map<String, Bisect> longest = new HashMap<>(); // searches of one range share their steps
         long sec = 0;
 
         for (Bisect b : running)
+            longest.merge(range(b), b, (x, y) -> stepsLeft(x) >= stepsLeft(y) ? x : y);
+
+        for (Bisect b : longest.values())
             sec += stepsLeft(b) * step.computeIfAbsent(b.scenario, jobs::stepSeconds);
 
         return java.time.Instant.now().plusSeconds(sec).toString();
+    }
+
+    /**
+     * What searches of several metrics share: the scenario and the range, so the pairs they measure. Steps of one
+     * of them serve the others as far as their paths go together.
+     */
+    private static String range(Bisect b) {
+        return b.scenario + '|' + b.shaA + '|' + b.shaB;
     }
 
     /** */
@@ -449,8 +501,12 @@ public final class Bisector {
     private long etaSec(Bisect b, List<Bisect> running, Map<String, Long> step) {
         long sec = 0, left = stepsLeft(b);
 
-        for (Bisect o : running)
+        for (Bisect o : running) {
+            if (o.id != b.id && range(o).equals(range(b)))
+                continue; // a search of another metric of the range: its steps are the steps of this one
+
             sec += Math.min(stepsLeft(o), left) * step.computeIfAbsent(o.scenario, jobs::stepSeconds);
+        }
 
         return sec;
     }
@@ -529,7 +585,8 @@ public final class Bisector {
                     return;
                 }
 
-                record(b, s.waitRole, s.waitA, s.waitB, j.id, false, r);
+                // a step queued by a search of another metric of the scenario counts as reused here
+                record(b, s.waitRole, s.waitA, s.waitB, j.id, !Long.valueOf(b.id).equals(j.bisectId), r);
                 apply(b, s.waitRole, r);
                 s.waitRole = null;
                 advance(b);

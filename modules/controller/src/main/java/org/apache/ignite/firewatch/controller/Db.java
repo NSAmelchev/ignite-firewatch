@@ -1243,6 +1243,26 @@ public final class Db implements AutoCloseable {
     }
 
     /**
+     * Gives a step job to another bisection: a search of another metric of the scenario that waits for it when its own
+     * bisection is cancelled.
+     *
+     * @param jobId Job id.
+     * @param bisectId Bisection that takes it.
+     * @param step Its step number in that bisection.
+     */
+    public synchronized void setJobBisect(long jobId, long bisectId, int step) {
+        try (PreparedStatement ps = c.prepareStatement("UPDATE jobs SET bisect_id = ?, bisect_step = ? WHERE id = ?")) {
+            ps.setLong(1, bisectId);
+            ps.setInt(2, step);
+            ps.setLong(3, jobId);
+            ps.executeUpdate();
+        }
+        catch (SQLException e) {
+            throw wrap(e);
+        }
+    }
+
+    /**
      * Every job of a comparison, oldest first.
      *
      * @param comparisonId Comparison id.

@@ -1373,6 +1373,57 @@ class PipelineTest {
     }
 
     /** */
+    @Test void twoMetricsOfAScenarioAreSearchedAtOnceAndShareTheirSteps() throws Exception {
+        List<String> c = eightCommits();
+        throughput(c, 4, 9000); // alloc/op moves with it: the same allocation over fewer operations
+        Job root = measuredSegment(origin.shas.get(1), c.get(7));
+        Bisector bisector = new Bisector(db, mirror, jobs);
+        Bisect thr = bisector.start(root.id, "throughput", null);
+        long alone = bisector.get(thr.id).etaSec;
+        String doneAlone = bisector.doneAt();
+        Bisect alloc = bisector.start(root.id, "allocKbPerOp", null);
+        assertEquals(thr.waiting.id, alloc.waiting.id, "the second search waits for the step the first queued");
+        assertEquals(alone, bisector.get(thr.id).etaSec, "a search of another metric of the range adds no turns");
+        assertEquals(alone, bisector.get(alloc.id).etaSec);
+        assertTrue(Duration.between(Instant.parse(doneAlone), Instant.parse(bisector.doneAt())).getSeconds() < 60,
+            "and nothing to the end of the searches");
+        assertThrows(IllegalArgumentException.class, () -> bisector.start(root.id, "throughput", null),
+            "one search of a metric at a time");
+
+        Bisect a = runToTheEnd(bisector, thr.id), b = bisector.get(alloc.id);
+        assertEquals(Bisect.FOUND, a.status);
+        assertEquals(Bisect.FOUND, b.status);
+        assertEquals(a.resultSha, b.resultSha);
+        assertEquals(c.get(4), a.resultSha);
+        List<Long> stepsA = a.state.steps.stream().map(st -> st.jobId).toList();
+        assertEquals(stepsA, b.state.steps.stream().map(st -> st.jobId).toList(), "the same pairs, measured once");
+        assertEquals(stepsA.size(), db.jobsOfBisect(thr.id).size() + db.jobsOfBisect(alloc.id).size());
+        assertTrue(a.state.steps.stream().allMatch(st -> st.reused != Long.valueOf(thr.id).equals(db.job(st.jobId).bisectId)),
+            "a step queued by the other search counts as reused");
+    }
+
+    /** */
+    @Test void cancellingOneSearchLeavesTheOtherMetricItsSteps() throws Exception {
+        List<String> c = eightCommits();
+        throughput(c, 4, 9000);
+        Job root = measuredSegment(origin.shas.get(1), c.get(7));
+        Bisector bisector = new Bisector(db, mirror, jobs);
+        Bisect thr = bisector.start(root.id, "throughput", null);
+        Bisect alloc = bisector.start(root.id, "allocKbPerOp", null);
+        Job first = db.job(thr.waiting.id);
+        runner.runJob(first); // both take it
+        Job second = db.nextQueued();
+        assertNotNull(second);
+        long owner = second.bisectId, other = owner == thr.id ? alloc.id : thr.id;
+
+        bisector.cancel(owner, true, true);
+        assertEquals(Job.QUEUED, db.job(second.id).status, "the step the other search waits for stays queued");
+        assertEquals(Long.valueOf(other), db.job(second.id).bisectId, "and is its step now");
+        assertNotNull(db.job(first.id), "a finished step the other search counts on is not deleted");
+        assertEquals(Bisect.FOUND, runToTheEnd(bisector, other).status);
+    }
+
+    /** */
     @Test void aStepCancelledFromTheQueueStopsTheBisectUntilResumed() throws Exception {
         List<String> c = eightCommits();
         throughput(c, 4, 9000);
@@ -1671,12 +1722,13 @@ class PipelineTest {
         assertEquals(4, line.narrowSpan);
         assertEquals(half.id, line.jobId, "a search starts from the shortest segment");
         assertEquals(4, line.rangeCommits);
-        assertNull(attention.view().rows.get(0).activeBisect);
+        assertNull(line.activeBisect);
 
         Bisect b = bisector.start(line.jobId, "throughput", null);
         assertEquals(Bisect.RUNNING, line(attention, "throughput").status);
-        assertEquals(Long.valueOf(b.id), attention.view().rows.get(0).activeBisect,
-            "a second bisection of the scenario has to wait");
+        assertEquals(Long.valueOf(b.id), line(attention, "throughput").activeBisect,
+            "another search of the metric has to wait");
+        assertNull(line(attention, "allocKbPerOp").activeBisect, "a search of another metric does not");
         assertTrue(bisector.get(b.id).etaSec > 0);
         assertEquals(1, attention.view().rows.size());
 

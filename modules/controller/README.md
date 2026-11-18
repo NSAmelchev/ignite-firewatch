@@ -176,9 +176,10 @@ of a segment moved the metric the same way as master, it is `narrowed`, the shor
 bisection starts from it rather than from the whole range. Bisections of comparisons cover another range and do not count
 here. A run of the branch newer than master vs release is a separate `new` line. The Bisect deviations button starts the
 searches needed at once: a scenario is one line of the dialog with a choice of the metric, a narrowed metric starts from
-its segment, a clear signal is picked in advance, a weak one only offered. A scenario may have one active bisection (of
-the branch or of a comparison), so a busy scenario stands at the end of the dialog as an inactive `after #N` line, and the
-same mark replaces the buttons in the details of a cell and in Still open. What needs action comes first, fully explained
+its segment, a clear signal is picked in advance, a weak one only offered. A metric of a scenario may have one active
+bisection (of the branch or of a comparison), searches of its other metrics go on at once and share the steps their paths
+have in common; a metric that waits for another search of it is left out of the dialog, and `after #N` replaces its
+buttons in the details of a cell and in Still open. What needs action comes first, fully explained
 scenarios are folded. `start ms` and `preload ms` stay out of it: they are the noise of a start.
 
 ### Comparisons (`Comparisons`)

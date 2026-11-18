@@ -52,12 +52,6 @@ public final class Attention {
         /** */
         public String scenario;
 
-        /**
-         * A running or stopped bisection of the scenario, of the branch or of a comparison: a second one has to wait
-         * for it.
-         */
-        public Long activeBisect;
-
         /** */
         public List<Line> lines = new ArrayList<>();
     }
@@ -105,6 +99,12 @@ public final class Attention {
 
         /** Its bisection was a deep search already: no second one. */
         public boolean deep;
+
+        /**
+         * A running or stopped bisection of this metric of the scenario, of the branch or of a comparison: another
+         * search of the metric waits for it, a search of another metric does not.
+         */
+        public Long activeBisect;
 
         /**
          * The shortest segment that moved the metric the way master did, if any: a search of another metric leaves
@@ -206,8 +206,11 @@ public final class Attention {
             if (r.lines.isEmpty())
                 continue;
 
-            all.stream().filter(b -> b.active() && s.name.equals(b.scenario)).findFirst()
-                .ifPresent(b -> r.activeBisect = b.id);
+            for (Line l : r.lines) {
+                all.stream().filter(b -> b.active() && s.name.equals(b.scenario) && l.metric.equals(b.metric))
+                    .findFirst().ifPresent(b -> l.activeBisect = b.id);
+            }
+
             v.rows.add(r);
         }
 
