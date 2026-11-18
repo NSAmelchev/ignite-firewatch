@@ -174,13 +174,17 @@ found commits the status comes from the last bisection of the metric (`running`,
 there was none, the metric is `unexplored`. A bisection follows one metric, but every step measures all of them: when a run
 of a segment moved the metric the same way as master, it is `narrowed`, the shortest such segment is shown, and the
 bisection starts from it rather than from the whole range. Bisections of comparisons cover another range and do not count
-here. A run of the branch newer than master vs release is a separate `new` line. The Bisect deviations button starts the
-searches needed at once: a scenario is one line of the dialog with a choice of the metric, a narrowed metric starts from
-its segment, a clear signal is picked in advance, a weak one only offered. A metric of a scenario may have one active
-bisection (of the branch or of a comparison), searches of its other metrics go on at once and share the steps their paths
-have in common; a metric that waits for another search of it is left out of the dialog, and `after #N` replaces its
-buttons in the details of a cell and in Still open. What needs action comes first, fully explained
-scenarios are folded. `start ms` and `preload ms` stay out of it: they are the noise of a start.
+here. A run of the branch newer than master vs release is a separate `new` line. Every metric is searched on its own: a
+metric of a scenario may have one active bisection (of the branch or of a comparison), searches of its other metrics go on
+at once and share the steps their paths have in common, and a metric that waits for another search of it shows `after #N`
+instead of a button in the details of a cell and in Still open. Still open is a row per metric with how long it takes: a
+running search says when it should end, one that can start how long it would take (its steps by a run and a build of the
+scenario: `next`, `searchCommits` and `searchSec` of a line of `/api/attention`); its head says how many searches run and
+when the last of them ends. Investigate all opens one dialog with every search left to start, a bisection, a deep search
+of one that ended without a commit or a stopped one again, all picked, with Δ, the signal (below 3× marked `weak`), the
+commits and the time; the sum counts the searches of one range once and says when they should be done. A narrowed metric
+starts from its segment. With nothing to start the button is disabled and says why. What needs action comes first, fully
+explained scenarios are folded. `start ms` and `preload ms` stay out of it: they are the noise of a start.
 
 ### Comparisons (`Comparisons`)
 
@@ -194,9 +198,9 @@ finished ones stay; Delete is there when no job is active and removes the compar
 one notification, when no job of the comparison is left in the queue; there is none for separate jobs.
 
 A deviation of a comparison can be bisected: the Bisect button of a scenario row, a click on a Δ with a verdict (that
-metric at once) or Bisect deviations for several scenarios together. The metrics in the dialog are sorted by the strength
-of the signal: Δ divided by the spread of the phases; below 3× it is marked `weak`, such a search rarely reaches a commit.
-Scenarios with a verdict are picked in advance, those where only a single metric moved are offered unticked. There is no
+metric at once) or Investigate all for every search left: a bisection of each moved metric that no search followed, a deep
+search of each that ended without a commit, a stopped one again, all picked in advance. The signal is Δ divided by the
+spread of the phases; below 3× it is marked `weak`, such a search rarely reaches a commit. There is no
 separate link: a bisection belongs to a comparison because its root job has `comparison_id`, and the table did not
 change. The steps are ordinary bisection jobs: they are not rows of the comparison, and only the commits of the branch
 itself reach Timeline and Commits. The status of a comparison does not depend on its bisections. Cancel of the comparison
@@ -418,7 +422,7 @@ strength of the signal, commits.
   measured and bisections run; the API keeps `done`, so the notification of the end does not wait for the searches), how
   many scenarios are measured, the verdict counters, what runs now and when everything ends, bisections included (the
   stand runs one job at a time, so the time of bisections adds to the jobs; on a pause there is no time), a row per
-  scenario with the values of B and Δ, Run/Retry/Bisect buttons on a row, Cancel or Delete, Bisect deviations. The Result
+  scenario with the values of B and Δ, Run/Retry/Bisect buttons on a row, Cancel or Delete, Investigate all. The Result
   block: the found commits, each with the scenarios and metrics it moved and by how much, the biggest shift first, a Δ
   leading into its bisection; below, Not pinned down, shifts without a commit, in soft colours: smeared ranges
   (`spread`), shifts at the noise threshold (`inconclusive`, with Deep search), ranges still being searched, and

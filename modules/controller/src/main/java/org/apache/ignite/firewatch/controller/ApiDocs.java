@@ -473,7 +473,8 @@ final class ApiDocs {
         list.add(new Op("GET /api/attention", "getAttention", "Dashboard", Effect.READ,
             "What needs attention: master against the release per scenario and what was found on the branch")
             .returns(any("rows per scenario with the metrics of master vs the release, their status and the commits "
-                + "found; runs newer than it; activeBisect of a metric: the search another one of it waits for")));
+                + "found; runs newer than it; activeBisect of a metric: the search another one of it waits for; next "
+                + "(bisect, deep, resume) with searchCommits and searchSec: what can start on it and how long it takes, s")));
         list.add(new Op("GET /api/schedule", "getSchedule", "Jobs", Effect.READ,
             "What the schedules queue next and when: auto-run, master vs release, the A/A, the plugins")
             .returns(any("items: kind, title, plugin, the scenarios that go next (scenarios, jobs, builds, runSec, "

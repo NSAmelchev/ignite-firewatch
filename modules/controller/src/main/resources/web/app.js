@@ -117,7 +117,7 @@ const HELP = {
   searching: 'Everything is measured, its bisects are looking for the commits.',
   search: 'There is more to find: Bisect, Deep search or Resume takes it further.',
   nocommit: 'The search ended without a commit: small changes add up, or it was noise. Deep search can look closer.',
-  after: 'A scenario takes one bisect at a time: this search can start when that bisect ends.',
+  after: 'A metric of a scenario takes one search at a time: this one can start when that search ends. Other metrics do not wait.',
   deep: 'Both halves on every level and more runs where the answer is close: finds a change near the noise, takes hours.',
   noise: 'Inside the threshold: nothing to see here.',
   refined: 'A shorter run ends at the same commit and replaced this one.',
@@ -328,7 +328,7 @@ async function startBisect(jobId, metric) {
   if (!moved.length) { toast(`job #${jobId} shows no verdict to follow`, true); return; }
   if (c && c.commits < 2) { toast(`${c.label}: ${plural(c.commits, 'commit')} between the two sides, nothing to bisect`, true); return; }
   const pick = moved.includes(metric) ? metric : moved[0];
-  const n = c ? c.commits : (j.segment && j.segment.count) || 2, lv = levelsOf(n), steps = Math.ceil(lv * 1.5);
+  const n = c ? c.commits : (j.segment && j.segment.count) || 2, lv = levelsOf(n), steps = searchSteps(n, false);
   const q = new URLSearchParams({ scenario: j.scenario, type: 'abba', jobs: steps, shas: '', extraBuilds: steps, priority: 2 });
   const e = await api.get(`/api/estimate?${q}`).catch(() => null);
   const body = `<dl class="kv">
@@ -357,76 +357,124 @@ function bisectCandidates(c) {
     .map((r) => ({ ...r, free: rankedMetrics((r.comparison || {}).metrics || {}).filter((k) => !taken.has(`${r.scenario}|${k}`)) }))
     .filter((r) => r.free.length);
 }
-// Several bisections at once. rows: [{ scenario, checked, busy, options: [{ jobId, metric, x, commits }] }], an option is what a
-// bisection of the scenario can follow, busy the bisect the scenario waits for; a step costs a run and a build, the number of
-// steps follows the size of the range
-async function pickBisects({ title, note, rows }) {
-  const stepSec = new Map(await Promise.all(rows.map(async ({ scenario }) => {
-    const q = new URLSearchParams({ scenario, type: 'abba', jobs: 1, shas: '', extraBuilds: 1, priority: 2 });
-    const e = await api.get(`/api/estimate?${q}`).catch(() => null);
-    return [scenario, e ? e.totalSec : 0];
-  })));
-  // a table rather than a line of text in a list: the numbers of a choice stand in columns, and the list stays one size
+// Steps of a new search of n commits, as Bisector.searchSteps: the quick one takes the left half on every level and the right one
+// about every second time, the deep one measures both halves and repeats close calls
+const searchSteps = (n, deep) => (deep ? Math.ceil(levelsOf(n) * 2.5) + DEEP_RUNS : Math.ceil(levelsOf(n) * 1.5));
+// what is left of a stopped search, as Bisector.stepsLeft
+const stepsLeft = (b) => b.state.open.reduce((x, r) => x + (b.state.deep ? levelsOf(r.commits) * 4 + DEEP_RUNS
+  : Math.floor(levelsOf(r.commits) * 3 / 2) + (r.commits <= 1 && r.cur ? 0 : 1)), 0);
+const SEARCH_KINDS = { bisect: 'bisect', deep: 'deep search', resume: 'resume' };
+const searchesOf = (n) => `${n} ${n === 1 ? 'search' : 'searches'}`;
+// searches of one range of a scenario measure the same pairs: a sum counts the longest of them once
+const shareKey = (r) => (r.kind === 'bisect' ? `${r.scenario}|${r.jobId}` : `#${r.bisectId}`);
+const mostOf = (rows) => {
+  const m = new Map();
+  rows.forEach((r) => m.set(shareKey(r), Math.max(m.get(shareKey(r)) || 0, r.takesSec || 0)));
+  return [...m.values()].reduce((x, y) => x + y, 0);
+};
+// a new run of the branch and a search of a bisection carry no spread of phases: their signal is not known
+const knownSignal = (x) => Boolean(x.spreadAPct || x.spreadBPct);
+// how strong a move is, for the order of a list: the signal, else Δ in thresholds
+const strength = (x) => (knownSignal(x) ? signalOf(x) : Math.abs(x.deltaPct) / Math.max(x.thresholdPct || 0, 0.05));
+const signalCell = (x) => {
+  if (!knownSignal(x)) return '–';
+  const s = signalOf(x);
+  return `${s < WEAK_SIGNAL ? '<span class="weak">weak</span> ' : ''}${s < 10 ? s.toFixed(1) : Math.round(s)}×`;
+};
+// Every search left to start, all picked. rows: [{ kind (bisect, deep or resume), scenario, metric, x (deltaPct, the spreads,
+// verdict, thresholdPct), jobId (a bisection starts from it), bisectId (the one to search deeper or resume), state, commits,
+// takesSec, note }]; skipped says in words what is not offered and why. A step costs a run and a build of the scenario.
+async function investigate({ title, rows, skipped }) {
+  const health = await api.get('/api/health').catch(() => null);
   const line = (r, i) => `<tr class="pick" data-pick="${i}">
-    <td><label><input type="checkbox" data-row="${i}" ${r.checked ? 'checked' : ''} ${r.busy ? 'disabled' : ''}> ${esc(scName(r.scenario))}${r.busy ? ` · ${term('after', `after #${r.busy}`)}` : ''}</label></td>
-    <td><select ${r.options.length < 2 || r.busy ? 'disabled' : ''}>${r.options.map((o, n) => `<option value="${n}">${esc(METRIC_NAMES[o.metric] || o.metric)}</option>`).join('')}</select></td>
-    <td class="num" data-delta></td><td class="num" data-signal></td><td class="num" data-range></td></tr>`;
-  const body = `<table class="bisect-pick"><thead><tr><th>Scenario</th><th>Metric</th><th class="num">Δ</th><th class="num"${hint('signal')}>Signal</th><th class="num">Commits</th></tr></thead>
+    <td><label><input type="checkbox" data-row="${i}" checked> ${esc(scName(r.scenario))}</label></td>
+    <td>${SEARCH_KINDS[r.kind]} <b>${esc(METRIC_NAMES[r.metric] || r.metric)}</b>${r.kind !== 'bisect' ? ` <a href="#/bisects/${r.bisectId}">#${r.bisectId}</a>` : ''}${r.state ? ` <span class="muted">${esc(r.state)}</span>` : ''}</td>
+    <td class="num"><span class="dlt ${deltaClass(r.metric, r.x.deltaPct, r.x.thresholdPct, r.x.verdict, true)}">${fmt.pct(r.x.deltaPct)}</span></td>
+    <td class="num">${signalCell(r.x)}</td><td class="num">${fmt.num(r.commits)}</td>
+    <td class="num">${r.takesSec ? `~${mins(r.takesSec)}` : '–'}${r.note ? `<div class="muted small-text">${r.note}</div>` : ''}</td></tr>`;
+  // a table rather than a line of text in a list: the numbers of a choice stand in columns, and the list stays one size
+  const body = `<table class="bisect-pick"><thead><tr><th>Scenario</th><th>Search</th><th class="num">Δ</th><th class="num"${hint('signal')}>Signal</th><th class="num">Commits</th><th class="num">Takes</th></tr></thead>
     <tbody>${rows.map(line).join('')}</tbody></table>
     <dl class="kv"><dt>Priority</dt><dd>${priorityField(1, await frontPriority())}</dd></dl>
-    <div class="modal-note">${note} Steps of several bisections take turns in the queue. ${term('signal', 'Signal')} under ${WEAK_SIGNAL}× is weak: such a search rarely reaches a commit.</div>`;
-  const optionOf = (tr) => rows[Number(tr.dataset.pick)].options[Number($('select', tr).value)];
-  const picked = (w) => [...w.querySelectorAll('[data-row]:checked')].map((i) => ({ r: rows[Number(i.dataset.row)], o: optionOf(i.closest('tr')) }));
-  const takes = (w) => {
-    w.querySelectorAll('tr[data-pick]').forEach((tr) => {
-      const { metric, x, commits } = optionOf(tr), s = signalOf(x);
-      tr.classList.toggle('off', !$('[data-row]', tr).checked);
-      $('[data-delta]', tr).innerHTML = `<span class="dlt ${deltaClass(metric, x.deltaPct, x.thresholdPct, x.verdict, true)}">${fmt.pct(x.deltaPct)}</span>`;
-      $('[data-signal]', tr).innerHTML = `${s < WEAK_SIGNAL ? '<span class="weak">weak</span> ' : ''}${s < 10 ? s.toFixed(1) : Math.round(s)}×`;
-      $('[data-range]', tr).textContent = fmt.num(commits);
-    });
-    const on = picked(w), sec = on.reduce((x, { r, o }) => x + Math.ceil(levelsOf(o.commits) * 1.5) * stepSec.get(r.scenario), 0);
-    w.querySelector('[data-sum]').textContent = on.length ? `${plural(on.length, 'bisection')} · ~${mins(sec)}` : 'nothing picked';
-    w.querySelector('[data-yes]').disabled = !on.length;
+    <div class="modal-note">${skipped ? `Not here: ${skipped}. ` : ''}Metrics of one scenario share their steps, so the sum is the most it takes; steps of
+      several searches take turns in the queue. ${term('signal', 'Signal')} under ${WEAK_SIGNAL}× is weak: such a search rarely reaches a commit.</div>`;
+  const picked = (w) => [...w.querySelectorAll('[data-row]:checked')].map((i) => rows[Number(i.dataset.row)]);
+  const sum = (w) => {
+    w.querySelectorAll('tr[data-pick]').forEach((tr) => tr.classList.toggle('off', !$('[data-row]', tr).checked));
+    const on = picked(w), sec = mostOf(on), yes = w.querySelector('[data-yes]');
+    // the searches going now come first; as usual, the queue too
+    const after = health ? [health.bisectsDoneAt, priorityOf(w) <= 1 ? health.queueDrainsAt : null].filter(Boolean).map((x) => new Date(x).getTime()) : [];
+    const when = !health ? '' : health.worker.paused ? ' · after Reopen' : ` · done ${planDay(new Date(Math.max(Date.now(), ...after) + sec * 1000).toISOString())}`;
+    w.querySelector('[data-sum]').textContent = on.length ? `${searchesOf(on.length)} · up to ~${mins(sec)}${when}` : 'nothing picked';
+    yes.disabled = !on.length;
+    yes.textContent = on.length > 1 ? `Start ${on.length}` : 'Start';
   };
   const v = await modal(title, body, 'Start', {
     asWho: true,
-    open: (w) => { takes(w); w.addEventListener('change', () => takes(w)); },
-    value: (w) => ({ priority: priorityOf(w), items: picked(w).map(({ o }) => ({ jobId: o.jobId, metric: o.metric })) }),
+    open: (w) => { sum(w); w.addEventListener('change', () => sum(w)); },
+    value: (w) => ({ priority: priorityOf(w), items: picked(w) }),
   });
   if (!v) return false;
   const failed = [];
-  for (const it of v.items) {
-    try { await api.post('/api/bisects', { ...it, priority: v.priority }); }
-    catch (e) { failed.push(e.message); }
+  for (const r of v.items) {
+    try {
+      if (r.kind === 'bisect') await api.post('/api/bisects', { jobId: r.jobId, metric: r.metric, priority: v.priority });
+      else if (r.kind === 'deep') await api.post(`/api/bisects/${r.bisectId}/deep`, { priority: v.priority });
+      else await api.post(`/api/bisects/${r.bisectId}/resume`, {});
+    }
+    catch (e) { failed.push(`${scName(r.scenario)} ${METRIC_NAMES[r.metric] || r.metric}: ${e.message}`); }
   }
-  toast(failed.length ? `${v.items.length - failed.length} of ${v.items.length} started: ${failed.join('; ')}` : `${plural(v.items.length, 'bisection')} started`, failed.length > 0);
+  toast(failed.length ? `${v.items.length - failed.length} of ${v.items.length} started: ${failed.join('; ')}` : `${searchesOf(v.items.length)} started`, failed.length > 0);
   return true;
 }
-// One bisection per deviation of a comparison: scenarios with a verdict are picked, the ones where only a metric moved are offered
-async function startBisects(id) {
-  const c = await api.get(`/api/comparisons/${id}`), rows = bisectCandidates(c);
-  if (!rows.length) { toast('nothing left to bisect', true); return; }
-  const started = await pickBisects({ title: `Bisect the deviations of ${esc(c.label)}`, note: `${c.commits} commits, the metric with the cleanest signal is chosen.`,
-    rows: rows.map((r) => ({ scenario: r.scenario, checked: MOVED.has(r.verdict),
-      options: r.free.map((k) => ({ jobId: r.job.id, metric: k, x: r.comparison.metrics[k], commits: c.commits })) })) });
-  if (started) refresh();
+const bisectRef = (id) => `<a href="#/bisects/${id}">#${id}</a>`;
+// What a comparison can still start: a bisection of every moved metric no search followed, a deep search of every one that ended
+// without a commit, the stopped ones again
+async function comparisonSearches(c) {
+  const latest = latestBisects(c.bisects).map((g) => g.b), x = (b) => ({ ...(b.state.root || {}), verdict: b.direction });
+  const rows = [
+    ...bisectCandidates(c).flatMap((r) => r.free.map((k) => ({ kind: 'bisect', scenario: r.scenario, metric: k, x: r.comparison.metrics[k], jobId: r.job.id, commits: c.commits }))),
+    ...latest.filter(canGoDeep).map((b) => ({ kind: 'deep', scenario: b.scenario, metric: b.metric, x: x(b), bisectId: b.id, state: b.status, commits: c.commits })),
+    ...latest.filter((b) => b.status === 'stopped').map((b) => ({ kind: 'resume', scenario: b.scenario, metric: b.metric, x: x(b), bisectId: b.id, state: 'stopped',
+      commits: b.state.open.reduce((n, r) => n + r.commits, 0), steps: stepsLeft(b) })),
+  ];
+  const step = new Map(await Promise.all([...new Set(rows.map((r) => r.scenario))].map(async (sc) => {
+    const q = new URLSearchParams({ scenario: sc, type: 'abba', jobs: 1, shas: '', extraBuilds: 1, priority: 2 });
+    const e = await api.get(`/api/estimate?${q}`).catch(() => null);
+    return [sc, e ? e.totalSec : 0];
+  })));
+  rows.forEach((r) => { r.takesSec = (r.steps ?? searchSteps(r.commits, r.kind === 'deep')) * step.get(r.scenario); });
+  return rows;
 }
-// What the master card can still search: a scenario with a moved metric that nothing explains. A scenario with a bisection going on
-// waits for it, at the end of the list. A clear signal is picked, a weak one only offered: noise is not worth the hours of the stand.
-const OPEN_LINES = new Set(['unexplored', 'narrowed', 'partial', 'new']);
-const canBisect = (l) => OPEN_LINES.has(l.status) && MOVED.has(l.verdict) && l.rangeCommits > 1;
-function openBisects(a) {
-  const opts = (r) => r.lines.filter((l) => canBisect(l) && !l.activeBisect).sort((x, y) => signalOf(y) - signalOf(x))
-    .map((l) => ({ jobId: l.jobId, metric: l.metric, x: l, commits: l.rangeCommits, note: plural(l.rangeCommits, 'commit') }));
-  return a.rows.map((r) => ({ scenario: r.scenario, options: opts(r) })).filter((r) => r.options.length)
-    .map((r) => ({ ...r, checked: signalOf(r.options[0].x) >= WEAK_SIGNAL }));
+const canInvestigate = (c) => c.commits > 1 && (bisectCandidates(c).length > 0 || latestBisects(c.bisects).some(({ b }) => canGoDeep(b) || b.status === 'stopped'));
+async function investigateComparison(id) {
+  const c = await api.get(`/api/comparisons/${id}`), rows = await comparisonSearches(c);
+  if (!rows.length) { toast('nothing left to start', true); return; }
+  const running = c.bisects.filter((b) => b.status === 'running');
+  const skipped = running.length ? `${running.length} searched right now (${running.map((b) => bisectRef(b.id)).join(' ')})` : '';
+  if (await investigate({ title: `Investigate ${esc(c.label)}`, rows, skipped })) refresh();
 }
-async function startOpenBisects(view) {
-  const a = await api.get('/api/attention'), rows = openBisects(a);
-  if (!rows.length) { toast('nothing left to bisect', true); return; }
-  const started = await pickBisects({ title: `Bisect what is open on master vs ${esc(a.tag)}`, note: 'A narrowed metric starts from its short segment.', rows });
-  if (started) { view.attention = null; refresh(); }
+// What the master card can still start, as Attention says (next) of every line; what is not offered and why, in words
+function masterSearches(a) {
+  const lines = a.rows.flatMap((r) => r.lines.map((l) => ({ ...l, scenario: r.scenario })));
+  // a search of a new run of the branch shows on the runs it measured too: it counts once
+  const running = [...new Map(lines.filter((l) => l.status === 'running').map((l) => [l.bisectId, l])).values()];
+  const rows = lines.filter((l) => l.next).sort((x, y) => strength(y) - strength(x)).map((l) => {
+    const along = l.next === 'bisect' && running.find((o) => o.scenario === l.scenario && o.jobId === l.jobId);
+    return { kind: l.next, scenario: l.scenario, metric: l.metric, x: l, jobId: l.jobId, bisectId: l.bisectId, state: ATT_STATES[l.status][1].toLowerCase(),
+      commits: l.searchCommits, takesSec: l.searchSec, note: along ? `steps shared with #${along.bisectId}` : '' };
+  });
+  const named = (l) => `${esc(scName(l.scenario))} ${esc(METRIC_NAMES[l.metric] || l.metric)}`;
+  // a metric of a scenario may wait in several lines: it is said once
+  const skipped = [running.length ? `${running.length} searched right now (${running.map((l) => bisectRef(l.bisectId)).join(' ')})` : '',
+    ...lines.filter((l) => !l.next && l.deep && DEEP_STATES.has(l.status)).map((l) => `${named(l)} deep-searched already (${bisectRef(l.bisectId)})`),
+    ...lines.filter((l) => !l.next && l.activeBisect && l.activeBisect !== l.bisectId).map((l) => `${named(l)} after ${bisectRef(l.activeBisect)}`)];
+  return { rows, running, skipped: [...new Set(skipped.filter(Boolean))].join(', ') };
+}
+async function investigateMaster(view) {
+  const a = await api.get('/api/attention'), { rows, skipped } = masterSearches(a);
+  if (!rows.length) { toast('nothing left to start', true); return; }
+  if (await investigate({ title: `Investigate what is open on master vs ${esc(a.tag)}`, rows, skipped })) { view.attention = null; refresh(); }
 }
 async function deleteBisect(id) {
   if (!(await modal(`Delete bisect #${id}?`, '<div>Only its record goes: its steps stay as runs of the branch and count in later searches. This cannot be undone.</div>', 'Delete', { danger: true }))) return;
@@ -460,17 +508,23 @@ async function resumeBisect(id) {
 const DEEP_STATES = new Set(['inconclusive', 'spread', 'lost']);
 const canGoDeep = (b) => DEEP_STATES.has(b.status) && !b.state.deep;
 const deepButton = (id) => `<button class="small" data-bisect-deep="${id}"${hint('deep')}>Deep search</button>`;
-// What a line of the master card can do next; a metric of a scenario takes one search at a time, so a busy one says what it
-// waits for
-function attentionAction(l, busy) {
-  const deep = DEEP_STATES.has(l.status) && !l.deep;
-  if (!deep && !canBisect(l)) return '';
-  if (busy) return `<a class="muted" href="#/bisects/${busy}"${hint('after')}>after #${busy}</a>`;
-  return deep ? deepButton(l.bisectId) : `<button class="small" data-bisect="${l.jobId}" data-metric="${esc(l.metric)}">Bisect</button>`;
+// What a line of the master card can do next (Attention says it: next); a metric of a scenario takes one search at a time, so a
+// line that waits for another search of its metric says which
+function attentionAction(l) {
+  if (l.next === 'bisect') return `<button class="small" data-bisect="${l.jobId}" data-metric="${esc(l.metric)}">Bisect</button>`;
+  if (l.next === 'deep') return deepButton(l.bisectId);
+  if (l.next === 'resume') return `<button class="small" data-bisect-resume="${l.bisectId}">Resume</button>`;
+  if (l.activeBisect && l.activeBisect !== l.bisectId) return `<a class="muted" href="#/bisects/${l.activeBisect}"${hint('after')}>after #${l.activeBisect}</a>`;
+  return '';
 }
+// How long a line takes: a search going on says when it ends (while the stand is closed, that it waits), one that can start how
+// long it would take
+const lineTime = (l, paused) => (l.status === 'running' && paused ? 'after Reopen'
+  : l.status === 'running' && l.etaSec ? `done ${planDay(new Date(Date.now() + l.etaSec * 1000).toISOString())}`
+  : l.next && l.searchSec ? `~${mins(l.searchSec)}` : !l.next && l.deep && DEEP_STATES.has(l.status) ? 'deep-searched' : '');
 async function deepBisect(id) {
   const b = await api.get(`/api/bisects/${id}`);
-  const n = (b.positions || {})[b.shaB] || 2, lv = levelsOf(n), steps = Math.ceil(lv * 2.5) + 4;
+  const n = (b.positions || {})[b.shaB] || 2, lv = levelsOf(n), steps = searchSteps(n, true);
   const q = new URLSearchParams({ scenario: b.scenario, type: 'abba', jobs: steps, shas: '', extraBuilds: lv, priority: 2 });
   const e = await api.get(`/api/estimate?${q}`).catch(() => null);
   const body = `<dl class="kv">
@@ -2067,8 +2121,9 @@ const ATT_STATES = { narrowed: ['search', 'Narrowed'], new: ['search', 'New runs
   stopped: ['search', 'Stopped'], running: ['running', 'Searching'], spread: ['nocommit', 'Spread over small changes'], lost: ['nocommit', 'Did not repeat'], explained: ['explained', 'Explained'] };
 // A card of its own, so that it reads as the conclusion of the page. On the left what was found, a block per commit with a
 // strip for the way it moved things; on the right what is left, by kind.
-// found: [{ sha, subject, scenario, metric, d, id }]; loose: [{ kind, size, n, range, href, count, scenario, cells, action }]
-function resultBlock(title, found, loose, { going, openTitle }) {
+// found: [{ sha, subject, scenario, metric, d, id }]; loose: [{ kind, size, n, range, href, count, scenario, cells, time, action }];
+// openNote and openAction go next to the title of what is left
+function resultBlock(title, found, loose, { going, openTitle, openNote = '', openAction = '' }) {
   const commits = new Map();
   found.forEach((x) => {
     const c = commits.get(x.sha) || { sha: x.sha, subject: x.subject, most: 0, scenarios: new Map(), worse: 0, better: 0 };
@@ -2090,7 +2145,7 @@ function resultBlock(title, found, loose, { going, openTitle }) {
     const same = rows.every((x) => x.n === rows[0].n);
     return `<div class="res-group" data-group="${group}"><div class="res-group-head"><b>${name}</b>${same ? ` · ${rows[0].range}` : ''} <span class="muted">${esc(HELP[kind] || '')}</span></div>
       ${rows.map((x) => `<div class="res-open ${same ? 'one-range' : ''}"><span class="res-sc">${x.href ? `<a href="${x.href}" title="the run that shows it">${esc(scName(x.scenario))}</a>` : esc(scName(x.scenario))}</span>
-        <span class="res-fx">${x.cells}</span>${same ? '' : `<span class="res-range">${x.range}</span>`}<span class="res-act">${x.action}</span></div>`).join('')}</div>`;
+        <span class="res-fx">${x.cells}</span>${same ? '' : `<span class="res-range">${x.range}</span>`}<span class="res-act">${x.time ? `<span class="res-time">${x.time}</span>` : ''}${x.action}</span></div>`).join('')}</div>`;
   };
   const scenarios = new Set(found.map((x) => x.scenario));
   return `<div class="card result">
@@ -2099,7 +2154,7 @@ function resultBlock(title, found, loose, { going, openTitle }) {
       <span class="res-stat open"><b>${loose.reduce((sum, x) => sum + (x.count || 1), 0)}</b> ${esc(openTitle.toLowerCase())}</span></div>
     <div class="res-grid ${list.length && loose.length ? 'two' : ''}">
       ${list.length ? `<section data-group="explained"><div class="tile-label">Found</div>${list.map(commitBlock).join('')}</section>` : ''}
-      ${loose.length ? `<section><div class="tile-label">${esc(openTitle)}</div>${Object.entries(ATT_STATES).map(openGroup).join('')}</section>` : ''}
+      ${loose.length ? `<section><div class="tile-label res-open-head"><span>${esc(openTitle)}${openNote}</span>${openAction}</div>${Object.entries(ATT_STATES).map(openGroup).join('')}</section>` : ''}
     </div></div>`;
 }
 const rangeOf = (n, a, b) => `<span title="${fmt.sha(a)}..${fmt.sha(b)}">${plural(n, 'commit')}</span>`;
@@ -2108,11 +2163,12 @@ function comparisonResult(searches, c) {
   const found = searches.flatMap(({ b }) => foundOf(b).map((f) => ({ sha: f.b, subject: b.subjects[f.b], scenario: b.scenario, metric: b.metric, d: f.result.deltaPct, id: b.id })));
   // a range or a whole segment that moved: spread over small changes, too close to the noise, still searched, or not searched at all
   const loose = [];
-  const add = (kind, scenario, n, a, b, cells, size, action = '') => loose.push({ kind, scenario, n, range: rangeOf(n, a, b), cells, size, action });
+  const add = (kind, scenario, n, a, b, cells, size, action = '', time = '') => loose.push({ kind, scenario, n, range: rangeOf(n, a, b), cells, size, action, time });
   searches.forEach(({ b }) => {
     b.state.findings.filter((f) => f.kind === 'spread').forEach((f) => add('spread', b.scenario, f.commits, f.a, f.b, effectChip(b.metric, f.result.deltaPct, b.id), Math.abs(f.result.deltaPct)));
     if (b.status === 'inconclusive' && b.state.root) add('inconclusive', b.scenario, c.commits, b.shaA, b.shaB, effectChip(b.metric, b.state.root.deltaPct, b.id), Math.abs(b.state.root.deltaPct), deepButton(b.id));
-    if (bisectActive(b)) b.state.open.forEach((r) => { const d = r.cur ? r.cur.deltaPct : r.est; add(b.status, b.scenario, r.commits, r.a, r.b, effectChip(b.metric, d, b.id), Math.abs(d)); });
+    const ends = b.status === 'running' && b.etaSec ? `done ${planDay(new Date(Date.now() + b.etaSec * 1000).toISOString())}` : '';
+    if (bisectActive(b)) b.state.open.forEach((r) => { const d = r.cur ? r.cur.deltaPct : r.est; add(b.status, b.scenario, r.commits, r.a, r.b, effectChip(b.metric, d, b.id), Math.abs(d), '', ends); });
   });
   bisectCandidates(c).forEach((r) => {
     const m = r.comparison.metrics, moved = r.free.filter((k) => k !== 'heapAfterGcMb'); // heap after GC alone says little
@@ -2120,23 +2176,25 @@ function comparisonResult(searches, c) {
   });
   return resultBlock(`Result <span class="muted">${esc(c.label)}</span>`, found, loose, { going: searches.some(({ b }) => bisectActive(b)), openTitle: 'Not pinned down' });
 }
-// What the master card comes to: the commits that explain master, then what is worth a look.
-// The metrics of a scenario that wait for the same search share a row.
-function attentionResult(a) {
-  const lines = a.rows.flatMap((r) => r.lines.map((l) => ({ ...l, scenario: r.scenario, busy: l.activeBisect })));
-  const found = lines.flatMap((l) => l.commits.map((c) => ({ sha: c.sha, subject: c.subject, scenario: l.scenario, metric: l.metric, d: c.deltaPct, id: c.bisectId || l.bisectId })));
-  const open = new Map();
-  lines.filter((l) => l.status !== 'explained').forEach((l) => {
-    const n = l.status === 'new' ? l.span : l.status === 'narrowed' ? l.narrowSpan : l.rangeCommits;
-    const key = [l.scenario, l.status, n, l.jobId].join('|'), g = open.get(key) || { l, n, cells: [], size: 0 };
-    const d = l.status === 'partial' ? l.restPct : l.deltaPct;
-    g.cells.push(effectChip(l.metric, d, l.bisectId));
-    g.size = Math.max(g.size, Math.abs(d));
-    open.set(key, g);
+// What the master card comes to: the commits that explain master, then what is worth a look: a row per metric, since each one is
+// searched on its own, with how long it takes; one button starts every search left, a disabled one says why there is none
+function attentionResult(a, paused) {
+  const lines = a.rows.flatMap((r) => r.lines.map((l) => ({ ...l, scenario: r.scenario })));
+  // a search of a new run explains the runs it measured on the way too: a commit counts once per metric
+  const found = [...new Map(lines.flatMap((l) => l.commits.map((c) => [`${c.sha}|${l.scenario}|${l.metric}`,
+    { sha: c.sha, subject: c.subject, scenario: l.scenario, metric: l.metric, d: c.deltaPct, id: c.bisectId || l.bisectId }]))).values()];
+  const loose = lines.filter((l) => l.status !== 'explained').map((l) => {
+    const n = l.status === 'new' ? l.span : l.status === 'narrowed' ? l.narrowSpan : l.rangeCommits, d = l.status === 'partial' ? l.restPct : l.deltaPct;
+    return { kind: l.status, size: Math.abs(d), n, range: plural(n, 'commit'), href: l.jobId ? `#/jobs/${l.jobId}` : '', count: 1, scenario: l.scenario,
+      cells: effectChip(l.metric, d, l.bisectId), time: lineTime(l, paused), action: attentionAction(l) };
   });
-  const loose = [...open.values()].map(({ l, n, cells, size }) => ({ kind: l.status, size, n, range: plural(n, 'commit'), href: l.jobId ? `#/jobs/${l.jobId}` : '',
-    count: cells.length, scenario: l.scenario, cells: cells.join(''), action: attentionAction(l, l.busy) }));
-  return resultBlock(`Result <span class="muted">master vs ${esc(a.tag || 'the release')}</span>`, found, loose, { going: lines.some((l) => l.status === 'running'), openTitle: 'Still open' });
+  const { rows, running } = masterSearches(a), last = Math.max(0, ...running.map((l) => l.etaSec || 0));
+  const ends = paused ? ', after Reopen' : last ? `, done ${planDay(new Date(Date.now() + last * 1000).toISOString())}` : '';
+  const note = running.length ? ` <span class="res-note">· ${running.length} searching${ends}</span>` : '';
+  const button = `<button class="small" data-investigate-master${rows.length ? '' : ' disabled'} title="${rows.length ? 'every search left to start here: choose them first'
+    : `nothing to start${running.length ? `: ${running.length} searching now` : ''}`}">${rows.length ? `Investigate ${rows.length}… · ~${mins(mostOf(rows))}` : 'Investigate'}</button>`;
+  return resultBlock(`Result <span class="muted">master vs ${esc(a.tag || 'the release')}</span>`, found, loose,
+    { going: running.length > 0, openTitle: 'Still open', openNote: note, openAction: button });
 }
 // One comparison, by its link: a row per scenario with what its finished runs show, repeats pooled
 views.comparison = {
@@ -2185,8 +2243,8 @@ views.comparison = {
         ${going ? `<div class="progress"><div style="width:${c.total ? Math.round(100 * c.measured / c.total) : 0}%"></div></div>` : ''}
         <div class="actions-inline" style="margin-top:10px">${going || activeBisects
           ? `<button class="small" data-comparison-cancel="${c.id}" data-running="${running ? 1 : 0}" data-queued="${queued}" data-bisects="${activeBisects}">Cancel</button>`
-          : `<button class="small" data-comparison-delete="${c.id}">Delete</button>`}${c.commits > 1 && bisectCandidates(c).length
-          ? ` <button class="small" data-bisect-all="${c.id}" title="one bisection per scenario that moved: choose them and their metrics first">Bisect deviations</button>` : ''}</div>
+          : `<button class="small" data-comparison-delete="${c.id}">Delete</button>`}${canInvestigate(c)
+          ? ` <button class="small" data-investigate="${c.id}" title="every search left to start here: choose them first">Investigate all…</button>` : ''}</div>
       </div></div>
       <table class="commits runs-table comparison-rows"><thead><tr><th>Scenario</th>${settled ? '' : '<th>Status</th>'}${cols.map(metricHead).join('')}<th>Verdict</th><th></th></tr></thead><tbody>${rows}</tbody></table>
       <button class="att-more" data-all-cols>${this.allCols ? 'Hide start and preload' : 'Show start and preload'}</button>
@@ -2204,7 +2262,7 @@ views.comparison = {
       if (!b) return;
       if (b.dataset.more) guarded(() => moreRun(b.dataset.more));
       if (b.dataset.allCols !== undefined) { this.allCols = !this.allCols; refresh(); }
-      if (b.dataset.bisectAll) guarded(() => startBisects(b.dataset.bisectAll));
+      if (b.dataset.investigate) guarded(() => investigateComparison(b.dataset.investigate));
       if (b.dataset.comparisonCancel) guarded(() => cancelComparison(b));
       if (b.dataset.comparisonDelete) guarded(async () => {
         const id = b.dataset.comparisonDelete;
@@ -3079,7 +3137,7 @@ views.settings = {
 };
 
 // A line of the details of a cell: a metric of the master run against what was found, or a run newer than it
-function attentionLine(l, busy) {
+function attentionLine(l) {
   const delta =valDelta(l.metric, null, 0, l.deltaPct, l.verdict, l.thresholdPct).replace(/^–\s*/, '');
   const bisect = l.bisectId ? `<a href="#/bisects/${l.bisectId}">bisect #${l.bisectId}</a>` : '';
   const narrow = l.narrowSpan ? `narrowed to ${plural(l.narrowSpan, 'commit')}: <a class="mono" href="#/jobs/${l.jobId}">${fmt.sha(l.narrowBase)}…${fmt.sha(l.narrowSha)}</a> ${fmt.pct(l.narrowPct)}` : '';
@@ -3089,7 +3147,7 @@ function attentionLine(l, busy) {
     partial: `rest ${fmt.pct(l.restPct)}${narrow ? ` · ${narrow}` : ''}`,
     new: `<a class="mono" href="#/jobs/${l.jobId}">${l.span > 1 ? `${fmt.sha(l.baseSha)}…` : ''}${fmt.sha(l.sha)}</a>${l.span > 1 ? ` · ${plural(l.span, 'commit')}` : ''}` }[l.status] || '';
   return `<div class="att-line"><span class="badge ${esc(l.status)}"${hint(l.status)}>${esc(ATT_STATES[l.status][1].toLowerCase())}</span>
-      ${esc(METRIC_NAMES[l.metric])} ${delta} <span class="muted">${note}</span> ${attentionAction(l, busy)}</div>
+      ${esc(METRIC_NAMES[l.metric])} ${delta} <span class="muted">${note}</span> ${l.next && l.searchSec ? `<span class="muted">~${mins(l.searchSec)}</span> ` : ''}${attentionAction(l)}</div>
     ${l.commits.map((c) => `<div class="att-found"><a class="mono" href="#/commits/${esc(c.sha)}">${fmt.sha(c.sha)}</a> ${fmt.pct(c.deltaPct)} <span class="muted">${esc(c.subject || '')}</span></div>`).join('')}`;
 }
 // Dashboard headline: master vs the last release, a row per scenario, what is left to do on top. The colour of a Δ says how bad it
@@ -3148,7 +3206,7 @@ function masterCard(rels, a, branch, autorun, open, showCalm, next) {
       title="${esc(`${name}: ${HELP[l.status]}`)} · ${levels} · click for details">${chip}<b class="att-mark">${ATT_GROUPS[group][0]}</b></button></td>`;
   };
   const details = (x) => cols.filter(([k]) => linesOf(x).some((l) => l.metric === k)).map(([k]) => `<tr class="att-detail" data-att-for="${esc(`${x.scenario}|${k}`)}" ${`${x.scenario}|${k}` === open ? '' : 'hidden'}>
-    <td colspan="${width}">${linesOf(x).filter((l) => l.metric === k).map((l) => attentionLine(l, l.activeBisect)).join('')}<div class="att-foot"><a href="${timeline(x, k)}">Open on Timeline</a></div></td></tr>`).join('');
+    <td colspan="${width}">${linesOf(x).filter((l) => l.metric === k).map((l) => attentionLine(l)).join('')}<div class="att-foot"><a href="${timeline(x, k)}">Open on Timeline</a></div></td></tr>`).join('');
   const place = (x) => { const i = a.rows.findIndex((y) => y.scenario === x.scenario); return i < 0 ? a.rows.length : i; };
   const rows = [...rels].sort((x, y) => place(x) - place(y)).map((x) => {
     const j = x.job, hide = folds(x) && !showCalm;
@@ -3169,7 +3227,7 @@ function masterCard(rels, a, branch, autorun, open, showCalm, next) {
       <div class="release-head">
         <div><span class="release-title">${esc(branch)} vs ${esc(r.tag)}</span>
           <span class="muted"><span class="term" title="${esc(coverage)}">${r.unreleased + picked} commits</span> since ${esc(r.tag)}${picked ? ` (<span class="term" title="already in ${esc(r.tag)}: they do not add to Δ">${picked} cherry-picked</span>)` : ''} · ${fmtDay(r.fromDate)} – ${fmtDay(r.headDate)}${usual ? ` · measured ${usual}` : ''}${next ? ` · ${planShort(next)}` : ''}</span></div>
-        <div class="release-tools">${openBisects(a).length ? '<button class="small" data-bisect-open title="choose the scenarios and metrics first">Bisect deviations</button>' : ''}<button class="small" id="release-all">Run all</button></div>
+        <div class="release-tools"><button class="small" id="release-all">Run all</button></div>
       </div>
       ${legend ? `<div class="att-legend">${legend}</div>` : ''}
       <table class="release-table"><thead><tr><th>Scenario</th>${cols.map(metricHead).join('')}<th>Verdict</th><th></th><th></th></tr></thead>
@@ -3243,7 +3301,7 @@ views.dashboard = {
       ${stand}
       ${masterCard(rels, attention, w.branch, autoScenarios, this.attOpen, this.calmOpen, this.attention.plan.find((x) => x.kind === 'master'))}
       ${failedLines ? `<div class="card"><div class="tile-label">Failed, not run again</div>${failedLines}</div>` : ''}
-      ${attentionResult(attention)}`;
+      ${attentionResult(attention, health.worker.paused)}`;
   },
   bind(root) {
     const release = async (list) => {
@@ -3286,7 +3344,7 @@ views.dashboard = {
         if (parts.length) parts[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
         parts.forEach((x) => { x.classList.add('res-flash'); x.addEventListener('animationend', () => x.classList.remove('res-flash'), { once: true }); });
       }
-      if (e.target.closest('button[data-bisect-open]')) guarded(() => startOpenBisects(this));
+      if (e.target.closest('button[data-investigate-master]')) guarded(() => investigateMaster(this));
     });
   },
 };

@@ -1723,12 +1723,18 @@ class PipelineTest {
         assertEquals(half.id, line.jobId, "a search starts from the shortest segment");
         assertEquals(4, line.rangeCommits);
         assertNull(line.activeBisect);
+        assertEquals(Attention.NEXT_BISECT, line.next);
+        assertEquals(4, line.searchCommits);
+        assertEquals(Bisector.searchSteps(4, false) * jobs.stepSeconds("smoke"), line.searchSec.longValue(),
+            "its steps by a run and a build of the scenario");
 
         Bisect b = bisector.start(line.jobId, "throughput", null);
         assertEquals(Bisect.RUNNING, line(attention, "throughput").status);
         assertEquals(Long.valueOf(b.id), line(attention, "throughput").activeBisect,
             "another search of the metric has to wait");
         assertNull(line(attention, "allocKbPerOp").activeBisect, "a search of another metric does not");
+        assertNull(line(attention, "throughput").next, "searched now");
+        assertEquals(Attention.NEXT_BISECT, line(attention, "allocKbPerOp").next, "another metric starts at once");
         assertTrue(bisector.get(b.id).etaSec > 0);
         assertEquals(1, attention.view().rows.size());
 
@@ -1738,6 +1744,7 @@ class PipelineTest {
         assertEquals(List.of(c.get(4)), line.commits.stream().map(f -> f.sha).toList());
         assertEquals(Long.valueOf(b.id), line.commits.get(0).bisectId);
         assertEquals(0, line.restPct, 0.5);
+        assertNull(line.next, "explained");
 
         String next = origin.commit("core 9", Map.of("modules/core/src/main/B9.java", "class B9 {}"));
         new Watcher(cfg, db, mirror, jobs).poll();
@@ -1746,6 +1753,40 @@ class PipelineTest {
         Attention.Line fresh = attention.view().rows.get(0).lines.get(0);
         assertEquals(Attention.NEW, fresh.status, "newer than the master run: nothing explains it yet");
         assertEquals(next, fresh.sha);
+        assertNull(fresh.next, "one commit: nothing to bisect");
+    }
+
+    /** */
+    @Test void aNewRunFollowsTheSearchStartedFromIt() throws Exception {
+        origin.tag("1.0.0");
+        List<String> c = eightCommits();
+        Bisector bisector = new Bisector(db, mirror, jobs);
+        Attention attention = new Attention(db, mirror, jobs, scenarios, bisector);
+        jobs.queueRelease("smoke", 1);
+        runner.runJob(db.nextQueued());
+        String one = origin.commit("core 9", Map.of("modules/core/src/main/B9.java", "class B9 {}"));
+        String two = origin.commit("core 10", Map.of("modules/core/src/main/B10.java", "class B10 {}"));
+        new Watcher(cfg, db, mirror, jobs).poll();
+        throughput(List.of(two), 0, 9000);
+        Job run = measuredSegment(c.get(7), two);
+        Attention.Line fresh = line(attention, "throughput");
+        assertEquals(Attention.NEW, fresh.status);
+        assertEquals(Attention.NEXT_BISECT, fresh.next, "two commits: a search can tell which");
+        assertEquals(2, fresh.searchCommits);
+
+        Bisect b = bisector.start(run.id, "throughput", null);
+        fresh = line(attention, "throughput");
+        assertEquals(Bisect.RUNNING, fresh.status, "the run follows its search");
+        assertEquals(Long.valueOf(b.id), fresh.bisectId);
+        assertEquals(fresh.bisectId, fresh.activeBisect, "its own search: nothing to wait for");
+        assertNull(fresh.next);
+
+        runToTheEnd(bisector, b.id);
+        assertTrue(attention.view().rows.get(0).lines.stream().filter(l -> "throughput".equals(l.metric))
+            .allMatch(l -> Attention.EXPLAINED.equals(l.status)), "the commit found explains it");
+        assertEquals(List.of(two), attention.view().rows.get(0).lines.stream().filter(l -> "throughput".equals(l.metric))
+            .flatMap(l -> l.commits.stream()).map(f -> f.sha).toList());
+        assertNotNull(one);
     }
 
     /** */
@@ -1762,8 +1803,18 @@ class PipelineTest {
         Attention.Line line = line(attention, "throughput");
         assertEquals(Bisect.INCONCLUSIVE, line.status);
         assertFalse(line.deep, "a deep search can still start");
+        assertEquals(Attention.NEXT_DEEP, line.next);
+        assertEquals(mirror.revList(root.shaA, root.shaB).size(), line.searchCommits, "the range of its bisection");
+        assertTrue(line.searchSec > 0);
         bisector.deep(id, null);
         assertTrue(line(attention, "throughput").deep);
+        assertNull(line(attention, "throughput").next, "searched now");
+
+        jobs.cancel(bisector.get(id).waiting.id);
+        line = line(attention, "throughput");
+        assertEquals(Bisect.STOPPED, line.status);
+        assertEquals(Attention.NEXT_RESUME, line.next, "a stopped search goes on");
+        assertTrue(line.searchSec > 0);
     }
 
     /** */

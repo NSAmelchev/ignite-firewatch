@@ -3,9 +3,11 @@ package org.apache.ignite.firewatch.controller;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -30,6 +32,21 @@ public final class Attention {
 
     /** */
     public static final String NEW = "new";
+
+    /** {@link Line#next}: a bisection of the line. */
+    public static final String NEXT_BISECT = "bisect";
+
+    /** {@link Line#next}: a deep search of its bisection that ended without a commit. */
+    public static final String NEXT_DEEP = "deep";
+
+    /** {@link Line#next}: its stopped bisection goes on. */
+    public static final String NEXT_RESUME = "resume";
+
+    /** Lines a bisection can start from. */
+    private static final Set<String> SEARCHABLE = Set.of(NEW, UNEXPLORED, NARROWED, PARTIAL);
+
+    /** Lines whose bisection ended without a commit: a deep search can take them further. */
+    private static final Set<String> DEEPENABLE = Set.of(Bisect.INCONCLUSIVE, Bisect.SPREAD, Bisect.LOST);
 
     /** What is worth a look first. */
     private static final List<String> ORDER = List.of(NEW, UNEXPLORED, NARROWED, PARTIAL, Bisect.STOPPED,
@@ -105,6 +122,21 @@ public final class Attention {
          * search of the metric waits for it, a search of another metric does not.
          */
         public Long activeBisect;
+
+        /**
+         * What can start on the line now: {@link #NEXT_BISECT}, {@link #NEXT_DEEP} or {@link #NEXT_RESUME}; null when
+         * it is searched, explained, searched deeply already or waits for another search of the metric.
+         */
+        public String next;
+
+        /** The commits {@link #next} searches. */
+        public int searchCommits;
+
+        /** How long {@link #next} should take, s: its steps by a run and a build of the scenario on this stand. */
+        public Long searchSec;
+
+        /** Steps of {@link #next}, for {@link #searchSec}. */
+        int searchSteps;
 
         /**
          * The shortest segment that moved the metric the way master did, if any: a search of another metric leaves
@@ -199,6 +231,7 @@ public final class Attention {
         // a bisection of a comparison searches another range: it says nothing about master
         List<Bisect> all = bisector.list(null, false, 200);
         List<Bisect> bisects = all.stream().filter(b -> b.comparisonId == null && seq(b.shaB, 0) > from).toList();
+        Map<String, Long> step = new HashMap<>();
 
         for (Scenarios.Info s : scenarios.list()) {
             Row r = row(s.name, release, from, to - from + 50, bisects);
@@ -209,6 +242,12 @@ public final class Attention {
             for (Line l : r.lines) {
                 all.stream().filter(b -> b.active() && s.name.equals(b.scenario) && l.metric.equals(b.metric))
                     .findFirst().ifPresent(b -> l.activeBisect = b.id);
+
+                if (l.next != null && l.activeBisect != null && !l.activeBisect.equals(l.bisectId))
+                    l.next = null; // another search of the metric, of a comparison say: this one waits for it
+
+                if (l.next != null)
+                    l.searchSec = l.searchSteps * step.computeIfAbsent(s.name, jobs::stepSeconds);
             }
 
             v.rows.add(r);
@@ -238,8 +277,23 @@ public final class Attention {
         }
 
         for (JobService.TrendPoint p : points) {
-            if (p.seq != null && p.seq > upTo && p.refinedBy == null)
-                r.lines.addAll(fresh(p));
+            if (p.seq != null && p.seq > upTo && p.refinedBy == null) {
+                Job run = db.job(p.jobId);
+                Long stepOf = run == null ? null : run.bisectId;
+
+                for (Line l : fresh(p)) {
+                    // newest first: the search started from this run or measuring it as a step, if any
+                    Bisect search = own.stream().filter(b -> l.metric.equals(b.metric)
+                        && (b.rootJob == l.jobId || Long.valueOf(b.id).equals(stepOf))
+                        && !Bisect.CANCELLED.equals(b.status)).findFirst().orElse(null);
+
+                    if (search != null)
+                        searched(l, search);
+
+                    plan(l, search);
+                    r.lines.add(l);
+                }
+            }
         }
 
         r.lines.sort(Comparator.comparingInt(Attention::rank));
@@ -250,7 +304,8 @@ public final class Attention {
     /** The metric of the master run, when it moved or a bisection found something in it. */
     private java.util.Optional<Line> line(JsonNode x, String metric, Job master, List<JobService.TrendPoint> points,
         List<Bisect> own, int from, int upTo) {
-        List<Bisect> searches = own.stream().filter(b -> metric.equals(b.metric)).toList(); // newest first
+        // newest first; a search of a newer run of the branch is the business of that run
+        List<Bisect> searches = own.stream().filter(b -> metric.equals(b.metric) && seq(b.shaB, 0) <= upTo).toList();
         String verdict = x.path("verdict").asText(Stats.NO_CHANGE);
 
         if (!moved(verdict) && searches.stream().noneMatch(b -> Bisect.FOUND.equals(b.status)))
@@ -290,7 +345,56 @@ public final class Attention {
             l.deep = search.state.deep;
         }
 
+        plan(l, search);
+
         return java.util.Optional.of(l);
+    }
+
+    /**
+     * A new run that a search started from follows it as a metric of master follows its search: running, stopped or
+     * ended without a commit, and explained by the commits it found.
+     */
+    private static void searched(Line l, Bisect search) {
+        l.bisectId = search.id;
+        l.etaSec = search.etaSec;
+        l.deep = search.state.deep;
+
+        for (Bisect.Finding f : search.state.findings) {
+            if ("found".equals(f.kind)) {
+                Found c = commit(f.b, search.subjects.get(f.b), f.result.deltaPct);
+                c.bisectId = search.id;
+                l.commits.add(c);
+            }
+        }
+
+        l.restPct = l.deltaPct - l.commits.stream().mapToDouble(c -> c.deltaPct).sum();
+        String st = status(l.deltaPct, l.thresholdPct, l.commits, search);
+
+        if (!UNEXPLORED.equals(st))
+            l.status = st;
+    }
+
+    /**
+     * What a search can start on the line, as far as the line tells: its stopped bisection goes on, one that ended
+     * without a commit is searched deeply once, a metric that moved and nothing explains is bisected. Whether another
+     * search of the metric holds it is up to {@link #view}.
+     */
+    private void plan(Line l, Bisect search) {
+        if (search != null && Bisect.STOPPED.equals(l.status)) {
+            l.next = NEXT_RESUME;
+            l.searchCommits = search.state.open.stream().mapToInt(x -> x.commits).sum();
+            l.searchSteps = Bisector.stepsLeft(search);
+        }
+        else if (search != null && DEEPENABLE.contains(l.status) && !search.state.deep) {
+            l.next = NEXT_DEEP;
+            l.searchCommits = Math.max(2, seq(search.shaB, 0) - seq(search.shaA, 0));
+            l.searchSteps = Bisector.searchSteps(l.searchCommits, true);
+        }
+        else if (SEARCHABLE.contains(l.status) && moved(l.verdict) && l.rangeCommits > 1) {
+            l.next = NEXT_BISECT;
+            l.searchCommits = l.rangeCommits;
+            l.searchSteps = Bisector.searchSteps(l.rangeCommits, false);
+        }
     }
 
     /**

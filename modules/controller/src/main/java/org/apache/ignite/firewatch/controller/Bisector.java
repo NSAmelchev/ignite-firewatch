@@ -535,7 +535,7 @@ public final class Bisector {
      * Rough: a level is one half, often two; a commit is measured once more when it was inferred. A deep level near the
      * noise takes about four runs of its halves.
      */
-    private static int stepsLeft(Bisect b) {
+    static int stepsLeft(Bisect b) {
         int left = 0;
 
         for (Bisect.Range r : b.state.open)
@@ -1208,6 +1208,20 @@ public final class Bisector {
 
         if (c != null)
             b.subjects.put(sha, c.subject);
+    }
+
+    /**
+     * Rough steps of a new search of {@code commits}, as its dialogs say: the quick one takes the left half on every
+     * level and the right one about every second time; the deep one measures both halves and repeats close calls.
+     *
+     * @param commits Commits of the range.
+     * @param deep Whether it is a deep search.
+     * @return Steps.
+     */
+    public static int searchSteps(int commits, boolean deep) {
+        int lv = levels(commits);
+
+        return deep ? (int)Math.ceil(lv * 2.5) + 4 : (int)Math.ceil(lv * 1.5);
     }
 
     /** */
