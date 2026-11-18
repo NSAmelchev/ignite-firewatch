@@ -517,11 +517,10 @@ function attentionAction(l) {
   if (l.activeBisect && l.activeBisect !== l.bisectId) return `<a class="muted" href="#/bisects/${l.activeBisect}"${hint('after')}>after #${l.activeBisect}</a>`;
   return '';
 }
-// How long a line takes: a search going on says when it ends (while the stand is closed, that it waits), one that can start how
-// long it would take
-const lineTime = (l, paused) => (l.status === 'running' && paused ? 'after Reopen'
-  : l.status === 'running' && l.etaSec ? `done ${planDay(new Date(Date.now() + l.etaSec * 1000).toISOString())}`
-  : l.next && l.searchSec ? `~${mins(l.searchSec)}` : !l.next && l.deep && DEEP_STATES.has(l.status) ? 'deep-searched' : '');
+// When the search of a line ends, for a search going on only (while the stand is closed, that it waits): what is not started
+// yet says how long it would take in the dialog of Investigate all
+const lineTime = (l, paused) => (l.status !== 'running' ? '' : paused ? 'after Reopen'
+  : l.etaSec ? `done ${planDay(new Date(Date.now() + l.etaSec * 1000).toISOString())}` : '');
 async function deepBisect(id) {
   const b = await api.get(`/api/bisects/${id}`);
   const n = (b.positions || {})[b.shaB] || 2, lv = levelsOf(n), steps = searchSteps(n, true);
@@ -2177,7 +2176,8 @@ function comparisonResult(searches, c) {
   return resultBlock(`Result <span class="muted">${esc(c.label)}</span>`, found, loose, { going: searches.some(({ b }) => bisectActive(b)), openTitle: 'Not pinned down' });
 }
 // What the master card comes to: the commits that explain master, then what is worth a look: a row per metric, since each one is
-// searched on its own, with how long it takes; one button starts every search left, a disabled one says why there is none
+// searched on its own, a running search with when it ends; one button starts every search left, a disabled one says why there is
+// none
 function attentionResult(a, paused) {
   const lines = a.rows.flatMap((r) => r.lines.map((l) => ({ ...l, scenario: r.scenario })));
   // a search of a new run explains the runs it measured on the way too: a commit counts once per metric
@@ -2191,8 +2191,8 @@ function attentionResult(a, paused) {
   const { rows, running } = masterSearches(a), last = Math.max(0, ...running.map((l) => l.etaSec || 0));
   const ends = paused ? ', after Reopen' : last ? `, done ${planDay(new Date(Date.now() + last * 1000).toISOString())}` : '';
   const note = running.length ? ` <span class="res-note">· ${running.length} searching${ends}</span>` : '';
-  const button = `<button class="small" data-investigate-master${rows.length ? '' : ' disabled'} title="${rows.length ? 'every search left to start here: choose them first'
-    : `nothing to start${running.length ? `: ${running.length} searching now` : ''}`}">${rows.length ? `Investigate ${rows.length}… · ~${mins(mostOf(rows))}` : 'Investigate'}</button>`;
+  const button = `<button class="small" data-investigate-master${rows.length ? '' : ' disabled'} title="${rows.length ? `${searchesOf(rows.length)} left to start here: choose them first`
+    : `nothing to start${running.length ? `: ${running.length} searching now` : ''}`}">Investigate all…</button>`;
   return resultBlock(`Result <span class="muted">master vs ${esc(a.tag || 'the release')}</span>`, found, loose,
     { going: running.length > 0, openTitle: 'Still open', openNote: note, openAction: button });
 }
@@ -3147,7 +3147,7 @@ function attentionLine(l) {
     partial: `rest ${fmt.pct(l.restPct)}${narrow ? ` · ${narrow}` : ''}`,
     new: `<a class="mono" href="#/jobs/${l.jobId}">${l.span > 1 ? `${fmt.sha(l.baseSha)}…` : ''}${fmt.sha(l.sha)}</a>${l.span > 1 ? ` · ${plural(l.span, 'commit')}` : ''}` }[l.status] || '';
   return `<div class="att-line"><span class="badge ${esc(l.status)}"${hint(l.status)}>${esc(ATT_STATES[l.status][1].toLowerCase())}</span>
-      ${esc(METRIC_NAMES[l.metric])} ${delta} <span class="muted">${note}</span> ${l.next && l.searchSec ? `<span class="muted">~${mins(l.searchSec)}</span> ` : ''}${attentionAction(l)}</div>
+      ${esc(METRIC_NAMES[l.metric])} ${delta} <span class="muted">${note}</span> ${attentionAction(l)}</div>
     ${l.commits.map((c) => `<div class="att-found"><a class="mono" href="#/commits/${esc(c.sha)}">${fmt.sha(c.sha)}</a> ${fmt.pct(c.deltaPct)} <span class="muted">${esc(c.subject || '')}</span></div>`).join('')}`;
 }
 // Dashboard headline: master vs the last release, a row per scenario, what is left to do on top. The colour of a Δ says how bad it

@@ -177,13 +177,13 @@ bisection starts from it rather than from the whole range. Bisections of compari
 here. A run of the branch newer than master vs release is a separate `new` line. Every metric is searched on its own: a
 metric of a scenario may have one active bisection (of the branch or of a comparison), searches of its other metrics go on
 at once and share the steps their paths have in common, and a metric that waits for another search of it shows `after #N`
-instead of a button in the details of a cell and in Still open. Still open is a row per metric with how long it takes: a
-running search says when it should end, one that can start how long it would take (its steps by a run and a build of the
-scenario: `next`, `searchCommits` and `searchSec` of a line of `/api/attention`); its head says how many searches run and
-when the last of them ends. Investigate all opens one dialog with every search left to start, a bisection, a deep search
-of one that ended without a commit or a stopped one again, all picked, with Δ, the signal (below 3× marked `weak`), the
-commits and the time; the sum counts the searches of one range once and says when they should be done. A narrowed metric
-starts from its segment. With nothing to start the button is disabled and says why. What needs action comes first, fully
+instead of a button in the details of a cell and in Still open. Still open is a row per metric; only a running search
+shows a time, when it should end, and the head says how many searches run and when the last of them ends. Investigate all
+opens one dialog with every search left to start (`next` of a line of `/api/attention`), a bisection, a deep search of one
+that ended without a commit or a stopped one again, all picked, with Δ, the signal (below 3× marked `weak`), the commits
+and how long it would take (`searchCommits`, `searchSec`: its steps by a run and a build of the scenario); the sum counts
+the searches of one range once and says when they should be done. A narrowed metric starts from its segment. With
+nothing to start the button is disabled and says why. What needs action comes first, fully
 explained scenarios are folded. `start ms` and `preload ms` stay out of it: they are the noise of a start.
 
 ### Comparisons (`Comparisons`)

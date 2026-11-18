@@ -300,11 +300,8 @@ button.ov-fold:hover { color: var(--accent); }
 .res-group-head .muted { font-size: 12px; }
 .res-open { display: grid; grid-template-columns: minmax(0, 190px) minmax(0, 1fr) 80px 108px; gap: 8px; align-items: center; min-height: 25px; padding: 1px 6px; border-radius: 4px; font-size: 13px; }
 .res-open.one-range { grid-template-columns: minmax(0, 190px) minmax(0, 1fr) 108px; }
-/* how long a row takes, in the cell of its action: the button takes its place while the row is pointed at */
-.res-act { display: grid; justify-items: end; align-items: center; }
-.res-act > * { grid-area: 1 / 1; }
+/* when a running search ends, in the cell of the action: such a row has none */
 .res-time { color: var(--muted); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.res-open:hover .res-act:has(button) .res-time, .res-open:focus-within .res-act:has(button) .res-time { visibility: hidden; }
 .res-open-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .res-open-head .res-note, .res-open-head button { text-transform: none; letter-spacing: 0; }
 .res-open:hover { background: var(--bg); }
