@@ -1,11 +1,12 @@
 :root {
   --bg: #fff; --fg: #1d2430; --muted: #6b7280; --line: #e3e7ee; --card: #f7f9fc; --accent: #2563eb;
   --ok: #15803d; --bad: #b91c1c; --warn: #b45309; --run: #1d4ed8; --queued: #6b7280; --map-noise: #bfd3f5;
+  --faint: #8a919c; /* lighter than muted: a line of facts next to a heading */
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 14px;
 }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #111418; --fg: #e5e9f0; --muted: #9aa3af; --line: #2a3139; --card: #1a1f26; --accent: #60a5fa;
-          --ok: #4ade80; --bad: #f87171; --warn: #fbbf24; --run: #93c5fd; --queued: #9aa3af; --map-noise: #2c4a78; }
+          --ok: #4ade80; --bad: #f87171; --warn: #fbbf24; --run: #93c5fd; --queued: #9aa3af; --map-noise: #2c4a78; --faint: #79818d; }
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; } /* a display of the class must not bring back what the page has hidden */
@@ -62,14 +63,31 @@ button.att-cell:hover .dlt, button.att-cell.on .dlt { outline: 1px solid var(--a
 .att-search.better .att-mark { color: var(--ok); }
 .att-running .att-mark { color: var(--run); }
 .att-nocommit .att-mark { color: var(--warn); }
-table.release-table tr.att-detail td { padding: 6px 10px 8px; background: var(--bg); white-space: normal; }
-.att-foot { margin-top: 4px; font-size: 12px; }
+/* the details of a cell: a strip per line under its row, the edge coloured by what is left to do */
+table.release-table tr.att-detail td { padding: 0 10px 8px; white-space: normal; }
+.att-box { border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: 6px; background: var(--card); padding: 5px 10px; font-size: 13px; }
+.att-box + .att-box { margin-top: 6px; }
+.att-box.tone-worse { border-left-color: var(--bad); }
+.att-box.tone-better { border-left-color: var(--ok); }
+.att-box.tone-running { border-left-color: var(--run); }
+.att-box.tone-nocommit { border-left-color: var(--warn); }
+.att-head { display: flex; align-items: center; gap: 8px; min-height: 24px; }
+.att-head .badge { white-space: nowrap; }
+.att-what { flex: 1 1 auto; min-width: 0; color: var(--muted); }
+.att-what a { color: inherit; }
+.att-tools { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+a.att-tl { padding: 1px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--fg); font-size: 12px; text-decoration: none; }
+a.att-tl:hover { border-color: var(--accent); }
+.att-found { display: grid; grid-template-columns: 40px 64px 56px minmax(0, 1fr) auto; gap: 8px; align-items: baseline; margin-top: 4px; padding-top: 4px;
+  border-top: 1px dashed var(--line); font-size: 12px; color: var(--muted); }
+.att-found + .att-found { margin-top: 0; padding-top: 1px; border-top: 0; }
+.att-subj { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.att-found > span:last-child { white-space: nowrap; }
 button.att-more { display: block; margin-top: 6px; border: 0; background: none; padding: 2px 8px; color: var(--muted); font-size: 12px; }
 button.att-more:hover { color: var(--fg); }
 a.chip { text-decoration: none; color: var(--fg); }
 .att-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
 .att-failed { margin-top: 6px; }
-.att-found { margin: 1px 0 3px 14px; }
 /* a row that unfolds its details in place */
 tr.click-row { cursor: pointer; }
 tr.click-row:hover td { background: var(--card); }
@@ -230,6 +248,7 @@ h1.with-tools .tools, h2.with-tools .tools { margin-left: auto; font-size: 13px;
 .release-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .release-tools { display: flex; gap: 6px; }
 .release-title { font-size: 18px; font-weight: 600; margin-right: 8px; }
+.release-sub { color: var(--faint); font-size: 13px; }
 .stat { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
 .stat-label { font-size: 12px; color: var(--muted); }
 .small-text { font-size: 12px; }

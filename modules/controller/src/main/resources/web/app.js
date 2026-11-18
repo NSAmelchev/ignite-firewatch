@@ -3136,19 +3136,30 @@ views.settings = {
   },
 };
 
-// A line of the details of a cell: a metric of the master run against what was found, or a run newer than it
-function attentionLine(l) {
-  const delta =valDelta(l.metric, null, 0, l.deltaPct, l.verdict, l.thresholdPct).replace(/^–\s*/, '');
-  const bisect = l.bisectId ? `<a href="#/bisects/${l.bisectId}">bisect #${l.bisectId}</a>` : '';
-  const narrow = l.narrowSpan ? `narrowed to ${plural(l.narrowSpan, 'commit')}: <a class="mono" href="#/jobs/${l.jobId}">${fmt.sha(l.narrowBase)}…${fmt.sha(l.narrowSha)}</a> ${fmt.pct(l.narrowPct)}` : '';
-  const note = { narrowed: narrow, running: `${bisect}${l.etaSec ? ` · done ${etaStart(new Date(Date.now() + l.etaSec * 1000).toISOString())}` : ''}`, stopped: bisect,
-    inconclusive: `${bisect}: too close to the noise for a quick search${narrow ? ` · ${narrow}` : ''}`,
-    spread: `${bisect}: spread over small changes${narrow ? ` · ${narrow}` : ''}`, lost: `${bisect}: nothing reproduced${narrow ? ` · ${narrow}` : ''}`,
-    partial: `rest ${fmt.pct(l.restPct)}${narrow ? ` · ${narrow}` : ''}`,
-    new: `<a class="mono" href="#/jobs/${l.jobId}">${l.span > 1 ? `${fmt.sha(l.baseSha)}…` : ''}${fmt.sha(l.sha)}</a>${l.span > 1 ? ` · ${plural(l.span, 'commit')}` : ''}` }[l.status] || '';
-  return `<div class="att-line"><span class="badge ${esc(l.status)}"${hint(l.status)}>${esc(ATT_STATES[l.status][1].toLowerCase())}</span>
-      ${esc(METRIC_NAMES[l.metric])} ${delta} <span class="muted">${note}</span> ${attentionAction(l)}</div>
-    ${l.commits.map((c) => `<div class="att-found"><a class="mono" href="#/commits/${esc(c.sha)}">${fmt.sha(c.sha)}</a> ${fmt.pct(c.deltaPct)} <span class="muted">${esc(c.subject || '')}</span></div>`).join('')}`;
+// The details of a cell, a strip per line: what the search of the metric is at, in a phrase, with what it can do and the way to
+// Timeline on the right, then the commits found, one row each. The metric and its Δ are the cell above; a new run of the branch
+// says its own. The edge of a strip has the colour of what is left: to search (worse or better), searching, no single commit.
+const TONES = { running: 'tone-running', nocommit: 'tone-nocommit', explained: '' };
+function attentionLine(l, { tools = '', paused = false } = {}) {
+  const bisect = l.bisectId ? `bisect <a href="#/bisects/${l.bisectId}">#${l.bisectId}</a>` : '';
+  const sha = (x) => esc(String(x || '').slice(0, 7)); // short: a strip stays one line
+  const narrow = l.narrowSpan ? `last moved within ${plural(l.narrowSpan, 'commit')} <a class="mono" href="#/jobs/${l.jobId}">${sha(l.narrowBase)}…${sha(l.narrowSha)}</a>` : '';
+  const and = (...xs) => [...xs, narrow].filter(Boolean).join(' · ');
+  const deeply = l.deep ? 'searched deeply' : ''; // so nothing is left to start
+  const ends = paused ? 'after Reopen' : l.etaSec ? `done ${planDay(new Date(Date.now() + l.etaSec * 1000).toISOString())}` : '';
+  const delta = (d) => `<span class="dlt ${deltaClass(l.metric, d, l.thresholdPct, l.verdict, false)}">${fmt.pct(d)}</span>`;
+  // the badge names the state: the phrase adds only where its search is
+  const what = { unexplored: `${plural(l.rangeCommits, 'commit')} to search`, narrowed: `${narrow} ${l.narrowPct != null ? delta(l.narrowPct) : ''}`,
+    running: and(bisect, ends), stopped: bisect, inconclusive: and(`${bisect}: too close to the noise for a quick search`, deeply), spread: and(bisect, deeply), lost: and(bisect, deeply),
+    partial: and(), explained: '',
+    new: `<a class="mono" href="#/jobs/${l.jobId}">${l.span > 1 ? `${sha(l.baseSha)}…` : ''}${sha(l.sha)}</a>${l.span > 1 ? ` · ${plural(l.span, 'commit')}` : ''} ${delta(l.deltaPct)}` }[l.status] || '';
+  const [group] = ATT_STATES[l.status], worse = HIGHER_BETTER.has(l.metric) ? l.deltaPct < 0 : l.deltaPct > 0;
+  const tone = group === 'search' ? (worse ? 'tone-worse' : 'tone-better') : TONES[group];
+  const rest = l.status !== 'explained' && l.commits.length ? `rest ${fmt.pct(l.restPct)}` : '';
+  const found = l.commits.map((c, i) => `<div class="att-found"><span>found</span><a class="mono" href="#/commits/${esc(c.sha)}">${sha(c.sha)}</a>
+    <span>${delta(c.deltaPct)}</span><span class="att-subj" title="${esc(c.subject || '')}">${subjectHtml(c.subject || '')}</span><span>${i === l.commits.length - 1 ? rest : ''}</span></div>`).join('');
+  return `<div class="att-box ${tone}"><div class="att-head"><span class="badge ${esc(l.status)}"${hint(l.status)}>${esc(ATT_STATES[l.status][1].toLowerCase())}</span>
+    <span class="att-what">${what}</span><span class="att-tools">${attentionAction(l)}${tools}</span></div>${found}</div>`;
 }
 // Dashboard headline: master vs the last release, a row per scenario, what is left to do on top. The colour of a Δ says how bad it
 // is, the mark what is left to do about it: a regression stays red when its commit is found. A click opens what is known about a
@@ -3175,7 +3186,7 @@ function startingCard(w, stand) {
         : 'auto-run is off: runs start from Commits and Compare, or turn it on in Settings → Automation'}</div>`)}
     </div></div>`;
 }
-function masterCard(rels, a, branch, autorun, open, showCalm, next) {
+function masterCard(rels, a, branch, autorun, open, showCalm, next, paused) {
   // tag, unreleased commits and coverage come from the main auto-run scenario (the tag is the same for all)
   const r = rels.find((x) => x && x.tag && x.scenario === autorun[0]) || rels.find((x) => x && x.tag) || rels[0];
   if (!r || r.error) return `<div class="card error">release info unavailable: ${esc((r && r.error) || '')}</div>`;
@@ -3206,7 +3217,7 @@ function masterCard(rels, a, branch, autorun, open, showCalm, next) {
       title="${esc(`${name}: ${HELP[l.status]}`)} · ${levels} · click for details">${chip}<b class="att-mark">${ATT_GROUPS[group][0]}</b></button></td>`;
   };
   const details = (x) => cols.filter(([k]) => linesOf(x).some((l) => l.metric === k)).map(([k]) => `<tr class="att-detail" data-att-for="${esc(`${x.scenario}|${k}`)}" ${`${x.scenario}|${k}` === open ? '' : 'hidden'}>
-    <td colspan="${width}">${linesOf(x).filter((l) => l.metric === k).map((l) => attentionLine(l)).join('')}<div class="att-foot"><a href="${timeline(x, k)}">Open on Timeline</a></div></td></tr>`).join('');
+    <td colspan="${width}">${linesOf(x).filter((l) => l.metric === k).map((l, i) => attentionLine(l, { paused, tools: i ? '' : `<a class="att-tl" href="${timeline(x, k)}" title="the runs of the metric on the map of the branch">Timeline →</a>` })).join('')}</td></tr>`).join('');
   const place = (x) => { const i = a.rows.findIndex((y) => y.scenario === x.scenario); return i < 0 ? a.rows.length : i; };
   const rows = [...rels].sort((x, y) => place(x) - place(y)).map((x) => {
     const j = x.job, hide = folds(x) && !showCalm;
@@ -3226,7 +3237,7 @@ function masterCard(rels, a, branch, autorun, open, showCalm, next) {
     <div class="card release">
       <div class="release-head">
         <div><span class="release-title">${esc(branch)} vs ${esc(r.tag)}</span>
-          <span class="muted"><span class="term" title="${esc(coverage)}">${r.unreleased + picked} commits</span> since ${esc(r.tag)}${picked ? ` (<span class="term" title="already in ${esc(r.tag)}: they do not add to Δ">${picked} cherry-picked</span>)` : ''} · ${fmtDay(r.fromDate)} – ${fmtDay(r.headDate)}${usual ? ` · measured ${usual}` : ''}${next ? ` · ${planShort(next)}` : ''}</span></div>
+          <span class="release-sub"><span class="term" title="${esc(`since ${r.tag}${picked ? `, ${picked} of them cherry-picked into it: they do not add to Δ` : ''}. ${coverage}`)}">${r.unreleased + picked} commits</span> · ${fmtDay(r.fromDate)} – ${fmtDay(r.headDate)}${usual ? ` · measured ${usual}` : ''}${next ? ` · ${planShort(next)}` : ''}</span></div>
         <div class="release-tools"><button class="small" id="release-all">Run all</button></div>
       </div>
       ${legend ? `<div class="att-legend">${legend}</div>` : ''}
@@ -3299,7 +3310,7 @@ views.dashboard = {
     return `
       <h1>Dashboard</h1>
       ${stand}
-      ${masterCard(rels, attention, w.branch, autoScenarios, this.attOpen, this.calmOpen, this.attention.plan.find((x) => x.kind === 'master'))}
+      ${masterCard(rels, attention, w.branch, autoScenarios, this.attOpen, this.calmOpen, this.attention.plan.find((x) => x.kind === 'master'), health.worker.paused)}
       ${failedLines ? `<div class="card"><div class="tile-label">Failed, not run again</div>${failedLines}</div>` : ''}
       ${attentionResult(attention, health.worker.paused)}`;
   },

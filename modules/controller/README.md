@@ -388,10 +388,12 @@ strength of the signal, commits.
   something left to do on top. The colour of a Δ says how bad it is, the mark next to it what is left to do
   (`Attention`): To search (there is more to search), Searching (wait), No single commit (the search is over, there is no
   single commit, Deep search is left), Explained (the commits are named). A regression with a found commit stays red. The
-  legend counts these groups, and a click on a group leads to its lines in Result. A click on a Δ with a mark opens the
-  exact status, the commits, the Bisect or Deep search buttons and a link to Timeline; a Δ without a mark opens Timeline
-  at once. Scenarios without changes and the fully explained ones fold into one line; a scenario with a verdict never
-  folds. The heading has the number of commits since the release, the coverage breakdown in its tooltip. Below are the
+  legend counts these groups, and a click on a group leads to its lines in Result. A click on a Δ with a mark opens a
+  strip under the row, its edge in the colour of what is left: the status and a phrase on where its search is (when a
+  running one ends), the action (Bisect, Deep search, Resume) and Timeline on the right, the commits found below, one row
+  each; the metric and its Δ are the cell itself. A Δ without a mark opens Timeline at once. Scenarios without changes and the fully explained ones fold into one line; a scenario with a verdict never
+  folds. The heading has, in a lighter grey, the number of commits since the release (the cherry-picks and the coverage
+  breakdown in its tooltip), the dates, how fresh the measurement is and when it runs next. Below are the
   failed jobs not followed by a success and Result on master: the found commits with their effect by scenario, and Still
   open, what is still worth a look, cheap searches first, buttons on hover.
 - Terms are explained on hover: status badges, metric headings, legends, ABBA, A/A, threshold, strength of the signal.
