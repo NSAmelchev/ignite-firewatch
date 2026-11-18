@@ -1246,8 +1246,9 @@ function workerTile(j) {
 }
 
 // A table folds what needs no eyes, and says so: a green row that names what is inside and unfolds it
-export const calmLine = (attr, cols, open, text, names) => `<tr class="calm-row" ${attr}><td colspan="${cols}"><span class="chev">${open ? '▾' : '▸'}</span>
-  <b>✓ ${esc(text)}</b> <span class="muted">${names.map(esc).join(' · ')}</span></td></tr>`;
+// The rows without a change, folded into one light line: how many, their names in its tooltip (they are the rows it unfolds)
+export const calmLine = (attr, cols, open, names) => `<tr class="calm-row" ${attr}><td colspan="${cols}" title="${esc(names.join(' · '))}"><span class="chev">${open ? '▾' : '▸'}</span>
+  ${names.length} without a change</td></tr>`;
 // Timeline: card of the clicked block — what it measured, the 4 metrics with phase values, and its commits
 function blockCard(j, queue) {
   const m = (j.comparison && j.comparison.metrics) || {};
@@ -1932,7 +1933,7 @@ function comparisonDetail(c, showCalm) {
       ${cols.map(([k]) => cell(r, k)).join('')}<td>${r.job.status === 'done' ? badge(r.verdict) : badge(r.job.status)}</td><td class="row-action" style="opacity:1">${jobLink(r.job)}</td></tr>`;
   }).join('');
   return `<table class="release-table cmp-rows"><thead><tr><th>Scenario</th>${cols.map(metricHead).join('')}<th>Verdict</th><th></th></tr></thead>
-    <tbody>${rows}${quiet.length ? calmLine(`data-cmp-calm="${c.id}"`, cols.length + 3, showCalm, `${plural(quiet.length, 'scenario')} without a change`, quiet.map((r) => scName(r.scenario))) : ''}</tbody></table>
+    <tbody>${rows}${quiet.length ? calmLine(`data-cmp-calm="${c.id}"`, cols.length + 3, showCalm, quiet.map((r) => scName(r.scenario))) : ''}</tbody></table>
     <div class="small-text"><a href="#/comparisons/${c.id}">Open comparison #${c.id}</a> <span class="muted">· bisects, runs, profile</span></div>`;
 }
 // A row of a comparison: its ends, how far it got and what it found
@@ -3198,9 +3199,8 @@ function masterCard(rels, a, branch, autorun, open, showCalm, next, paused) {
   const timeline =(x, k) => `#/timeline?scenario=${encodeURIComponent(x.scenario)}&metric=${k}${x.job ? `&job=${x.job.id}` : ''}`;
   // a run with no verdict and nothing left to do folds: a regression stays in sight even when all of it is explained
   const settled = (x) => x.job && !x.active && !MOVED.has(x.job.verdict) && linesOf(x).every((l) => l.status === 'explained');
-  const explained = (x) => settled(x) && linesOf(x).length > 0;
-  const unchanged = (x) => settled(x) && !linesOf(x).length && cols.every(([k]) => { const m = metric(x, k); return !m || m.deltaPct == null || !deltaClass(k, m.deltaPct, m.thresholdPct, m.verdict); });
-  const folds = (x) => explained(x) || unchanged(x);
+  // only a scenario without a change folds: an explained one stays in sight with its ✓
+  const folds = (x) => settled(x) && !linesOf(x).length && cols.every(([k]) => { const m = metric(x, k); return !m || m.deltaPct == null || !deltaClass(k, m.deltaPct, m.thresholdPct, m.verdict); });
   const whenOf = (x) => (x.job ? `${fmt.ago(x.job.finishedAt)}${x.behind ? `, ${term('behind', `${x.behind} behind`)}` : ''}` : '');
   // most rows were measured together: the header says when, a row only when it differs
   const times = rels.map(whenOf).filter(Boolean);
@@ -3226,8 +3226,7 @@ function masterCard(rels, a, branch, autorun, open, showCalm, next, paused) {
     return `<tr class="${folds(x) ? 'rel-calm' : ''}" ${hide ? 'hidden' : ''}><td><b>${esc(scName(x.scenario))}</b></td>${cols.map(([k]) => cell(x, k)).join('')}
       <td>${j ? `<a href="#/jobs/${j.id}">${badge(j.verdict)}</a>` : ''}</td><td>${when}</td><td class="row-action">${act}</td></tr>${details(x)}`;
   }).join('');
-  const calm = rels.filter(folds), noChange = calm.filter(unchanged).length, doneRows = calm.length - noChange;
-  const calmText = noChange && doneRows ? `${plural(noChange, 'scenario')} without a change, ${doneRows} fully explained` : noChange ? `${plural(noChange, 'scenario')} without a change` : `${plural(doneRows, 'scenario')} fully explained`;
+  const calm = rels.filter(folds);
   const lines = a.rows.flatMap((x) => x.lines);
   const legend = Object.entries(ATT_GROUPS).map(([g, [mark, name]]) => [g, mark, name, lines.filter((l) => ATT_STATES[l.status][0] === g).length]).filter((k) => k[3])
     .map(([g, mark, name, n]) => `<button class="att-key" data-att-group="${g}"${hint(g)}><b>${mark}</b> ${n} ${name.toLowerCase()}</button>`).join('');
@@ -3242,7 +3241,7 @@ function masterCard(rels, a, branch, autorun, open, showCalm, next, paused) {
       </div>
       ${legend ? `<div class="att-legend">${legend}</div>` : ''}
       <table class="release-table"><thead><tr><th>Scenario</th>${cols.map(metricHead).join('')}<th>Verdict</th><th></th><th></th></tr></thead>
-        <tbody>${rows}${calm.length ? calmLine('data-rel-calm', width, showCalm, calmText, calm.map((x) => scName(x.scenario))) : ''}</tbody></table>
+        <tbody>${rows}${calm.length ? calmLine('data-rel-calm', width, showCalm, calm.map((x) => scName(x.scenario))) : ''}</tbody></table>
     </div>`;
 }
 views.dashboard = {

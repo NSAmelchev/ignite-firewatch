@@ -357,11 +357,9 @@ a.effect[href]:hover .dlt { outline: 1px solid var(--accent); }
 .now-meta b { margin-left: auto; color: var(--fg); font-variant-numeric: tabular-nums; }
 .card.now pre.log { margin: 10px 0 0; }
 /* a folded part of a table: it says what is inside and that all is well there */
-tr.calm-row td { padding: 6px 10px; border-bottom: 0; background: color-mix(in srgb, var(--ok) 8%, transparent); cursor: pointer; white-space: normal; }
-tr.calm-row:hover td { background: color-mix(in srgb, var(--ok) 15%, transparent); }
-tr.calm-row b { color: var(--ok); font-weight: 600; margin-right: 6px; }
-tr.calm-row .chev { color: var(--ok); }
-tr.calm-row .muted { font-size: 12px; }
+tr.calm-row td { padding: 5px 10px; border-bottom: 0; color: var(--faint); font-size: 13px; cursor: pointer; white-space: normal; }
+tr.calm-row:hover td { background: var(--card); color: var(--muted); }
+tr.calm-row .chev { margin-right: 4px; }
 .ov-row { display: grid; grid-template-columns: 236px minmax(0, 1fr) 58px; gap: 8px; align-items: center; height: 18px; cursor: pointer; border-radius: 3px; }
 .ov-row.first:not(:first-child) { margin-top: 7px; }
 .ov-row:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }

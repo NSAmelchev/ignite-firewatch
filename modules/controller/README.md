@@ -391,11 +391,12 @@ strength of the signal, commits.
   legend counts these groups, and a click on a group leads to its lines in Result. A click on a Δ with a mark opens a
   strip under the row, its edge in the colour of what is left: the status and a phrase on where its search is (when a
   running one ends), the action (Bisect, Deep search, Resume) and Timeline on the right, the commits found below, one row
-  each; the metric and its Δ are the cell itself. A Δ without a mark opens Timeline at once. Scenarios without changes and the fully explained ones fold into one line; a scenario with a verdict never
-  folds. The heading has, in a lighter grey, the number of commits since the release (the cherry-picks and the coverage
-  breakdown in its tooltip), the dates, how fresh the measurement is and when it runs next. Below are the
-  failed jobs not followed by a success and Result on master: the found commits with their effect by scenario, and Still
-  open, what is still worth a look, cheap searches first, buttons on hover.
+  each; the metric and its Δ are the cell itself. A Δ without a mark opens Timeline at once. Only scenarios without a
+  change fold, into one light line with their number and the names in its tooltip; an explained one stays in sight with
+  its ✓, and a scenario with a verdict never folds. The heading has, in a lighter grey, the number of commits since
+  the release (the cherry-picks and the coverage breakdown in its tooltip), the dates, how fresh the measurement is
+  and when it runs next. Below are the failed jobs not followed by a success and Result on master: the found commits
+  with their effect by scenario, and Still open, what is still worth a look, cheap searches first, buttons on hover.
 - Terms are explained on hover: status badges, metric headings, legends, ABBA, A/A, threshold, strength of the signal.
   There is one glossary (`HELP` in `app.js`), so the wording is the same on every page.
 - One format for the whole UI: a date `30 Oct 15:32` (the year only when it is not the current one), a day `30 Oct`, a

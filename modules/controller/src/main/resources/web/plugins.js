@@ -79,7 +79,7 @@ function releaseCard(p, showCalm, next) {
     </div>
     <table class="release-table"><thead><tr><th>Scenario</th>${cols().map(metricHead).join('')}<th>Verdict</th><th></th><th></th></tr></thead>
       <tbody>${p.rows.map((r) => releaseRow(p, r, usual, showCalm, width)).join('')}${quiet.length ? calmLine(`data-rel-calm="${esc(p.name)}"`, width, showCalm,
-    `${plural(quiet.length, 'scenario')} without a change`, quiet.map((r) => r.scenario)) : ''}</tbody></table>
+    quiet.map((r) => r.scenario)) : ''}</tbody></table>
   </div>`;
 }
 // when the schedule of a plugin runs it next (/api/schedule)
