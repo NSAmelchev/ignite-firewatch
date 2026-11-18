@@ -375,6 +375,18 @@ public final class Attention {
     }
 
     /**
+     * The commits a bisection covers, by git: its first commit may be the release, which is not on the branch.
+     */
+    private int commits(Bisect b, int fallback) {
+        try {
+            return Math.max(2, mirror.revList(b.shaA, b.shaB).size());
+        }
+        catch (IOException e) {
+            return Math.max(2, fallback);
+        }
+    }
+
+    /**
      * What a search can start on the line, as far as the line tells: its stopped bisection goes on, one that ended
      * without a commit is searched deeply once, a metric that moved and nothing explains is bisected. Whether another
      * search of the metric holds it is up to {@link #view}.
@@ -387,7 +399,7 @@ public final class Attention {
         }
         else if (search != null && DEEPENABLE.contains(l.status) && !search.state.deep) {
             l.next = NEXT_DEEP;
-            l.searchCommits = Math.max(2, seq(search.shaB, 0) - seq(search.shaA, 0));
+            l.searchCommits = commits(search, l.rangeCommits);
             l.searchSteps = Bisector.searchSteps(l.searchCommits, true);
         }
         else if (SEARCHABLE.contains(l.status) && moved(l.verdict) && l.rangeCommits > 1) {

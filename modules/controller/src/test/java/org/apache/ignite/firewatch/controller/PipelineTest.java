@@ -1757,6 +1757,30 @@ class PipelineTest {
     }
 
     /** */
+    @Test void aDeepSearchOfAReleaseOffTheBranchCountsItsCommitsByGit() throws Exception {
+        String repo = origin.repo.toString();
+        // the release is tagged on a branch of its own, off the first commit, as 2.18.0 is
+        GitFixture.git("-C", repo, "checkout", "--quiet", "-b", "rel", origin.shas.get(0));
+        origin.commit("release notes", Map.of("RELEASE_NOTES.txt", "notes"));
+        origin.tag("1.0.0");
+        GitFixture.git("-C", repo, "checkout", "--quiet", "master");
+        List<String> c = eightCommits();
+        throughput(c, 4, 9000);
+        Bisector bisector = new Bisector(db, mirror, jobs);
+        Attention attention = new Attention(db, mirror, jobs, scenarios, bisector);
+        jobs.queueRelease("smoke", 1);
+        Job release = db.nextQueued();
+        runner.runJob(release);
+        CommitInfo tag = db.commit(release.shaA);
+        assertTrue(tag == null || tag.seq == null, "the release is not a commit of the branch");
+        inconclusive(bisector, db.job(release.id));
+
+        Attention.Line line = line(attention, "throughput");
+        assertEquals(Attention.NEXT_DEEP, line.next);
+        assertEquals(mirror.revList(release.shaA, release.shaB).size(), line.searchCommits);
+    }
+
+    /** */
     @Test void aNewRunFollowsTheSearchStartedFromIt() throws Exception {
         origin.tag("1.0.0");
         List<String> c = eightCommits();
