@@ -122,11 +122,15 @@ final class PluginBuild implements Builder.Extension {
                 "install"));
     }
 
-    /** Every pom of the repository of the extension. */
+    /** Every pom of the repository of the extension. A {@code target} above the repository is not its build output. */
     private static List<Path> poms(Path ext) throws IOException {
         try (Stream<Path> s = Files.walk(ext)) {
             return s.filter(f -> f.getFileName().toString().equals("pom.xml"))
-                .filter(f -> !f.toString().contains("/target/") && !f.toString().contains("/.git/"))
+                .filter(f -> {
+                    String r = "/" + ext.relativize(f);
+
+                    return !r.contains("/target/") && !r.contains("/.git/");
+                })
                 .sorted().toList();
         }
     }
