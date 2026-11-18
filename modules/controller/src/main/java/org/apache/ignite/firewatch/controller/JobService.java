@@ -563,7 +563,23 @@ public final class JobService {
      * @return Seconds.
      */
     public long stepSeconds(String scenario) {
-        return Math.round(runSeconds(scenario, Job.ABBA) + buildSeconds());
+        Durations d = durations();
+        Scenarios.Info sc = scenarios.get(scenario);
+
+        return Math.round(d.runSeconds(sc, null, Job.ABBA) + d.buildSeconds(sc, null));
+    }
+
+    /**
+     * How long things take on this stand; one per answer, it remembers what it read.
+     *
+     * @return Durations.
+     */
+    Durations durations() {
+        return new Durations(db, (plugin, name) -> {
+            Plugins p = plugins;
+
+            return plugin == null ? scenarios.get(name) : p == null ? null : p.scenario(plugin, name);
+        });
     }
 
     /**
@@ -1332,29 +1348,24 @@ public final class JobService {
 
     /**
      * Fills {@link Job#etaStartAt}/{@link Job#etaSec} for the running and queued jobs (already in queue order):
-     * duration = median of the last finished jobs of the same scenario and type, plus the median build time for every
-     * sha that is neither built nor built by an earlier job in the queue; starts are cumulative from now.
+     * duration = the run of the same scenario and type ({@link Durations}), plus a build of its kind for every key
+     * that is neither built nor built by an earlier job in the queue; starts are cumulative from now.
      *
      * @param active Running and queued jobs, in queue order.
      */
     public void addEta(List<Job> active) {
         java.time.Instant t = java.time.Instant.now();
-        double build = buildSeconds();
-        Map<String, Double> runCache = new HashMap<>();
+        Durations d = durations();
         java.util.Set<String> built = db.okBuildShas(); // one query instead of one per queued sha
 
         for (Job j : active) {
             Scenarios.Info sc = scenarioOf(j);
-            double run = runCache.computeIfAbsent(j.plugin + "|" + j.scenario + "|" + j.type,
-                k -> j.plugin == null ? runSeconds(j.scenario, j.type) : pluginRunSeconds(j, sc));
-            double secs = run;
+            double secs = d.runSeconds(sc, j.plugin, j.type);
 
             for (String key : buildKeys(j, sc).values()) {
                 // build keys: a SQL scenario needs its own build of a commit, a plugin one of the pair
-                if (!built.add(key))
-                    continue;
-
-                secs += build; // not built yet: this job (or an earlier one in the queue) builds it
+                if (built.add(key))
+                    secs += d.buildSeconds(key); // not built yet: this job (or an earlier one in the queue) builds it
             }
 
             if (Job.RUNNING.equals(j.status) && j.startedAt != null) {
@@ -1372,56 +1383,12 @@ public final class JobService {
         }
     }
 
-    /** Median build time of the last successful builds (60 s before the first one). */
-    private double buildSeconds() {
-        List<Double> secs = new ArrayList<>();
-
-        for (Build b : db.builds(30))
-            if (Build.OK.equals(b.status) && b.durationSec != null)
-                secs.add(b.durationSec);
-
-        return secs.isEmpty() ? 60 : median(secs);
-    }
-
     /**
-     * Median duration of the last finished jobs of this scenario and type; from the scenario timings before the first
-     * one.
-     */
-    private double runSeconds(String scenario, String type) {
-        List<Double> secs = new ArrayList<>();
-
-        for (Job d : db.doneJobs(scenario, type, null, 15)) {
-            if (d.startedAt != null && d.finishedAt != null)
-                secs.add((double)java.time.Duration.between(java.time.Instant.parse(d.startedAt),
-                    java.time.Instant.parse(d.finishedAt)).toSeconds());
-        }
-
-        Scenarios.Info sc = scenarios.get(scenario);
-        double fallback = sc == null ? 600 : (sc.totalSeconds() + 45) * (Job.ABBA.equals(type) ? 4 : 1);
-
-        return secs.isEmpty() ? fallback : median(secs);
-    }
-
-    /** The same for a scenario of a plugin, from the finished jobs of that plugin. */
-    private double pluginRunSeconds(Job j, Scenarios.Info sc) {
-        List<Double> secs = new ArrayList<>();
-
-        for (Job d : db.pluginJobs(j.plugin, j.scenario, null, true, 15)) {
-            if (d.startedAt != null && d.finishedAt != null && j.type.equals(d.type))
-                secs.add((double)java.time.Duration.between(java.time.Instant.parse(d.startedAt),
-                    java.time.Instant.parse(d.finishedAt)).toSeconds());
-        }
-
-        double fallback = sc == null ? 600 : (sc.totalSeconds() + 45) * (Job.ABBA.equals(j.type) ? 4 : 1);
-
-        return secs.isEmpty() ? fallback : median(secs);
-    }
-
-    /**
-     * What queuing {@code jobs} new jobs would cost, for the launch confirmation: run time from recent jobs, builds of
-     * the given shas that are not built yet (plus {@code extraBuilds} for refs the caller cannot resolve), and the
-     * start after the active jobs of the same or higher priority. {@code scenario} may be a comma-separated list: the
-     * run time is their mean, and every module set they need is built.
+     * What queuing {@code jobs} new jobs would cost, for the launch confirmation: runs and builds as
+     * {@link Durations} has them, the builds of the given shas that are not built yet (plus {@code extraBuilds} for
+     * refs the caller cannot resolve), and the start after the active jobs of the same or higher priority.
+     * {@code scenario} may be a comma-separated list: the run time is their mean, and every module set they need is
+     * built.
      *
      * @param scenario Scenario name, or a comma-separated list of them.
      * @param type Job type.
@@ -1466,21 +1433,35 @@ public final class JobService {
             built.addAll(buildKeys(j, scenarioOf(j)).values()); // the queue builds these before our jobs run
         }
 
+        Durations d = durations();
         long unbuilt = 0;
+        double buildSecs = 0;
+        Map<List<String>, Scenarios.Info> byModules = new LinkedHashMap<>(); // a build per module set
 
-        for (List<String> mods : set.stream().map(s -> s.modules).distinct().toList()) {
-            unbuilt += shas.stream().filter(s -> s != null && !s.isBlank()).distinct()
-                .filter(s -> !built.contains(Builder.key(s, mods))).count() + Math.max(0, extraBuilds);
+        for (Scenarios.Info sc : set)
+            byModules.putIfAbsent(sc.modules, sc);
+
+        for (Scenarios.Info sc : byModules.values()) {
+            for (String sha : shas.stream().filter(s -> s != null && !s.isBlank()).distinct().toList()) {
+                String key = Builder.key(sha, sc.modules);
+
+                if (!built.contains(key)) {
+                    unbuilt++;
+                    buildSecs += d.buildSeconds(key);
+                }
+            }
+
+            unbuilt += Math.max(0, extraBuilds);
+            buildSecs += Math.max(0, extraBuilds) * d.buildSeconds(sc, null);
         }
 
-        double run = set.stream().mapToDouble(s -> runSeconds(s.name, type)).average().orElse(0),
-            build = buildSeconds();
-        long total = Math.round(run * Math.max(1, jobs) + build * unbuilt);
+        double run = set.stream().mapToDouble(s -> d.runSeconds(s, null, type)).average().orElse(0);
+        long total = Math.round(run * Math.max(1, jobs) + buildSecs);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("jobs", Math.max(1, jobs));
         m.put("runSec", Math.round(run));
         m.put("builds", unbuilt);
-        m.put("buildSec", Math.round(build));
+        m.put("buildSec", unbuilt == 0 ? 0 : Math.round(buildSecs / unbuilt));
         m.put("totalSec", total);
         m.put("ahead", ahead);
         m.put("startAt", start.toString());

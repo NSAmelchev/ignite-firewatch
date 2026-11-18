@@ -954,6 +954,69 @@ public final class Db implements AutoCloseable {
     }
 
     /**
+     * How long finished jobs took, newest first: the measuring from the start of the first phase to the end, and what
+     * went before it (the builds of the job).
+     *
+     * @param scenario Scenario name, or {@code null} for all.
+     * @param plugin Plugin of the scenario, or {@code null} for the scenarios of Ignite.
+     * @param type Job type, or {@code null} for all.
+     * @param limit Maximum number of jobs.
+     * @return Timings.
+     */
+    public synchronized List<Durations.Timing> timings(String scenario, String plugin, String type, int limit) {
+        StringBuilder sql = new StringBuilder("SELECT j.scenario, j.scenario_hash, j.type, j.plugin, j.started_at, "
+            + "j.finished_at, MIN(r.started_at) AS first_run, COUNT(r.id) AS phases FROM jobs j JOIN runs r ON "
+            + "r.job_id = j.id WHERE j.status = 'done' AND j.started_at IS NOT NULL AND j.finished_at IS NOT NULL AND "
+            + (plugin == null ? "j.plugin IS NULL" : "j.plugin = ?"));
+        List<Object> args = new ArrayList<>();
+
+        if (plugin != null)
+            args.add(plugin);
+
+        if (scenario != null) {
+            sql.append(" AND j.scenario = ?");
+            args.add(scenario);
+        }
+
+        if (type != null) {
+            sql.append(" AND j.type = ?");
+            args.add(type);
+        }
+
+        sql.append(" GROUP BY j.id ORDER BY j.id DESC LIMIT ?");
+        args.add(limit);
+
+        try (PreparedStatement ps = c.prepareStatement(sql.toString())) {
+            for (int i = 0; i < args.size(); i++)
+                ps.setObject(i + 1, args.get(i));
+
+            try (ResultSet rs = ps.executeQuery()) {
+                List<Durations.Timing> out = new ArrayList<>();
+
+                while (rs.next()) {
+                    Instant start = Instant.parse(rs.getString("started_at"));
+                    Instant first = Instant.parse(rs.getString("first_run"));
+                    Instant end = Instant.parse(rs.getString("finished_at"));
+
+                    out.add(new Durations.Timing(rs.getString("scenario"), rs.getString("scenario_hash"),
+                        rs.getString("type"), rs.getString("plugin"), seconds(first, end), seconds(start, first),
+                        rs.getInt("phases")));
+                }
+
+                return out;
+            }
+        }
+        catch (SQLException e) {
+            throw wrap(e);
+        }
+    }
+
+    /** Seconds between two instants, not below zero. */
+    private static double seconds(Instant from, Instant to) {
+        return Math.max(0, java.time.Duration.between(from, to).toMillis() / 1000.0);
+    }
+
+    /**
      * Finished jobs of a scenario, newest first; {@code type} and {@code source} are optional filters.
      *
      * @param scenario Scenario name.

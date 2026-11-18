@@ -337,7 +337,7 @@ final class ApiDocs {
         List<Op> list = new ArrayList<>();
         Shape health = any("version, now, uptimeSec; worker: busy, paused (closed for maintenance), the running job; "
             + "watcher: the repository, mirrorReady, the head, auto-run; jobs: counters by status; bisects; plugins; "
-            + "queueDrainsAt; memory, disk and load of this machine");
+            + "queueDrainsAt, queueWorkSec (seconds of work the queue holds); memory, disk and load of this machine");
         Shape watch = any("the watcher: branch, repoUrl, mirrorReady, fetch (progress), head, watermark, lastPollAt, "
             + "lastError, autorunEnabled, pollSec, pathFilter");
         Shape pair = obj("refs of a pair", f("ignite", STRING, "a ref of Ignite"),

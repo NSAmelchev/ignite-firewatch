@@ -602,7 +602,7 @@ export async function confirmLaunch({ title, what, job, note, scenario, scenario
   const estimate = (sc, n, prio) => estimateRows({ scenario: sc, type, jobs: n, shas, extraBuilds, priority: prio });
   const picked = choose ? choose.filter((c) => c.checked).map((c) => c.name) : null;
   const chosen = (w) => (choose ? [...w.querySelectorAll('input[name=sc]:checked')].map((i) => i.value) : scenarios || [scenario]);
-  const estimateOf = (list, prio) => (choose ? (list.length ? estimate(list[0], list.length, prio) : Promise.resolve(''))
+  const estimateOf = (list, prio) => (choose ? (list.length ? estimate(list.join(','), list.length, prio) : Promise.resolve(''))
     : estimate(scenarios ? scenarios.join(',') : scenario, jobs, prio));
   const [est, front] = await Promise.all([estimateOf(picked || [], priority), frontPriority(priority)]);
   const dl = job && job.status === 'done' ? deltaLine(job) : '';
@@ -726,7 +726,7 @@ views.queue = {
     const log = running ? await api.get(`/api/jobs/${running.id}/log?lines=25`) : null;
     return `
       <h1>Queue</h1>
-      ${paused ? `<div class="card notice">${running ? `Closing for maintenance: ${jobLink(running)} finishes, no new jobs start.` : 'Closed for maintenance: queued jobs wait.'} <a href="#/settings">Settings</a></div>` : ''}
+      ${paused ? `<div class="card notice">${running ? `Closing for maintenance: ${jobLink(running)} finishes, no new jobs start.` : queued.length ? `Closed for maintenance: ${plural(health.jobs.queued || queued.length, 'job')}${health.queueWorkSec ? `, ~${mins(health.queueWorkSec)} of work,` : ''} wait for Reopen.` : 'Closed for maintenance: nothing waits.'} <a href="#/settings">Settings</a></div>` : ''}
       <div class="card now">${running ? `
         <div class="now-head">
           <div class="now-title">${jobLink(running)} ${jobTitle(running)}${parentTag(running)}</div>
@@ -737,7 +737,7 @@ views.queue = {
         <pre class="log" ${this.logOpen ? '' : 'hidden'}>${esc(log && log.text ? log.text : '(no log yet)')}</pre>` : '<div class="muted">Nothing is running.</div>'}
       </div>
       <h2>Waiting (${health.jobs.queued || 0})${(health.jobs.queued || 0) > queued.length ? ` <span class="muted">first ${queued.length} shown</span>` : ''}</h2>
-      <table class="commits runs-table"><thead><tr><th>#</th><th>Job</th><th>Scenario</th><th>Source</th><th>By</th><th class="num">Priority</th><th title="estimated from the median duration of recent jobs of the same scenario plus builds">Starts</th><th class="num">Takes</th><th></th></tr></thead>
+      <table class="commits runs-table"><thead><tr><th>#</th><th>Job</th><th>Scenario</th><th>Source</th><th>By</th><th class="num">Priority</th><th title="estimated: the median of the recent jobs of the same scenario from their first phase, plus a build of its kind for what is not built">Starts</th><th class="num">Takes</th><th></th></tr></thead>
       <tbody>${queued.map((j) => `<tr>
         <td>${jobLink(j)}</td><td class="subject">${jobTitle(j)}${parentTag(j)}<div class="muted">${jobRefsShort(j)}</div></td><td>${esc(scName(j.scenario))}</td><td>${jobSource(j)}</td><td>${byCell(j)}</td>
         <td class="num">${j.priority} <button class="small" data-prio="${j.id}" data-delta="1" title="raise">▲</button><button class="small" data-prio="${j.id}" data-delta="-1" title="lower">▼</button></td>
@@ -1453,7 +1453,7 @@ views.noise = {
   },
   bind(root) {
     const queue = async (list) => {
-      const v = await confirmLaunch({ title: list.length > 1 ? 'A/A calibration: every scenario' : `A/A calibration: ${list[0]}`, scenario: list[0], jobs: list.length, priority: 0,
+      const v = await confirmLaunch({ title: list.length > 1 ? 'A/A calibration: every scenario' : `A/A calibration: ${list[0]}`, scenarios: list, jobs: list.length, priority: 0,
         what: `master head against itself: ${list.map((x) => esc(scName(x))).join(', ')}`, note: 'measures the noise floors the thresholds use; one ABBA job per scenario' });
       if (!v) return;
       for (const sc of list) await api.post('/api/calibrate', { ref: 'master', scenario: sc, priority: v.priority }).catch((e) => toast(`${sc}: ${e.message}`, true));
@@ -3155,7 +3155,7 @@ views.dashboard = {
     const stand = `
       <div class="tiles">
         ${tile('Worker', worker.side, worker.body)}
-        ${tile('Queue', health.worker.paused ? '' : health.bisectsDoneAt ? `done ${etaStart(health.bisectsDoneAt)}` : drains ? `drains ${etaStart(drains)}` : '',
+        ${tile('Queue', health.worker.paused ? (health.queueWorkSec ? `~${mins(health.queueWorkSec)} of work waits` : '') : health.bisectsDoneAt ? `done ${etaStart(health.bisectsDoneAt)}` : drains ? `drains ${etaStart(drains)}` : '',
           `<div><a href="#/queue">${health.jobs.queued || 0} waiting</a>${health.bisects ? ` · <a href="#/bisects">${plural(health.bisects, 'bisect')}</a>` : ''}</div>`)}
         ${tile('Last commit', head ? fmt.ago(head.committedAt) : '', head ? `<div title="${esc(head.subject)}"><a class="mono" href="#/commits/${head.sha}">${fmt.sha(head.sha)}</a> ${esc(head.subject)}</div>` : '<div>–</div>')}
         ${tile('<a href="#/noise">Noise</a>', lastCal ? `A/A ${fmt.ago(lastCal)}` : '', `<div>${noiseIssues.length ? `<b class="bad-text" title="${esc(noiseIssues.join('; '))}">check: ${noiseIssues.map((x) => esc(x.split(':')[0])).join(', ')}</b>`
@@ -3174,7 +3174,7 @@ views.dashboard = {
     const release = async (list) => {
       const r = await api.get(`/api/release?scenario=${encodeURIComponent(list[0])}`).catch(() => ({}));
       const v = await confirmLaunch({ title: list.length > 1 ? `Run master vs ${r.tag || 'the release'}: every scenario` : `Run ${scName(list[0])} vs ${r.tag || 'the release'}`,
-        scenario: list[0], jobs: list.length, shas: [r.tagSha, r.head], extraBuilds: r.head ? 0 : 1,
+        scenarios: list, jobs: list.length, shas: [r.tagSha, r.head], extraBuilds: r.head ? 0 : 1,
         what: `master head vs <b>${esc(r.tag || 'release')}</b>: ${list.map((x) => esc(scName(x))).join(', ')}`, note: 'the dashboard headline; one ABBA job per scenario' });
       if (!v) return;
       for (const sc of list) await api.post('/api/release', { scenario: sc, priority: v.priority }).catch((e) => toast(`${sc}: ${e.message}`, true));

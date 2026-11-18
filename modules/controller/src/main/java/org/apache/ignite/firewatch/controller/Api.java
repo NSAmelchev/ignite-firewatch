@@ -638,8 +638,12 @@ public final class Api {
         List<Job> active = db.jobs("active", Integer.MAX_VALUE);
         jobs.addEta(active);
         Job last = active.isEmpty() ? null : active.get(active.size() - 1);
-        m.put("queueDrainsAt", last == null || last.etaStartAt == null || last.etaSec == null ? null
-            : java.time.Instant.parse(last.etaStartAt).plusSeconds(last.etaSec).toString());
+        java.time.Instant drains = last == null || last.etaStartAt == null || last.etaSec == null ? null
+            : java.time.Instant.parse(last.etaStartAt).plusSeconds(last.etaSec);
+        m.put("queueDrainsAt", drains == null ? null : drains.toString());
+        // what the queue holds, in seconds of work: what waits for Reopen on a stand closed for maintenance
+        m.put("queueWorkSec", drains == null ? 0
+            : Math.max(0, java.time.Duration.between(java.time.Instant.now(), drains).toSeconds()));
         var os = (com.sun.management.OperatingSystemMXBean)ManagementFactory.getOperatingSystemMXBean();
         Map<String, Object> sys = new LinkedHashMap<>();
         sys.put("cpus", Runtime.getRuntime().availableProcessors());
