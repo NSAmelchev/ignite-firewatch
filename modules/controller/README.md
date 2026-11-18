@@ -473,8 +473,10 @@ strength of the signal, commits.
 - **Queue**: a compact block of the current job with Log and Cancel and who queued it, the queue with priorities, who
   queued every job (By: the user's own name in bold, `–` for what the stand queued by itself or what was queued before
   the names), the expected start and duration of every job, when what waits now ends and when the bisections end (they
-  add steps one at a time), the active bisections, the history with a "without bisect steps" box and who queued and who
-  cancelled each job; steps are marked "bisect #N · step k". The name of the user is in the header, a click changes it
+  add steps one at a time), Planned: what each schedule that is on (auto-run, master vs release, the A/A, a plugin)
+  queues next, when it should start and why then (its term and 2 idle hours, twice its term, a new commit, Reopen) and
+  how long it takes; the active bisections, the history with a "without bisect steps" box and who queued and who
+  cancelled each job; steps are marked "bisect #N · step k". Closed for maintenance, it says how much work waits. The name of the user is in the header, a click changes it
   (the jobs queued before keep the old one); the dialogs that queue or cancel say "as <name>".
 - **Bisects** (`#/bisects`): every bisection, the active ones on top, the chips All, Active, Needs a deep search, Found,
   No single commit (the choice shows in the address). A repeated search of the same range on the same metric is one row,
@@ -530,6 +532,13 @@ deep search) shows a dialog first: what is queued, how long it takes, when it en
 the priority of its kind, 1 for a manual run, 0 for an A/A) or "ahead of the queue" (right after the running job: one
 above the highest priority waiting, at least 2, so also before the steps of bisections started ahead); the Done estimate
 follows the choice.
+
+Every estimate comes from what the stand did. A run is the median of the last 15 jobs of the scenario (of the current
+version, once three ran it) from the start of their first phase, so without the builds they made; before the first run
+it is the warmup and measuring of each phase plus what a phase adds on this stand with as many servers. A build is the
+median of the last builds of its kind: Ignite alone, with the modules of a SQL scenario, or with the extension of a
+plugin. The same times say when the schedules go next (`GET /api/schedule`): Planned in Queue, Next in Settings →
+Automation, next on the dashboard card and on the card of a plugin.
 
 A page is redrawn into a fresh container only when its content changed; a choice in a drop-down applies at once. Only
 Queue and the pages of running work (a job, a bisection, comparisons) refresh by themselves; the others on navigation, a

@@ -287,33 +287,16 @@ public final class Watcher implements Runnable {
             return;
         }
 
-        List<String> pending = mirror.revList(base, newHead); // oldest first
-        PathFilter filter = PathFilter.parse(db.setting(Settings.AUTORUN_PATH_FILTER, ""));
-        int relevant = 0;
-        String oldestAt = null;
+        Segment seg = segment(base, newHead);
 
-        for (String sha : pending) {
-            if (!filter.matchesAny(mirror.changedFiles(sha)))
-                continue;
-
-            relevant++;
-
-            if (oldestAt == null) {
-                CommitInfo ci = mirror.info(sha);
-                oldestAt = ci == null ? null : ci.committedAt;
-            }
-        }
-
-        if (relevant == 0)
+        if (seg.relevant() == 0)
             return;
 
         java.time.Instant now = java.time.Instant.now();
-        Freshness.Need need = Freshness.need(oldestAt == null ? null
-            : java.time.OffsetDateTime.parse(oldestAt).toInstant(), now,
-            Integer.parseInt(db.setting(Settings.AUTORUN_KEEP_DAYS, "1")));
+        Freshness.Need need = Freshness.need(seg.oldest(), now, keepDays());
 
         if (!Freshness.goes(need, Freshness.idle(db, now))) {
-            Log.info("watcher: segment " + Job.shortSha(base) + ".." + Job.shortSha(newHead) + " has " + relevant
+            Log.info("watcher: segment " + Job.shortSha(base) + ".." + Job.shortSha(newHead) + " has " + seg.relevant()
                 + " relevant commit(s), waiting");
 
             return;
@@ -324,7 +307,7 @@ public final class Watcher implements Runnable {
         for (String scenario : Settings.scenarioList(db.setting(Settings.AUTORUN_SCENARIO,
             Settings.DEFAULT_SCENARIO))) {
             try {
-                jobs.enqueueSegment(base, newHead, pending.size(), scenario, Freshness.priority(need),
+                jobs.enqueueSegment(base, newHead, seg.commits(), scenario, Freshness.priority(need),
                     JobService.SRC_AUTO);
                 queued++;
             }
@@ -336,8 +319,86 @@ public final class Watcher implements Runnable {
 
         lastQueued = queued;
         db.setSetting(Settings.WATCH_SEGMENT_BASE, newHead);
-        Log.info("watcher: queued segment " + Job.shortSha(base) + ".." + Job.shortSha(newHead) + " (" + pending.size()
-            + " commits, " + relevant + " relevant)");
+        Log.info("watcher: queued segment " + Job.shortSha(base) + ".." + Job.shortSha(newHead) + " (" + seg.commits()
+            + " commits, " + seg.relevant() + " relevant)");
+    }
+
+    /**
+     * The commits from the end of the last queued segment to the head.
+     *
+     * @param base End of the last queued segment.
+     * @param head Head of the branch.
+     * @param commits Commits between them.
+     * @param relevant Those the path filter of auto-run passes.
+     * @param oldest When the oldest relevant one was committed; null when none is.
+     */
+    record Segment(String base, String head, int commits, int relevant, java.time.Instant oldest) {
+    }
+
+    /** The last segment worked out, with the path filter it went through: a poll and a page ask for the same. */
+    private volatile Segment lastSegment;
+
+    /** */
+    private volatile String lastSegmentFilter;
+
+    /** The segment from {@code base} to {@code newHead}, the oldest relevant commit first in line. */
+    private Segment segment(String base, String newHead) throws IOException {
+        String filterText = db.setting(Settings.AUTORUN_PATH_FILTER, "");
+        Segment last = lastSegment;
+
+        if (last != null && last.base().equals(base) && last.head().equals(newHead)
+            && filterText.equals(lastSegmentFilter))
+            return last;
+
+        List<String> pending = mirror.revList(base, newHead); // oldest first
+        PathFilter filter = PathFilter.parse(filterText);
+        int relevant = 0;
+        java.time.Instant oldest = null;
+
+        for (String sha : pending) {
+            if (!filter.matchesAny(mirror.changedFiles(sha)))
+                continue;
+
+            relevant++;
+
+            if (relevant == 1) {
+                CommitInfo ci = mirror.info(sha);
+                oldest = ci == null || ci.committedAt == null ? null
+                    : java.time.OffsetDateTime.parse(ci.committedAt).toInstant();
+            }
+        }
+
+        Segment seg = new Segment(base, newHead, pending.size(), relevant, oldest);
+        lastSegmentFilter = filterText;
+        lastSegment = seg;
+
+        return seg;
+    }
+
+    /**
+     * The segment that waits for its turn in the segments mode of auto-run: nothing when auto-run is off, in another
+     * mode or the head is where the last segment ended.
+     *
+     * @return The segment, or {@code null}.
+     * @throws IOException If git fails.
+     */
+    Segment waitingSegment() throws IOException {
+        String h = head, base = db.setting(Settings.WATCH_SEGMENT_BASE, "");
+
+        if (h == null || base.isBlank() || base.equals(h) || !Config.isTrue(db.setting(Settings.AUTORUN_ENABLED, "false"))
+            || !"segments".equals(db.setting(Settings.AUTORUN_MODE, "abba-vs-parent")))
+            return null;
+
+        return segment(base, h);
+    }
+
+    /**
+     * The term of a segment: its oldest relevant commit waits this long for an idle stand, twice that at most.
+     *
+     * @return Days.
+     */
+    int keepDays() {
+        return Integer.parseInt(db.setting(Settings.AUTORUN_KEEP_DAYS, "1"));
     }
 
     /** */

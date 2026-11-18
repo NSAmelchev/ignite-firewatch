@@ -474,6 +474,11 @@ final class ApiDocs {
             "What needs attention: master against the release per scenario and what was found on the branch")
             .returns(any("rows per scenario with the metrics of master vs the release, their status and the commits "
                 + "found; runs newer than it")));
+        list.add(new Op("GET /api/schedule", "getSchedule", "Jobs", Effect.READ,
+            "What the schedules queue next and when: auto-run, master vs release, the A/A, the plugins")
+            .returns(any("items: kind, title, plugin, the scenarios that go next (scenarios, jobs, builds, runSec, "
+                + "takesSec), later, dueAt, byAt, startAt, waitsFor (now, idle, term, commit, queue, reopen); auto-run "
+                + "also mode and commits")));
         list.add(new Op("GET /api/noise", "getNoise", "Dashboard", Effect.READ,
             "The noise of the stand for a scenario: its A/A runs and the floors they give")
             .query("scenario", STRING, "id (default: the first of auto-run)", null)

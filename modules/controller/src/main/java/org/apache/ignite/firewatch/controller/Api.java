@@ -255,6 +255,7 @@ public final class Api {
             return jobs.split(req.paramLong("id"), Req.str(b, "mode", "halves"), Req.integer(b, "priority", 1));
         });
         r.get("/api/attention", req -> new Attention(db, mirror, jobs, scenarios, bisector).view());
+        r.get("/api/schedule", req -> new Schedule(db, jobs, mirror, watcher, plugins, bisector).view());
         r.get("/api/bisects",
             req -> bisector.list(req.query("scenario", null), "true".equals(req.query("active", "false")),
                 req.queryInt("limit", 20)));

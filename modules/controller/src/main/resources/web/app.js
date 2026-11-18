@@ -642,6 +642,60 @@ const etaStart = (iso) => {
   const day = d.toDateString() !== new Date().toDateString() ? `${fmtDay(iso)} ` : '';
   return `${day}${hm} <span class="muted">${left <= 0 ? 'next' : `in ${fmt.len(left)}`}</span>`;
 };
+// The schedules (/api/schedule): when one goes next, in words, why then and what it costs
+const planDay = (iso) => {
+  const d = new Date(iso), days = Math.round((new Date(d.toDateString()) - new Date(new Date().toDateString())) / 864e5);
+  const hm = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return days <= 0 ? `today ~${hm}` : days === 1 ? `tomorrow ~${hm}` : d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+};
+export function planWhen(it) {
+  const by = it.byAt ? ` · by ${planDay(it.byAt)} anyway` : '';
+  const moved = it.kind === 'autorun' ? (it.mode === 'segments' ? 'on new commits' : 'on each new commit') : it.kind === 'plugin' ? 'once a master moves' : 'once master moves';
+  switch (it.waitsFor) {
+    case 'now': return { when: Date.parse(it.startAt) - Date.now() < 60e3 ? 'next' : planDay(it.startAt), why: 'due now: right after the running job' };
+    case 'idle': return { when: planDay(it.startAt), why: `${Date.parse(it.startAt) - Date.parse(it.dueAt) > 60e3 ? 'after the queue and 2 idle hours' : 'due then, goes once the stand idles 2 h'}${by}` };
+    case 'term': return { when: planDay(it.startAt), why: 'twice its term: it goes whatever the queue holds' };
+    case 'queue': return { when: 'in the queue', why: '' };
+    case 'reopen': return { when: 'after Reopen', why: 'the stand is closed for maintenance' };
+    case 'commit': return { when: moved, why: it.kind === 'autorun' ? '' : 'what it measures has not moved since its last run' };
+    default: return { when: '–', why: it.error || '' };
+  }
+}
+export const planTakes = (it) => (it.takesSec ? `~${mins(it.takesSec)}` : '–');
+// the same in a few words, next to a card: why then is in its title
+export const planShort = (it) => {
+  const w = planWhen(it);
+  const when = w.when === 'next' ? 'goes next' : it.waitsFor === 'queue' ? w.when : `next ${w.when}`;
+  return `<span class="term" title="${esc([w.why, planSplit(it)].filter(Boolean).join(' · '))}">${esc(when)}${it.takesSec ? ` · ${planTakes(it)}` : ''}</span>`;
+};
+export const planSplit = (it) => (it.jobs ? `${it.jobs > 1 ? `${it.jobs} × ` : ''}${mins(it.runSec)}${it.builds ? ` + ${plural(it.builds, 'build')}` : ''}` : '');
+// what a schedule queues next: a few names, the rest counted
+const planScenarios = (it) => {
+  const n = (it.scenarios || []).length;
+  return `${n === it.total && n > 3 ? `all ${n} scenarios` : n > 3 ? `${n} of ${it.total} scenarios` : (it.scenarios || []).map((x) => esc(scName(x))).join(', ')}${it.later ? ` · ${it.later} more later` : ''}`;
+};
+const PLAN_WHAT = {
+  autorun: (it) => (it.commits ? `${plural(it.commits, 'new commit')} as one segment` : it.mode === 'segments' ? 'the next new commits as one segment' : 'each new commit against its parent'),
+  master: () => 'master against the release', aa: () => 'master against itself: the noise', plugin: () => 'master pair against release pair',
+};
+const planLink = (it) => (it.kind === 'plugin' ? `#/plugin?name=${encodeURIComponent(it.plugin)}` : '#/settings?tab=automation');
+// the Next line of a schedule in Settings and next to a card
+export const planNext = (it) => {
+  if (!it) return '';
+  const w = planWhen(it);
+  return `<b>${esc(w.when)}</b>${w.why ? ` <span class="muted">${esc(w.why)}</span>` : ''}${it.takesSec ? ` · ${planTakes(it)} <span class="muted">${planSplit(it)}</span>` : ''}`;
+};
+function planTable(plan) {
+  return `<h2>Planned <span class="muted">what the schedules queue next and when: past its term a scenario waits for 2 idle hours, at twice its term it goes anyway</span></h2>
+    <table class="commits runs-table plan-table"><thead><tr><th>Schedule</th><th>What</th><th>Goes</th><th class="num">Takes</th></tr></thead>
+    <tbody>${plan.map((it) => {
+      const w = planWhen(it);
+      return `<tr><td><b>${esc(it.title)}</b><div><a class="muted" href="${planLink(it)}">settings</a></div></td>
+        <td class="subject">${(PLAN_WHAT[it.kind] || (() => ''))(it)}<div class="muted">${planScenarios(it)}</div></td>
+        <td>${esc(w.when)}<div class="muted">${esc(w.why)}</div></td>
+        <td class="num">${planTakes(it)}<div class="muted">${planSplit(it)}</div></td></tr>`;
+    }).join('')}</tbody></table>`;
+}
 // how long the running job should still take, seconds: nothing once it runs over its estimate
 const timeLeft = (j) => (j.startedAt && j.etaSec ? Math.max(0, Date.parse(j.startedAt) / 1000 + j.etaSec - Date.now() / 1000) : 0);
 export const metricHead = ([k, h]) => `<th class="num"${hint(k)}>${h}</th>`;
@@ -718,16 +772,16 @@ views.queue = {
   live: true,
   async render() {
     this.historyLimit = this.historyLimit || 10;
-    const [active, history, health, shownBisects] = await Promise.all([
+    const [active, history, health, shownBisects, plan] = await Promise.all([
       api.get('/api/jobs?filter=active&limit=101'), api.get(`/api/jobs?filter=${this.noSteps ? 'history-no-steps' : 'history'}&limit=${this.historyLimit + 1}`),
-      api.get('/api/health'), api.get('/api/bisects?active=true&limit=20').catch(() => []),
+      api.get('/api/health'), api.get('/api/bisects?active=true&limit=20').catch(() => []), api.get('/api/schedule').catch(() => []),
     ]);
     const running = active.find((j) => j.status === 'running');
     const queued = active.filter((j) => j.status === 'queued'), paused = health.worker.paused;
     const log = running ? await api.get(`/api/jobs/${running.id}/log?lines=25`) : null;
     return `
       <h1>Queue</h1>
-      ${paused ? `<div class="card notice">${running ? `Closing for maintenance: ${jobLink(running)} finishes, no new jobs start.` : queued.length ? `Closed for maintenance: ${plural(health.jobs.queued || queued.length, 'job')}${health.queueWorkSec ? `, ~${mins(health.queueWorkSec)} of work,` : ''} wait for Reopen.` : 'Closed for maintenance: nothing waits.'} <a href="#/settings">Settings</a></div>` : ''}
+      ${paused ? `<div class="card notice">${running ? `Closing for maintenance: ${jobLink(running)} finishes, no new jobs start.` : queued.length ? `Closed for maintenance: ${plural(health.jobs.queued || queued.length, 'job')}${health.queueWorkSec ? `, ~${mins(health.queueWorkSec)} of work,` : ''} wait for Reopen${plan.length ? ', the schedules too' : ''}.` : `Closed for maintenance${plan.length ? ': the schedules wait for Reopen' : ''}.`} <a href="#/settings">Settings</a></div>` : ''}
       <div class="card now">${running ? `
         <div class="now-head">
           <div class="now-title">${jobLink(running)} ${jobTitle(running)}${parentTag(running)}</div>
@@ -745,6 +799,7 @@ views.queue = {
         <td style="white-space:nowrap">${health.worker.paused ? '<span class="muted">paused</span>' : etaStart(j.etaStartAt)}</td><td class="num muted">${j.etaSec != null ? `~${mins(j.etaSec)}` : '–'}</td>
         <td><button class="small" data-cancel="${j.id}">Cancel</button></td></tr>`).join('') || '<tr><td colspan="9" class="muted">empty</td></tr>'}</tbody></table>
       ${health.queueDrainsAt && !health.worker.paused ? `<div class="muted">${(health.jobs.queued || 0) > queued.length ? `…and ${(health.jobs.queued || 0) - queued.length} more. ` : ''}What waits now ends at about ${etaStart(health.queueDrainsAt)}${health.bisectsDoneAt ? `; active bisects keep adding steps until about ${etaStart(health.bisectsDoneAt)}` : ''}.</div>` : ''}
+      ${plan.length ? planTable(plan) : ''}
       ${shownBisects.length ? `<h2>Active bisects <span class="muted">a step at a time in the queue · <a href="#/bisects">all bisects</a></span></h2>
       <table><thead><tr><th>#</th><th>Scenario</th><th>Metric</th><th>Status</th><th>Now</th><th></th></tr></thead>
       <tbody>${shownBisects.map((b) => `<tr>
@@ -2263,15 +2318,17 @@ const AUTORUN_MODES = [
   ['abba-vs-parent', 'Every commit', 'An ABBA of each commit against its parent. Exact, but a build and about 9 minutes per commit and scenario.'],
   ['single', 'Single phase', 'One phase of each commit, no baseline. A quick level for the charts: no Δ and no verdict.'],
 ];
-// A recurring run, the A/A or master vs release: off, or how fresh it is kept (Freshness on the server)
+// A recurring run, the A/A or master vs release: off, or how fresh it is kept (Freshness on the server), and when it goes
+// next (`next`, an item of /api/schedule)
 const keepField = (name, value) => `<label class="keep-days">every <input name="${name}" type="number" min="1" value="${esc(value)}"> days</label>`;
-function scheduleForm(p, title, text, settings, scenarios, picked) {
+function scheduleForm(p, title, text, settings, scenarios, picked, next) {
   const on = settings[`${p}.mode`] === 'keep', last = settings[`${p}.lastDate`];
   return `<form id="schedule-${p}" class="card">
     <h2 style="margin-top:0">${title} <span class="muted">${text} Last run: ${last ? fmtDay(last) : 'never'}.</span></h2>
     <div class="mode-row"><label class="mode-opt"><input type="radio" name="${p}.mode" value="off" ${on ? '' : 'checked'}><span>Off</span></label>
       <label class="mode-opt"><input type="radio" name="${p}.mode" value="keep" ${on ? 'checked' : ''}><span>Keep fresh</span></label>
       <span data-if-on>${keepField(`${p}.keepDays`, settings[`${p}.keepDays`] || '7')}</span></div>
+    ${on && next ? `<div class="plan-next" data-if-on><b>Next:</b> ${planNext(next)}</div>` : ''}
     <div data-if-on>${scenarioPicker(scenarios, picked)}</div>
     <div class="actions"><button class="primary">Save</button></div>
   </form>`;
@@ -2713,8 +2770,12 @@ views.settings = {
   poll: 6000,
   async render() {
     const storage = await api.get('/api/storage').catch(() => null); // a walk over the runs: the page does not poll
-    const [settings, health, scenarios, builds, stand, appKept, config] = await Promise.all([api.get('/api/settings'), api.get('/api/health'), api.get('/api/scenarios'),
-      api.get('/api/builds?limit=20'), api.get('/api/stand'), api.get('/api/app/check').catch(() => null), api.get('/api/config')]);
+    const [settings, health, scenarios, builds, stand, appKept, config, plan] = await Promise.all([api.get('/api/settings'), api.get('/api/health'), api.get('/api/scenarios'),
+      api.get('/api/builds?limit=20'), api.get('/api/stand'), api.get('/api/app/check').catch(() => null), api.get('/api/config'), api.get('/api/schedule').catch(() => [])]);
+    const planOf = (kind) => plan.find((x) => x.kind === kind);
+    // a commit of auto-run against its parent: a build and an ABBA of each scenario, as this stand runs them
+    const autoNames = (settings['autorun.scenario'] || '').split(',').map((x) => x.trim()).filter(Boolean);
+    const perCommit = autoNames.length ? await api.get(`/api/estimate?${new URLSearchParams({ scenario: autoNames.join(','), jobs: 1, extraBuilds: 1 })}`).catch(() => null) : null;
     this.stand = stand;
     if (!this.appRunning) this.appCheck = appKept; // the kept report; a running check paints its own
     // Check takes the ports of Ignite on the hosts: not during a job, and with jobs waiting only while the stand is closed for
@@ -2768,8 +2829,10 @@ views.settings = {
       <section data-tab="automation" ${tab === 'automation' ? '' : 'hidden'}>
         <form id="settings" class="card">
           <h2 style="margin-top:0">On new commits <span class="muted">Measures the branch as it moves.</span></h2>
-          <div class="mode-list">${AUTORUN_MODES.map(([k, name, text]) => `<label class="mode-opt"><input type="radio" name="autorun.mode" value="${k}" ${k === autoMode ? 'checked' : ''}><span><b>${name}</b><div class="muted">${text}</div></span></label>`).join('')}</div>
+          <div class="mode-list">${AUTORUN_MODES.map(([k, name, text]) => [k, name, k === 'abba-vs-parent' && perCommit ? `An ABBA of each commit against its parent. Exact, but a build and ~${mins(perCommit.runSec + perCommit.buildSec)} per commit and scenario on this stand.` : text])
+            .map(([k, name, text]) => `<label class="mode-opt"><input type="radio" name="autorun.mode" value="${k}" ${k === autoMode ? 'checked' : ''}><span><b>${name}</b><div class="muted">${text}</div></span></label>`).join('')}</div>
           <div data-if-autorun ${autoMode === 'off' ? 'hidden' : ''}>
+            ${planOf('autorun') ? `<div class="plan-next"><b>Next:</b> ${planNext(planOf('autorun'))}</div>` : ''}
             <div class="mode-row" data-segments ${autoMode === 'segments' ? '' : 'hidden'}><span class="mode-opt">Keep fresh</span>${keepField('autorun.keepDays', settings['autorun.keepDays'] || '1')}</div>
             ${scenarioPicker(scenarios, this.picked)}
             <label>Only commits touching (globs; empty = every commit)</label>
@@ -2780,8 +2843,8 @@ views.settings = {
           </div>
           <div class="actions"><button class="primary">Save</button></div>
         </form>
-        ${scheduleForm('calibration', 'A/A', 'Measures the noise of the stand, so the thresholds follow it.', settings, scenarios, this.aaPicked)}
-        ${scheduleForm('master', 'master vs release', 'Keeps the dashboard headline fresh.', settings, scenarios, this.masterPicked)}
+        ${scheduleForm('calibration', 'A/A', 'Measures the noise of the stand, so the thresholds follow it.', settings, scenarios, this.aaPicked, planOf('aa'))}
+        ${scheduleForm('master', 'master vs release', 'Keeps the dashboard headline fresh.', settings, scenarios, this.masterPicked, planOf('master'))}
         <div class="muted small-text">Keep fresh: past that age a scenario goes once the stand has been idle for 2 hours, behind everything else. At twice that age, or with fewer than 3 A/A for its thresholds, it goes ahead of the queue. Nothing starts while the stand is closed for maintenance. Results of A/A are on <a href="#/noise">Noise</a>.</div>
       </section>
       <section data-tab="release" ${tab === 'release' ? '' : 'hidden'}><div class="card">
@@ -3046,7 +3109,7 @@ function startingCard(w, stand) {
         : 'auto-run is off: runs start from Commits and Compare, or turn it on in Settings → Automation'}</div>`)}
     </div></div>`;
 }
-function masterCard(rels, a, branch, autorun, open, showCalm) {
+function masterCard(rels, a, branch, autorun, open, showCalm, next) {
   // tag, unreleased commits and coverage come from the main auto-run scenario (the tag is the same for all)
   const r = rels.find((x) => x && x.tag && x.scenario === autorun[0]) || rels.find((x) => x && x.tag) || rels[0];
   if (!r || r.error) return `<div class="card error">release info unavailable: ${esc((r && r.error) || '')}</div>`;
@@ -3097,7 +3160,7 @@ function masterCard(rels, a, branch, autorun, open, showCalm) {
     <div class="card release">
       <div class="release-head">
         <div><span class="release-title">${esc(branch)} vs ${esc(r.tag)}</span>
-          <span class="muted"><span class="term" title="${esc(coverage)}">${r.unreleased + picked} commits</span> since ${esc(r.tag)}${picked ? ` (<span class="term" title="already in ${esc(r.tag)}: they do not add to Δ">${picked} cherry-picked</span>)` : ''} · ${fmtDay(r.fromDate)} – ${fmtDay(r.headDate)}${usual ? ` · measured ${usual}` : ''}</span></div>
+          <span class="muted"><span class="term" title="${esc(coverage)}">${r.unreleased + picked} commits</span> since ${esc(r.tag)}${picked ? ` (<span class="term" title="already in ${esc(r.tag)}: they do not add to Δ">${picked} cherry-picked</span>)` : ''} · ${fmtDay(r.fromDate)} – ${fmtDay(r.headDate)}${usual ? ` · measured ${usual}` : ''}${next ? ` · ${planShort(next)}` : ''}</span></div>
         <div class="release-tools">${openBisects(a).length ? '<button class="small" data-bisect-open title="choose the scenarios and metrics first">Bisect deviations</button>' : ''}<button class="small" id="release-all">Run all</button></div>
       </div>
       ${legend ? `<div class="att-legend">${legend}</div>` : ''}
@@ -3120,8 +3183,10 @@ views.dashboard = {
     const noises = await Promise.all(scenarios.map((x) => x.name).map((sc) => api.get(`/api/noise?scenario=${encodeURIComponent(sc)}`).then((n) => ({ sc, n })).catch(() => null)));
     const rels = await Promise.all(scenarios.map((s) => api.get(`/api/release?scenario=${encodeURIComponent(s.name)}`).catch((e) => ({ scenario: s.name, error: e.message }))));
     // the check of master against what was found is the heavy part of the page: once a minute while the rest polls every 10 s
-    if (!this.attention || Date.now() - this.attention.at > 60000)
-      this.attention = { at: Date.now(), data: await api.get('/api/attention') };
+    if (!this.attention || Date.now() - this.attention.at > 60000) {
+      const [data, plan] = await Promise.all([api.get('/api/attention'), api.get('/api/schedule').catch(() => [])]);
+      this.attention = { at: Date.now(), data, plan };
+    }
     const attention = this.attention.data;
     const [history, commits, active] = await Promise.all([
       api.get('/api/jobs?filter=history&limit=60'),
@@ -3168,7 +3233,7 @@ views.dashboard = {
     return `
       <h1>Dashboard</h1>
       ${stand}
-      ${masterCard(rels, attention, w.branch, autoScenarios, this.attOpen, this.calmOpen)}
+      ${masterCard(rels, attention, w.branch, autoScenarios, this.attOpen, this.calmOpen, this.attention.plan.find((x) => x.kind === 'master'))}
       ${failedLines ? `<div class="card"><div class="tile-label">Failed, not run again</div>${failedLines}</div>` : ''}
       ${attentionResult(attention)}`;
   },

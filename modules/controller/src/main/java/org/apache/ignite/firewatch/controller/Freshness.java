@@ -31,6 +31,23 @@ final class Freshness {
         NOW
     }
 
+    /**
+     * What a scenario of a recurring run needs, for the queue and for the plan of what comes next.
+     *
+     * @param scenario Scenario name.
+     * @param need What it needs now.
+     * @param measured When its last result is from; null when there is none.
+     * @param jobs Jobs it queues when it goes.
+     * @param moved False when what it measures has not moved since its last result: it waits for a commit.
+     * @param queued Whether its run waits in the queue already.
+     */
+    record Due(String scenario, Need need, Instant measured, int jobs, boolean moved, boolean queued) {
+        /** */
+        static Due queued(String scenario, Instant measured) {
+            return new Due(scenario, Need.NOTHING, measured, 1, true, true);
+        }
+    }
+
     /** {@code measured} is null when there is nothing yet. */
     static Need need(Instant measured, Instant now, int days) {
         if (measured == null)

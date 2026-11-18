@@ -3,7 +3,7 @@
 import {
   api, esc, fmt, badge, jobLink, toast, guarded, views, refresh, confirmLaunch, deltaClass, modal, plural, unfoldRow,
   METRIC_COLS, metricHead, calmLine, priorityField, priorityOf, frontPriority, scenarioPicker, bindScenarioPicker,
-  familiesByWord, estimateRows,
+  familiesByWord, estimateRows, planShort,
 } from './app.js';
 
 const query = () => new URLSearchParams(location.hash.split('?')[1] || '');
@@ -58,8 +58,8 @@ function releaseRow(p, r, usual, showCalm, width) {
     ${cols().map(([k]) => cell(k)).join('')}<td>${verdict}</td><td>${when}</td><td class="row-action">${act}</td></tr>${why}`;
 }
 // The card of a plugin, as the one of master on the dashboard: the master pair against the release pair, a row per
-// scenario; on the right how it runs and when the extension was fetched
-function releaseCard(p, showCalm) {
+// scenario; on the right how it runs, when it runs next (`next`, an item of /api/schedule) and when the extension was fetched
+function releaseCard(p, showCalm, next) {
   const width = cols().length + 4, s = p.settings;
   // most rows were measured together: the head says when, a row only when it differs
   const times = p.rows.map(whenOf).filter(Boolean);
@@ -75,13 +75,15 @@ function releaseCard(p, showCalm) {
     <div class="release-head plugin-release-head">
       <div><span class="release-title">master vs ${esc(p.pairs ? p.pairs.release.extRef : 'release')}</span>${usual ? `<span class="muted">measured ${usual}</span>` : ''}${pairs}</div>
       <div class="release-side"><div class="release-tools"><button class="small" data-settings>Settings</button>${p.pairs ? '<button class="small" data-run-all>Run all</button>' : ''}</div>
-        <div class="muted small-text">${how}<br>${fetched}${p.mirror.lastFetchError ? `<br><span class="error">${esc(p.mirror.lastFetchError)}</span>` : ''}</div></div>
+        <div class="muted small-text">${how}${next ? `<br>${planShort(next)}` : ''}<br>${fetched}${p.mirror.lastFetchError ? `<br><span class="error">${esc(p.mirror.lastFetchError)}</span>` : ''}</div></div>
     </div>
     <table class="release-table"><thead><tr><th>Scenario</th>${cols().map(metricHead).join('')}<th>Verdict</th><th></th><th></th></tr></thead>
       <tbody>${p.rows.map((r) => releaseRow(p, r, usual, showCalm, width)).join('')}${quiet.length ? calmLine(`data-rel-calm="${esc(p.name)}"`, width, showCalm,
     `${plural(quiet.length, 'scenario')} without a change`, quiet.map((r) => r.scenario)) : ''}</tbody></table>
   </div>`;
 }
+// when the schedule of a plugin runs it next (/api/schedule)
+const nextOf = (plan, p) => (plan || []).find((x) => x.kind === 'plugin' && x.plugin === p.name);
 // Run all, or Run of a row: the release pair against the master pair
 async function runNow(p, names) {
   const all = names.length > 1;
@@ -120,10 +122,11 @@ views.plugins = {
     const list = await api.get('/api/plugins');
     this.single = list.plugins.length === 1 && !list.errors.length; // one plugin: its page is the section
     if (this.single) return views.plugin.render({ name: list.plugins[0].name });
-    this.pages = await Promise.all(list.plugins.map((p) => api.get(`/api/plugins/${encodeURIComponent(p.name)}?comparisons=1&runs=1`)));
+    [this.pages, this.plan] = await Promise.all([Promise.all(list.plugins.map((p) => api.get(`/api/plugins/${encodeURIComponent(p.name)}?comparisons=1&runs=1`))),
+      api.get('/api/schedule').catch(() => [])]);
     return `<h1>Plugins <span class="muted">Ignite together with an extension of another repository: master of both against their last release</span></h1>
       ${list.errors.length ? `<div class="card error">Not loaded: ${list.errors.map(esc).join('<br>')}</div>` : ''}
-      ${this.pages.map((p) => `<h2><a href="${pluginUrl(p.name)}">${esc(p.title)}</a> <span class="muted">${esc(p.description || '')}</span></h2>${releaseCard(p, this.calmOpen.has(p.name))}`).join('')
+      ${this.pages.map((p) => `<h2><a href="${pluginUrl(p.name)}">${esc(p.title)}</a> <span class="muted">${esc(p.description || '')}</span></h2>${releaseCard(p, this.calmOpen.has(p.name), nextOf(this.plan, p))}`).join('')
       || '<div class="card muted">No plugin is on: the configuration names none.</div>'}
       <div class="muted small-text">Both sides of a pair move, so a result says how the two masters do together, not which commit moved them: nothing is bisected, Compare on the page of a plugin narrows it down.</div>`;
   },
@@ -297,12 +300,12 @@ views.plugin = {
   async render(params) {
     const name = (params && params.name) || query().get('name');
     if (name !== this.name) { this.name = name; this.cmpOpen = new Set(); this.nCmp = 10; this.nRuns = 10; }
-    const [list, p] = await Promise.all([api.get('/api/plugins'),
-      api.get(`/api/plugins/${encodeURIComponent(name)}?comparisons=${this.nCmp}&runs=${this.nRuns}`)]);
+    const [list, p, plan] = await Promise.all([api.get('/api/plugins'),
+      api.get(`/api/plugins/${encodeURIComponent(name)}?comparisons=${this.nCmp}&runs=${this.nRuns}`), api.get('/api/schedule').catch(() => [])]);
     this.p = p;
     this.active = p.rows.some((r) => r.active.length) || p.comparisons.some((c) => c.status === 'queued' || c.status === 'running');
     return `<h1>${list.plugins.length > 1 ? '<a href="#/plugins">Plugins</a> / ' : ''}${esc(p.title)} <span class="muted">${esc(p.description || '')}</span></h1>
-      ${releaseCard(p, this.calmOpen.has(p.name))}
+      ${releaseCard(p, this.calmOpen.has(p.name), nextOf(plan, p))}
       ${comparisonsCard(p, this.cmpOpen)}
       ${historyCard(p)}`;
   },

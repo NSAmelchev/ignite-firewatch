@@ -213,6 +213,10 @@ a.job-title:hover { text-decoration: underline; }
 .nav-count { display: inline-block; min-width: 18px; padding: 0 6px; border-radius: 9px; font-size: 12px; line-height: 17px; text-align: center; background: var(--line); color: var(--fg); margin-left: 3px; vertical-align: 1px; }
 /* none yet, or none at all: not even an empty pill on the first paint */
 .nav-count:empty { display: none; }
+/* what the schedules queue next: a line in Settings, a table in Queue */
+.plan-next { margin: 8px 0 4px; padding: 7px 10px; border-left: 3px solid var(--accent); border-radius: 4px; background: color-mix(in srgb, var(--accent) 6%, transparent); }
+table.plan-table td { vertical-align: top; }
+table.plan-table td:first-child, table.plan-table td:nth-child(3), table.plan-table td:last-child { white-space: nowrap; }
 /* Settings: something on the stand needs a hand */
 .nav-count.bad { background: var(--bad); color: var(--bg); font-weight: 600; }
 .tile button.small { margin-top: 6px; }

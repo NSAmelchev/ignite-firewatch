@@ -96,18 +96,17 @@ final class PluginSchedule {
                 continue;
             }
 
-            if (Config.isTrue(db.setting(Settings.WORKER_PAUSED, "false")) || plugins.release(p) == null
-                || Freshness.OFF.equals(plugins.setting(p, Plugins.MODE, Freshness.KEEP)))
+            if (Config.isTrue(db.setting(Settings.WORKER_PAUSED, "false")) || !scheduled(plugins, p))
                 continue;
 
             try {
                 Pairs pairs = pairs(plugins, p, ignite);
                 Instant now = Instant.now();
                 boolean idle = Freshness.idle(db, now);
-                int days = Integer.parseInt(plugins.setting(p, Plugins.KEEP_DAYS, String.valueOf(KEEP_DAYS)));
+                int days = keepDays(plugins, p);
 
                 for (Scenarios.Info sc : p.scenarios.list()) {
-                    Freshness.Need need = need(db, p, sc, pairs, now, days);
+                    Freshness.Need need = due(db, p, sc, pairs, now, days).need();
 
                     if (Freshness.goes(need, idle)) {
                         queue(jobs, p, sc, pairs.release(), pairs.master(), JobService.SRC_PLUGIN,
@@ -130,22 +129,51 @@ final class PluginSchedule {
     /**
      * What a scenario needs: nothing while its run waits, nothing when neither master moved since its last run or since
      * the last failure of the same pairs (an extension that does not build waits for a change), else by its age.
+     *
+     * @param db Database.
+     * @param p Plugin.
+     * @param sc Scenario of the plugin.
+     * @param pairs The pairs now.
+     * @param now Now.
+     * @param days Its term, days.
+     * @return What it needs.
      */
-    private static Freshness.Need need(Db db, Plugins.Plugin p, Scenarios.Info sc, Pairs pairs, Instant now,
-        int days) {
+    static Freshness.Due due(Db db, Plugins.Plugin p, Scenarios.Info sc, Pairs pairs, Instant now, int days) {
         List<Job> recent = db.pluginJobs(p.name, sc.name, JobService.SRC_PLUGIN, false, 10);
+        Job last = recent.stream().filter(j -> Job.DONE.equals(j.status)).findFirst().orElse(null);
+        Instant measured = last == null || last.finishedAt == null ? null : Instant.parse(last.finishedAt);
 
         if (recent.stream().anyMatch(Job::active))
-            return Freshness.Need.NOTHING;
+            return Freshness.Due.queued(sc.name, measured);
 
-        Job last = recent.stream().filter(j -> Job.DONE.equals(j.status)).findFirst().orElse(null);
         Job latest = recent.isEmpty() ? null : recent.get(0);
 
         if (latest != null && same(latest, pairs) && (Job.DONE.equals(latest.status) || Job.FAILED.equals(latest.status)))
-            return Freshness.Need.NOTHING;
+            return new Freshness.Due(sc.name, Freshness.Need.NOTHING, measured, 1, false, false);
 
-        return Freshness.need(last == null || last.finishedAt == null ? null : Instant.parse(last.finishedAt), now,
-            days);
+        return new Freshness.Due(sc.name, Freshness.need(measured, now, days), measured, 1, true, false);
+    }
+
+    /**
+     * Whether a plugin runs by itself: its release is set and its schedule is on.
+     *
+     * @param plugins Plugins.
+     * @param p Plugin.
+     * @return Whether it runs by itself.
+     */
+    static boolean scheduled(Plugins plugins, Plugins.Plugin p) {
+        return plugins.release(p) != null && !Freshness.OFF.equals(plugins.setting(p, Plugins.MODE, Freshness.KEEP));
+    }
+
+    /**
+     * The term of a plugin, days.
+     *
+     * @param plugins Plugins.
+     * @param p Plugin.
+     * @return Days.
+     */
+    static int keepDays(Plugins plugins, Plugins.Plugin p) {
+        return Integer.parseInt(plugins.setting(p, Plugins.KEEP_DAYS, String.valueOf(KEEP_DAYS)));
     }
 
     /** Whether the job measured exactly these pairs. */

@@ -823,6 +823,25 @@ class PipelineTest {
             "both pairs are built now");
     }
 
+    /** The schedule of a plugin: its pairs as they are now. */
+    @Test void theScheduleOfAPlugin() throws Exception {
+        Plugins plugins = plugin();
+        Plugins.Plugin p = plugins.get("spring-data");
+        p.mirror.fetch();
+        Schedule s = new Schedule(db, jobs, mirror, null, plugins, null);
+        assertTrue(s.view().isEmpty(), "no release set: it does not run by itself");
+
+        db.setSetting("plugin.spring-data.release", "ext-1.0");
+        Map<String, Object> m = s.view().get(0);
+        assertEquals(List.of("plugin", "spring-data", "now", List.of("point"), 2),
+            List.of(m.get("kind"), m.get("plugin"), m.get("waitsFor"), m.get("scenarios"), m.get("builds")),
+            "never measured: at once, with a build of each pair");
+
+        assertEquals(1, PluginSchedule.runIfDue(db, jobs, plugins, mirror));
+        runner.runJob(db.nextQueued());
+        assertEquals("commit", s.view().get(0).get("waitsFor"), "neither master moved");
+    }
+
     /** */
     @SuppressWarnings("unchecked")
     private static List<Map<String, Object>> runsOf(Map<String, Object> page) {
@@ -1447,6 +1466,79 @@ class PipelineTest {
     private void aged(Job j, Duration age) {
         j.finishedAt = Instant.now().minus(age).toString();
         db.updateJob(j);
+    }
+
+    /** The schedule of master vs release: what goes next, when and for how long, by the rules that queue it. */
+    @Test void theScheduleSaysWhatGoesNextAndWhen() throws Exception {
+        origin.tag("1.0.0");
+        origin.commit("after the release", Map.of("modules/core/src/main/N.java", "class N {}"));
+        Watcher w = new Watcher(cfg, db, mirror, jobs);
+        w.poll();
+        Schedule s = new Schedule(db, jobs, mirror, w, null, null);
+        assertTrue(s.view().isEmpty(), "every schedule is off");
+
+        db.setSetting("master.mode", Freshness.KEEP);
+        Map<String, Object> m = s.view().get(0);
+        assertEquals(List.of("master", "master vs 1.0.0", "now", List.of("smoke"), 1, 2),
+            List.of(m.get("kind"), m.get("title"), m.get("waitsFor"), m.get("scenarios"), m.get("jobs"), m.get("builds")),
+            "never measured: at once, with the builds of the release and the head");
+        assertTrue((Long)m.get("takesSec") > 0);
+
+        assertEquals(1, Calibrator.runIfDue(db, jobs, "master"));
+        assertEquals("queue", s.view().get(0).get("waitsFor"));
+        Job rel = db.nextQueued();
+        runner.runJob(rel);
+        assertEquals("commit", s.view().get(0).get("waitsFor"), "the head is measured: it waits for a commit");
+
+        origin.commit("next", Map.of("modules/core/src/main/M.java", "class M {}"));
+        w.poll();
+        m = s.view().get(0);
+        Instant measured = Instant.parse(db.job(rel.id).finishedAt);
+        assertEquals("idle", m.get("waitsFor"));
+        assertEquals(measured.plus(Duration.ofDays(7)).toString(), m.get("dueAt"), "due at its term");
+        assertEquals(measured.plus(Duration.ofDays(14)).toString(), m.get("byAt"), "and goes anyway at twice that");
+        assertEquals(m.get("dueAt"), m.get("startAt"), "the stand has long been idle by then");
+        assertEquals(1, m.get("builds"), "the new head");
+
+        aged(db.job(rel.id), Duration.ofDays(8));
+        Job busy = jobs.enqueue(Job.ABBA, "master~1", "master", "smoke", 1, null, null);
+        m = s.view().get(0);
+        assertEquals("idle", m.get("waitsFor"));
+        assertTrue(Instant.parse((String)m.get("startAt")).isAfter(Instant.now().plus(Duration.ofHours(2))),
+            "past its term it waits for the queue and two idle hours");
+
+        aged(db.job(rel.id), Duration.ofDays(15));
+        assertEquals("now", s.view().get(0).get("waitsFor"), "overdue goes on a busy stand");
+
+        db.setSetting(Settings.WORKER_PAUSED, "true");
+        m = s.view().get(0);
+        assertEquals("reopen", m.get("waitsFor"));
+        assertNull(m.get("startAt"));
+        db.setSetting(Settings.WORKER_PAUSED, "false");
+        jobs.cancel(busy.id);
+    }
+
+    /** Auto-run: the segment that waits for its term, or what a new commit costs. */
+    @Test void theScheduleOfAutoRun() throws Exception {
+        Watcher w = new Watcher(cfg, db, mirror, jobs);
+        db.setSetting(Settings.AUTORUN_ENABLED, "true");
+        db.setSetting(Settings.AUTORUN_MODE, "segments");
+        w.poll();
+        Schedule s = new Schedule(db, jobs, mirror, w, null, null);
+        Map<String, Object> m = s.view().get(0);
+        assertEquals(List.of("autorun", "commit"), List.of(m.get("kind"), m.get("waitsFor")), "no new commit");
+        assertTrue((Long)m.get("takesSec") > 0, "what a new commit costs");
+
+        origin.commit("core 1", Map.of("modules/core/src/main/S1.java", "class S1 {}"));
+        origin.commit("docs", Map.of("README.md", "y"));
+        w.poll();
+        m = s.view().get(0);
+        assertEquals(List.of("idle", 1, List.of("smoke")), List.of(m.get("waitsFor"), m.get("commits"), m.get("scenarios")),
+            "one relevant commit waits a day for an idle stand");
+        assertTrue(Instant.parse((String)m.get("dueAt")).isAfter(Instant.now().plus(Duration.ofHours(20))));
+
+        db.setSetting(Settings.AUTORUN_MODE, "abba-vs-parent");
+        assertEquals("commit", s.view().get(0).get("waitsFor"), "every commit goes as it comes");
     }
 
     /** */
