@@ -604,8 +604,10 @@ class PipelineTest {
             && JobService.SRC_COMPARE.equals(j.source)));
         assertTrue(list.stream().noneMatch(JobService::isBranchHistory),
             "a comparison stays out of the branch history");
-        assertThrows(IllegalArgumentException.class, () -> comparisons.create(a, b, List.of("other"), 2),
-            "the same pair is already queued: nothing new is created");
+        IllegalArgumentException same = assertThrows(IllegalArgumentException.class,
+            () -> comparisons.create(a, b, List.of("other"), 2), "the same pair is already queued: nothing new is created");
+        assertEquals("other: an identical job is already queued in comparison #" + c.id + " (job #" + list.get(1).id + ")",
+            same.getMessage(), "the refusal leads to what holds the job");
         assertEquals(1, db.comparisons(10).size());
 
         assertThrows(IllegalArgumentException.class, () -> comparisons.delete(c.id), "active jobs are cancelled first");

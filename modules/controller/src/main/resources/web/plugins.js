@@ -87,12 +87,12 @@ const nextOf = (plan, p) => (plan || []).find((x) => x.kind === 'plugin' && x.pl
 // Run all, or Run of a row: the release pair against the master pair
 async function runNow(p, names) {
   const all = names.length > 1;
-  const v = await confirmLaunch({ title: all ? `Run ${p.title}: master vs release` : `Run ${names[0]}: master vs release`,
+  const jobs = await confirmLaunch({ title: all ? `Run ${p.title}: master vs release` : `Run ${names[0]}: master vs release`,
     what: `master pair vs release pair<div class="muted small-text">${pairHtml(p, p.pairs.master)}<br>vs ${pairHtml(p, p.pairs.release)}</div>`,
     ...(all ? { choose: p.scenarios.map((s) => ({ name: s.name, checked: true })) } : { scenarios: names }), jobs: names.length,
-    plugin: p.name, pairs: [p.pairs.master, p.pairs.release].map((x) => `${x.igniteSha}:${x.extSha}`) });
-  if (!v) return;
-  const jobs = await api.post(`/api/plugins/${encodeURIComponent(p.name)}/run`, { scenarios: v.scenarios, priority: v.priority });
+    plugin: p.name, pairs: [p.pairs.master, p.pairs.release].map((x) => `${x.igniteSha}:${x.extSha}`),
+    submit: (v) => api.post(`/api/plugins/${encodeURIComponent(p.name)}/run`, { scenarios: v.scenarios, priority: v.priority }) });
+  if (!jobs) return;
   toast(`${plural(jobs.length, 'job')} queued`);
   refresh();
 }
@@ -223,7 +223,7 @@ async function compareDialog(p, preset = {}) {
     const v = (n) => w.querySelector(`[name="${n}"]`).value.trim();
     return { a: { ignite: v('a.ignite'), ext: v('a.ext') }, b: { ignite: v('b.ignite'), ext: v('b.ext') } };
   };
-  const v = await modal(`New comparison of ${esc(p.title)}`, body, 'Queue', {
+  const jobs = await modal(`New comparison of ${esc(p.title)}`, body, 'Queue', {
     asWho: true,
     open: (w) => {
       const yes = w.querySelector('[data-yes]');
@@ -254,10 +254,11 @@ async function compareDialog(p, preset = {}) {
       sync();
     },
     value: (w) => ({ ...read(w), priority: priorityOf(w) }),
+    // the refs of both repositories are fetched first: the dialog waits for it
+    submit: (v) => api.post(`/api/plugins/${encodeURIComponent(p.name)}/compare`,
+      { a: v.a, b: v.b, scenarios: p.scenarios.map((s) => s.name).filter((n) => picked.has(n)), priority: v.priority }),
   });
-  if (!v) return;
-  const names = p.scenarios.map((s) => s.name).filter((n) => picked.has(n));
-  const jobs = await api.post(`/api/plugins/${encodeURIComponent(p.name)}/compare`, { a: v.a, b: v.b, scenarios: names, priority: v.priority });
+  if (!jobs) return;
   toast(`${plural(jobs.length, 'job')} queued`);
   refresh(true);
 }
@@ -281,14 +282,14 @@ function settingsBody(p) {
   </form>`;
 }
 async function openSettings(p) {
+  const key = (k) => `plugin.${p.name}.${k}`;
   const v = await modal(`Settings of ${esc(p.title)}`, settingsBody(p), 'Save', {
     value: (w) => Object.fromEntries(new FormData(w.querySelector('form'))),
+    submit: (f) => api.put('/api/settings', {
+      [key('release')]: (f.release || '').trim(), [key('ignite')]: (f.ignite || '').trim(), [key('mode')]: f.mode, [key('keepDays')]: f.keepDays,
+    }),
   });
   if (!v) return;
-  const key = (k) => `plugin.${p.name}.${k}`;
-  await api.put('/api/settings', {
-    [key('release')]: (v.release || '').trim(), [key('ignite')]: (v.ignite || '').trim(), [key('mode')]: v.mode, [key('keepDays')]: v.keepDays,
-  });
   toast('saved');
   refresh(true);
 }

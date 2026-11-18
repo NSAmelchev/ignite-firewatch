@@ -282,11 +282,11 @@ function jobActions(j) {
 }
 async function moreRun(jobId, retry = false) {
   const s = await api.get(`/api/jobs/${jobId}`);
-  const v = await confirmLaunch({ title: retry ? `Retry job #${jobId}` : 'Run again', job: s, scenario: s.scenario, type: s.type,
+  const j = await confirmLaunch({ title: retry ? `Retry job #${jobId}` : 'Run again', job: s, scenario: s.scenario, type: s.type,
     shas: [s.shaA, s.shaB],
-    note: retry ? 'a new job with the same refs and scenario' : 'one more identical run; its result is pooled with the previous runs' });
-  if (!v) return;
-  const j = await api.post(`/api/jobs/${jobId}/retry`, { priority: v.priority });
+    note: retry ? 'a new job with the same refs and scenario' : 'one more identical run; its result is pooled with the previous runs',
+    submit: (v) => api.post(`/api/jobs/${jobId}/retry`, { priority: v.priority }) });
+  if (!j) return;
   toast(`job #${j.id} queued: ${retry ? 'retry' : 'one more run'} of #${jobId}`);
   refresh();
 }
@@ -294,11 +294,11 @@ async function splitJob(jobId, mode) {
   const s = await api.get(`/api/jobs/${jobId}`);
   const cs = (s.segment && s.segment.commits) || [], n = cs.length;
   const halves = mode === 'halves', mid = cs[Math.floor(n / 2) - 1];
-  const v = await confirmLaunch({ title: halves ? 'Split the segment in halves' : 'Measure every commit of the segment', job: s, scenario: s.scenario,
+  const js = await confirmLaunch({ title: halves ? 'Split the segment in halves' : 'Measure every commit of the segment', job: s, scenario: s.scenario,
     jobs: halves ? 2 : n, shas: halves ? [s.shaA, mid && mid.sha, s.shaB] : [s.shaA, ...cs.map((c) => c.sha)],
-    note: halves ? `2 segments of ${Math.floor(n / 2)} and ${n - Math.floor(n / 2)} commits` : `${n} jobs, each commit against its parent (already queued ones are skipped)` });
-  if (!v) return;
-  const js = await api.post(`/api/jobs/${jobId}/split`, { mode, priority: v.priority });
+    note: halves ? `2 segments of ${Math.floor(n / 2)} and ${n - Math.floor(n / 2)} commits` : `${n} jobs, each commit against its parent (already queued ones are skipped)`,
+    submit: (v) => api.post(`/api/jobs/${jobId}/split`, { mode, priority: v.priority }) });
+  if (!js) return;
   toast(`${js.length} job(s) queued from the segment`);
   refresh();
 }
@@ -340,12 +340,12 @@ async function startBisect(jobId, metric) {
   </dl>
   <div class="modal-note">Every step is an ordinary ABBA run, one at a time in the queue. Every half that moves on its own is searched, down to its
     commit; a range that moves while its halves do not ends as spread over small changes. Cancel removes its queued step.</div>`;
-  const v = await modal(`Bisect ${n} commits`, body, 'Start', {
+  const b = await modal(`Bisect ${n} commits`, body, 'Start', {
     asWho: true,
     value: (w) => ({ metric: w.querySelector('[name=metric]').value, priority: priorityOf(w) }),
+    submit: (v) => api.post('/api/bisects', { jobId: Number(jobId), metric: v.metric, priority: v.priority }),
   });
-  if (!v) return;
-  const b = await api.post('/api/bisects', { jobId: Number(jobId), metric: v.metric, priority: v.priority });
+  if (!b) return;
   toast(`bisect #${b.id} started`);
   if (c) refresh(); else location.hash = `#/bisects/${b.id}`;
 }
@@ -409,22 +409,16 @@ async function investigate({ title, rows, skipped }) {
     yes.disabled = !on.length;
     yes.textContent = on.length > 1 ? `Start ${on.length}` : 'Start';
   };
-  const v = await modal(title, body, 'Start', {
+  const r = await modal(title, body, 'Start', {
     asWho: true,
     open: (w) => { sum(w); w.addEventListener('change', () => sum(w)); },
     value: (w) => ({ priority: priorityOf(w), items: picked(w) }),
+    submit: (v) => sendEach(v.items, (x) => (x.kind === 'bisect' ? api.post('/api/bisects', { jobId: x.jobId, metric: x.metric, priority: v.priority })
+      : x.kind === 'deep' ? api.post(`/api/bisects/${x.bisectId}/deep`, { priority: v.priority }) : api.post(`/api/bisects/${x.bisectId}/resume`, {})),
+    (x) => `${scName(x.scenario)} ${METRIC_NAMES[x.metric] || x.metric}`),
   });
-  if (!v) return false;
-  const failed = [];
-  for (const r of v.items) {
-    try {
-      if (r.kind === 'bisect') await api.post('/api/bisects', { jobId: r.jobId, metric: r.metric, priority: v.priority });
-      else if (r.kind === 'deep') await api.post(`/api/bisects/${r.bisectId}/deep`, { priority: v.priority });
-      else await api.post(`/api/bisects/${r.bisectId}/resume`, {});
-    }
-    catch (e) { failed.push(`${scName(r.scenario)} ${METRIC_NAMES[r.metric] || r.metric}: ${e.message}`); }
-  }
-  toast(failed.length ? `${v.items.length - failed.length} of ${v.items.length} started: ${failed.join('; ')}` : `${searchesOf(v.items.length)} started`, failed.length > 0);
+  if (!r) return false;
+  sentToast(r, r.failed.length ? 'started' : `${r.ok.length === 1 ? 'search' : 'searches'} started`);
   return true;
 }
 const bisectRef = (id) => `<a href="#/bisects/${id}">#${id}</a>`;
@@ -477,8 +471,8 @@ async function investigateMaster(view) {
   if (await investigate({ title: `Investigate what is open on master vs ${esc(a.tag)}`, rows, skipped })) { view.attention = null; refresh(); }
 }
 async function deleteBisect(id) {
-  if (!(await modal(`Delete bisect #${id}?`, '<div>Only its record goes: its steps stay as runs of the branch and count in later searches. This cannot be undone.</div>', 'Delete', { danger: true }))) return;
-  await api.del(`/api/bisects/${id}`);
+  if (!(await modal(`Delete bisect #${id}?`, '<div>Only its record goes: its steps stay as runs of the branch and count in later searches. This cannot be undone.</div>', 'Delete',
+    { danger: true, submit: () => api.del(`/api/bisects/${id}`) }))) return;
   toast(`bisect #${id} deleted`);
   location.hash = '#/bisects';
 }
@@ -493,9 +487,9 @@ async function cancelBisect(id) {
   const v = await modal(`Cancel bisect #${id}?`, body, 'Cancel bisect', {
     danger: true,
     value: (x) => ({ stopRunning: !x.querySelector('[name=run][value=finish]:checked'), deleteFinished: x.querySelector('[name=del]').checked }),
+    submit: (v) => api.post(`/api/bisects/${id}/cancel`, v),
   });
   if (!v) return;
-  await api.post(`/api/bisects/${id}/cancel`, v);
   toast(`bisect #${id} cancelled`);
   refresh();
 }
@@ -534,9 +528,9 @@ async function deepBisect(id) {
   </dl>
   <div class="modal-note">Measures both halves on every level and follows the one that carries the change, even under the threshold; a close call gets up to
     ${DEEP_RUNS} runs, and so does the commit it ends on. It ends on a commit, or on the shortest range that still moves. Cancel removes its queued step.</div>`;
-  const v = await modal(`Deep search of bisect #${b.id}`, body, 'Start', { value: priorityOf, asWho: true });
+  const v = await modal(`Deep search of bisect #${b.id}`, body, 'Start', { value: priorityOf, asWho: true,
+    submit: (prio) => api.post(`/api/bisects/${id}/deep`, { priority: prio }) });
   if (!v) return;
-  await api.post(`/api/bisects/${id}/deep`, { priority: v });
   toast(`bisect #${id}: deep search started`);
   refresh();
 }
@@ -597,20 +591,49 @@ export function deltaLine(j) {
 const mins = (sec) => fmt.len(sec);
 // A modal in the page: resolves true on the main button (or Enter), false on Cancel, Esc or a click outside
 // `required`: no Cancel, and neither Escape nor a click outside closes it; `asWho`: says in whose name the action goes
-export function modal(title, body, ok = 'OK', { open, value, danger, required, asWho } = {}) {
+// A dialog. value(w) reads its inputs before it goes away; without it a confirmation resolves to true. With submit(v, w) the
+// request goes while the dialog stays: its buttons wait, a refusal shows in it with what was typed left as it was, and only
+// what the server took closes it, resolving to what submit returned. Cancel resolves to false.
+export function modal(title, body, ok = 'OK', { open, value, submit, danger, required, asWho } = {}) {
   return new Promise((resolve) => {
     const w = document.createElement('div');
     w.className = 'modal-back';
     w.innerHTML = `<div class="modal" role="dialog" aria-modal="true"><h3>${title}</h3><div class="modal-body">${body}</div>
+      <div class="modal-error" role="alert" hidden></div>
       <div class="modal-foot"><div class="modal-left"><div class="modal-sum" data-sum></div>${asWho && who ? `<div class="modal-as">as ${esc(who)}</div>` : ''}</div>${required ? '' : '<button data-no>Cancel</button>'}<button class="${danger ? 'danger' : 'primary'}" data-yes>${ok}</button></div></div>`;
-    // value(w) reads the dialog's inputs before it goes away; without it a confirmation resolves to true
-    const yes = () => { const v = value ? value(w) : true; done(v); };
+    let busy = false;
+    const wait = (on) => {
+      busy = on;
+      w.querySelector('.modal-body').inert = on;
+      w.querySelector('.modal').setAttribute('aria-busy', String(on));
+      w.querySelectorAll('.modal-foot button').forEach((b) => { b.disabled = on; });
+      w.querySelector('[data-yes]').classList.toggle('busy', on);
+    };
+    const yes = async () => {
+      if (busy) return;
+      const v = value ? value(w) : true;
+      if (!submit) { done(v); return; }
+      const err = w.querySelector('.modal-error');
+      err.hidden = true;
+      wait(true);
+      try { done((await submit(v, w)) ?? true); } catch (e) {
+        err.innerHTML = refsHtml(e.message);
+        err.hidden = false;
+        wait(false);
+      }
+    };
     const done = (v) => { document.removeEventListener('keydown', key, true); w.remove(); resolve(v); };
     const key = (e) => {
+      if (busy) { if (e.key === 'Escape' || e.key === 'Enter') e.preventDefault(); return; } // the answer is on its way
       if (e.key === 'Escape' && !required) { e.preventDefault(); done(false); }
       if (e.key === 'Enter') { e.preventDefault(); if (!w.querySelector('[data-yes]').disabled) yes(); }
     };
-    w.addEventListener('click', (e) => { if ((e.target === w && !required) || e.target.closest('[data-no]')) done(false); else if (e.target.closest('[data-yes]')) yes(); });
+    w.addEventListener('click', (e) => {
+      if (busy) return;
+      if (e.target.closest('.modal-error a')) done(false); // the page it names opens instead
+      else if ((e.target === w && !required) || e.target.closest('[data-no]')) done(false);
+      else if (e.target.closest('[data-yes]')) yes();
+    });
     document.addEventListener('keydown', key, true);
     document.body.appendChild(w);
     if (open) open(w);
@@ -657,8 +680,9 @@ function paintWho() {
 // it should be done. Resolves to { priority, scenarios } (false on cancel): the priority chosen, as usual by default (`priority`
 // is the usual one of its kind). With `choose` ([{name, checked}]) the Scenario row is a set of checkboxes and `scenarios` the
 // chosen names; with `scenarios` (names) it covers all of them. The estimate follows the choices; the scenarios of a `plugin`
-// build `pairs` (igniteRef:extRef) instead of `shas`.
-export async function confirmLaunch({ title, what, job, note, scenario, scenarios, choose, type = 'abba', jobs = 1, shas = [], extraBuilds = 0, priority = 1, ok = 'Queue', plugin = null, pairs = [] }) {
+// build `pairs` (igniteRef:extRef) instead of `shas`. With `submit` it sends them while it stays open, as modal() does, and
+// resolves to what the server answered.
+export async function confirmLaunch({ title, what, job, note, scenario, scenarios, choose, type = 'abba', jobs = 1, shas = [], extraBuilds = 0, priority = 1, ok = 'Queue', plugin = null, pairs = [], submit }) {
   const estimate = (sc, n, prio) => estimateRows({ scenario: sc, type, jobs: n, shas, extraBuilds, priority: prio, plugin, pairs });
   const picked = choose ? choose.filter((c) => c.checked).map((c) => c.name) : null;
   const chosen = (w) => (choose ? [...w.querySelectorAll('input[name=sc]:checked')].map((i) => i.value) : scenarios || [scenario]);
@@ -678,6 +702,7 @@ export async function confirmLaunch({ title, what, job, note, scenario, scenario
   </dl><dl class="kv est">${est}</dl>`;
   return modal(title, body, ok, {
     asWho: true,
+    submit,
     value: (w) => ({ priority: priorityOf(w), scenarios: chosen(w) }),
     open: (w) => {
       const yes = w.querySelector('[data-yes]');
@@ -770,6 +795,22 @@ export function toast(msg, isError) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.remove(), isError ? 7000 : 3500);
 }
+// a refusal of the server with the comparison, bisect or job it names linked to its page
+const REF_PAGES = { comparison: 'comparisons', bisect: 'bisects', job: 'jobs' };
+const refsHtml = (s) => esc(s).replace(/\b(comparison|bisect|job) #(\d+)\b/g, (m, k, id) => `${k} <a href="#/${REF_PAGES[k]}/${id}">#${id}</a>`);
+// One request per item, from a dialog: when none goes through the dialog shows why and stays; when some do it closes, and
+// `failed` says what did not ("name: why"), since sending it again would queue the others twice
+async function sendEach(items, post, name) {
+  const ok = [], failed = [];
+  for (const it of items) {
+    try { ok.push(await post(it)); } catch (e) { failed.push(`${name(it)}: ${e.message}`); }
+  }
+  if (!ok.length) throw new Error(failed.join('; '));
+  return { ok, failed };
+}
+// what one request per item queued, and what it did not
+const sentToast = ({ ok, failed }, what) => toast(failed.length ? `${ok.length} of ${ok.length + failed.length} ${what}; ${failed.join('; ')}`
+  : `${ok.length} ${what}`, failed.length > 0);
 export async function guarded(fn) {
   try { return await fn(); } catch (e) { toast(e.message, true); throw e; }
 }
@@ -901,8 +942,9 @@ function bindJobActions(root, view) {
     const b = e.target.closest('button');
     if (!b) return;
     if (b.dataset.cancel) guarded(async () => {
-      if (!(await modal(`Cancel job #${b.dataset.cancel}?`, '<div class="muted">A running job is stopped at once.</div>', 'Cancel job', { danger: true, asWho: true }))) return;
-      await api.post(`/api/jobs/${b.dataset.cancel}/cancel`); toast(`job #${b.dataset.cancel} cancelled`); refresh(); });
+      if (!(await modal(`Cancel job #${b.dataset.cancel}?`, '<div class="muted">A running job is stopped at once.</div>', 'Cancel job',
+        { danger: true, asWho: true, submit: () => api.post(`/api/jobs/${b.dataset.cancel}/cancel`) }))) return;
+      toast(`job #${b.dataset.cancel} cancelled`); refresh(); });
     if (b.dataset.retry) guarded(() => moreRun(b.dataset.retry, true));
     if (b.dataset.bisect) guarded(() => startBisect(b.dataset.bisect, b.dataset.metric || (view && view.metric)));
     if (b.dataset.bisectCancel) guarded(() => cancelBisect(b.dataset.bisectCancel));
@@ -1413,14 +1455,13 @@ views.commits = {
       guarded(async () => {
         const scenarios = await api.get('/api/scenarios');
         const subj = b.closest('tr') && b.closest('tr').querySelector('.subject');
-        const v = await confirmLaunch({ title: 'Measure the commit', shas: [b.dataset.parent, b.dataset.run], extraBuilds: b.dataset.parent ? 0 : 1,
+        const r = await confirmLaunch({ title: 'Measure the commit', shas: [b.dataset.parent, b.dataset.run], extraBuilds: b.dataset.parent ? 0 : 1,
           choose: scenarios.map((s) => ({ name: s.name, checked: false })),
-          what: `<span class="mono">${fmt.sha(b.dataset.run)}</span> ${esc(subj ? subj.textContent : '')}`, note: 'ABBA against its parent, one job per scenario' });
-        if (!v) return;
-        for (const scenario of v.scenarios) {
-          const j = await api.post('/api/jobs', { type: 'abba', refA: b.dataset.parent || `${b.dataset.run}~1`, refB: b.dataset.run, scenario, priority: v.priority }).catch((err) => toast(`${scenario}: ${err.message}`, true));
-          if (j) toast(`job #${j.id} queued: ${j.label} [${scenario}]`);
-        }
+          what: `<span class="mono">${fmt.sha(b.dataset.run)}</span> ${esc(subj ? subj.textContent : '')}`, note: 'ABBA against its parent, one job per scenario',
+          submit: (v) => sendEach(v.scenarios, (scenario) => api.post('/api/jobs', { type: 'abba', refA: b.dataset.parent || `${b.dataset.run}~1`, refB: b.dataset.run, scenario, priority: v.priority }),
+            (scenario) => scName(scenario)) });
+        if (!r) return;
+        sentToast(r, r.ok.length === 1 && !r.failed.length ? `job queued: #${r.ok[0].id} ${r.ok[0].label}` : 'jobs queued');
         refresh();
       });
     });
@@ -1507,10 +1548,10 @@ views.commit = {
       const r = e.target.closest('button[data-run-sc]');
       if (r) guarded(async () => {
         const d = await api.get(`/api/commits/${encodeURIComponent(location.hash.split('/')[2])}`), c = d.commit || {};
-        const v = await confirmLaunch({ title: 'Measure the commit', scenario: r.dataset.runSc, shas: [c.parentSha, d.sha], extraBuilds: c.parentSha ? 0 : 1,
-          what: `<span class="mono">${fmt.sha(d.sha)}</span> ${esc(c.subject || '')}`, note: 'ABBA against its parent' });
-        if (!v) return;
-        const j = await api.post('/api/jobs', { type: 'abba', refA: c.parentSha || `${d.sha}~1`, refB: d.sha, scenario: r.dataset.runSc, priority: v.priority });
+        const j = await confirmLaunch({ title: 'Measure the commit', scenario: r.dataset.runSc, shas: [c.parentSha, d.sha], extraBuilds: c.parentSha ? 0 : 1,
+          what: `<span class="mono">${fmt.sha(d.sha)}</span> ${esc(c.subject || '')}`, note: 'ABBA against its parent',
+          submit: (v) => api.post('/api/jobs', { type: 'abba', refA: c.parentSha || `${d.sha}~1`, refB: d.sha, scenario: r.dataset.runSc, priority: v.priority }) });
+        if (!j) return;
         toast(`job #${j.id} queued: ${j.label}`);
         refresh();
       });
@@ -1569,11 +1610,11 @@ views.noise = {
   },
   bind(root) {
     const queue = async (list) => {
-      const v = await confirmLaunch({ title: list.length > 1 ? 'A/A calibration: every scenario' : `A/A calibration: ${list[0]}`, scenarios: list, jobs: list.length, priority: 0,
-        what: `master head against itself: ${list.map((x) => esc(scName(x))).join(', ')}`, note: 'measures the noise floors the thresholds use; one ABBA job per scenario' });
-      if (!v) return;
-      for (const sc of list) await api.post('/api/calibrate', { ref: 'master', scenario: sc, priority: v.priority }).catch((e) => toast(`${sc}: ${e.message}`, true));
-      toast(`${list.length} A/A job(s) queued`);
+      const r = await confirmLaunch({ title: list.length > 1 ? 'A/A calibration: every scenario' : `A/A calibration: ${list[0]}`, scenarios: list, jobs: list.length, priority: 0,
+        what: `master head against itself: ${list.map((x) => esc(scName(x))).join(', ')}`, note: 'measures the noise floors the thresholds use; one ABBA job per scenario',
+        submit: (v) => sendEach(list, (sc) => api.post('/api/calibrate', { ref: 'master', scenario: sc, priority: v.priority }), scName) });
+      if (!r) return;
+      sentToast(r, 'A/A job(s) queued');
       refresh();
     };
     $('#calibrate-all', root).addEventListener('click', () => guarded(async () => queue((await api.get('/api/scenarios')).map((s) => s.name))));
@@ -1908,8 +1949,7 @@ async function cancelComparison(b) {
   const id = b.dataset.comparisonCancel, q = Number(b.dataset.queued), n = b.dataset.bisects;
   const bisects = n === 'some' ? 'Its active bisections stop too. ' : Number(n) ? `${plural(Number(n), 'active bisection')} stop${Number(n) === 1 ? 's' : ''} too. ` : '';
   const body = `<div>${q ? `${plural(q, 'queued job')} leave${q === 1 ? 's' : ''} the queue. ` : ''}${b.dataset.running === '1' ? 'The running job stops at once. ' : ''}${bisects}What is finished stays.</div>`;
-  if (!(await modal(`Cancel comparison #${id}?`, body, 'Cancel comparison', { danger: true }))) return;
-  await api.post(`/api/comparisons/${id}/cancel`);
+  if (!(await modal(`Cancel comparison #${id}?`, body, 'Cancel comparison', { danger: true, submit: () => api.post(`/api/comparisons/${id}/cancel`) }))) return;
   toast(`comparison #${id} cancelled`);
   refresh();
 }
@@ -1986,7 +2026,7 @@ async function compareDialog(view, preset = {}) {
   </dl><dl class="kv est"></dl>${REF_NOTES}</div>`;
   const shas = {};
   const read = (w) => Object.fromEntries(['pr', 'target', 'base'].map((n) => [n, w.querySelector(`[name=${n}]`).value.trim()]));
-  const v = await modal('New comparison', body, 'Queue', {
+  const c = await modal('New comparison', body, 'Queue', {
     asWho: true,
     open: (w) => {
       w.querySelector('.modal').classList.add('wide');
@@ -1997,6 +2037,7 @@ async function compareDialog(view, preset = {}) {
       };
       // the button follows every key, the estimate a finished field
       const gate = () => {
+        if (yes.classList.contains('busy')) return; // a ref resolved late leaves the button waiting for the answer
         const f = read(w), n = picked.size;
         yes.disabled = !n || !(st.mode === 'pr' ? f.pr : f.target);
         yes.textContent = n ? `Queue ${plural(n, 'job')}` : 'Queue';
@@ -2034,21 +2075,18 @@ async function compareDialog(view, preset = {}) {
       estimate();
     },
     value: (w) => ({ ...read(w), priority: priorityOf(w) }),
+    // a PR is fetched from GitHub first: that takes a while, and the dialog waits for it
+    submit: (v) => {
+      const names = scenarios.map((s) => s.name).filter((n) => picked.has(n));
+      view.picked = new Set(names);
+      view.last = { mode: st.mode };
+      return api.post('/api/comparisons', { base: st.mode === 'pr' ? '' : v.base, target: st.mode === 'pr' ? (/^\d+$/.test(v.pr) ? `pr/${v.pr}` : v.pr) : v.target,
+        scenarios: names, priority: v.priority });
+    },
   });
-  if (!v) return;
-  const names = scenarios.map((s) => s.name).filter((n) => picked.has(n));
-  view.picked = new Set(names);
-  const again = { mode: st.mode, pr: v.pr, target: v.target, base: v.base, scenarios: names };
-  view.last = { mode: st.mode };
-  try {
-    const c = await api.post('/api/comparisons', { base: st.mode === 'pr' ? '' : v.base, target: st.mode === 'pr' ? (/^\d+$/.test(v.pr) ? `pr/${v.pr}` : v.pr) : v.target, scenarios: names, priority: v.priority });
-    toast(`comparison #${c.id} queued: ${c.label}`);
-    view.open.add(String(c.id));
-    refresh(true);
-  } catch (e) {
-    toast(e.message, true);
-    await compareDialog(view, again); // as it was, to fix the ref
-  }
+  if (!c) return;
+  toast(`comparison #${c.id} queued: ${c.label}`);
+  refresh(true);
 }
 
 views.compare = {
@@ -2253,8 +2291,8 @@ views.comparison = {
       if (b.dataset.comparisonCancel) guarded(() => cancelComparison(b));
       if (b.dataset.comparisonDelete) guarded(async () => {
         const id = b.dataset.comparisonDelete;
-        if (!(await modal(`Delete comparison #${id}?`, '<div>Its jobs, their runs and files go too. This cannot be undone.</div>', 'Delete', { danger: true }))) return;
-        await api.del(`/api/comparisons/${id}`);
+        if (!(await modal(`Delete comparison #${id}?`, '<div>Its jobs, their runs and files go too. This cannot be undone.</div>', 'Delete',
+          { danger: true, submit: () => api.del(`/api/comparisons/${id}`) }))) return;
         toast(`comparison #${id} deleted`);
         location.hash = '#/compare';
       });
@@ -3071,8 +3109,9 @@ views.settings = {
     }
     const sweep = $('#sweep-hosts', root);
     if (sweep) sweep.addEventListener('click', () => guarded(async () => {
-      if (!(await modal('Clean the hosts?', '<div>Stops the JVMs of this stand on the hosts and removes the directories of its phases.</div>', 'Clean', { danger: true }))) return;
-      const r = await api.post('/api/stand/sweep');
+      const r = await modal('Clean the hosts?', '<div>Stops the JVMs of this stand on the hosts and removes the directories of its phases.</div>', 'Clean',
+        { danger: true, submit: () => api.post('/api/stand/sweep') });
+      if (!r) return;
       toast(r.ok ? 'hosts cleaned' : 'some hosts did not answer: see the log', !r.ok);
     }));
     $('#limits', root).addEventListener('submit', (e) => {
@@ -3083,8 +3122,9 @@ views.settings = {
       const c = over(this.counts.comparisons, d['retention.keepComparisons']), b = over(this.counts.bisects, d['retention.keepBisects']);
       guarded(async () => {
         const what = [c && `${plural(c, 'old comparison')} with jobs and files`, b && plural(b, 'old bisect')].filter(Boolean).join(' and ');
-        if (what && !(await modal('Delete old records?', `<div>${what} will be deleted. This cannot be undone.</div>`, 'Save and delete'))) return;
-        await api.put('/api/settings', d);
+        const save = () => api.put('/api/settings', d);
+        if (!what) await save();
+        else if (!(await modal('Delete old records?', `<div>${what} will be deleted. This cannot be undone.</div>`, 'Save and delete', { submit: save }))) return;
         toast('storage limits saved');
         refresh();
       });
@@ -3106,13 +3146,13 @@ views.settings = {
       if (h.worker.paused !== (e.target.dataset.paused === '1')) { toast('the stand has changed since this page was opened: showing it now', true); refresh(); return; }
       const waits = `${plural(q, 'queued job')}${h.bisects ? ` and ${plural(h.bisects, 'bisect')}` : ''}`;
       if (h.worker.paused) {
-        if (!(await modal('Reopen the stand?', `<div>${q ? `${waits} go on, one job at a time.` : 'The queue is empty: new jobs start as they come.'}</div>`, 'Reopen'))) return;
-        await api.post('/api/worker/resume', {});
+        if (!(await modal('Reopen the stand?', `<div>${q ? `${waits} go on, one job at a time.` : 'The queue is empty: new jobs start as they come.'}</div>`, 'Reopen',
+          { submit: () => api.post('/api/worker/resume', {}) }))) return;
         toast('the stand is open');
       }
       else {
-        if (!(await modal('Close the stand for maintenance?', `<div>${cur ? `Job ${jobLink(cur)} finishes, then nothing new starts.` : 'Nothing new starts.'} ${waits} wait${q === 1 && !h.bisects ? 's' : ''} and go on after Reopen. Nothing is lost.</div>`, 'Close for maintenance'))) return;
-        await api.post('/api/worker/pause', {});
+        if (!(await modal('Close the stand for maintenance?', `<div>${cur ? `Job ${jobLink(cur)} finishes, then nothing new starts.` : 'Nothing new starts.'} ${waits} wait${q === 1 && !h.bisects ? 's' : ''} and go on after Reopen. Nothing is lost.</div>`, 'Close for maintenance',
+          { submit: () => api.post('/api/worker/pause', {}) }))) return;
         toast(cur ? `closing for maintenance: job #${cur.id} finishes, nothing new starts` : 'closed for maintenance');
       }
       refresh();
@@ -3302,12 +3342,12 @@ views.dashboard = {
   bind(root) {
     const release = async (list) => {
       const r = await api.get(`/api/release?scenario=${encodeURIComponent(list[0])}`).catch(() => ({}));
-      const v = await confirmLaunch({ title: list.length > 1 ? `Run master vs ${r.tag || 'the release'}: every scenario` : `Run ${scName(list[0])} vs ${r.tag || 'the release'}`,
+      const q = await confirmLaunch({ title: list.length > 1 ? `Run master vs ${r.tag || 'the release'}: every scenario` : `Run ${scName(list[0])} vs ${r.tag || 'the release'}`,
         scenarios: list, jobs: list.length, shas: [r.tagSha, r.head], extraBuilds: r.head ? 0 : 1,
-        what: `master head vs <b>${esc(r.tag || 'release')}</b>: ${list.map((x) => esc(scName(x))).join(', ')}`, note: 'the dashboard headline; one ABBA job per scenario' });
-      if (!v) return;
-      for (const sc of list) await api.post('/api/release', { scenario: sc, priority: v.priority }).catch((e) => toast(`${sc}: ${e.message}`, true));
-      toast(`${list.length} release job(s) queued`);
+        what: `master head vs <b>${esc(r.tag || 'release')}</b>: ${list.map((x) => esc(scName(x))).join(', ')}`, note: 'the dashboard headline; one ABBA job per scenario',
+        submit: (v) => sendEach(list, (sc) => api.post('/api/release', { scenario: sc, priority: v.priority }), scName) });
+      if (!q) return;
+      sentToast(q, 'release job(s) queued');
       refresh();
     };
     const all = $('#release-all', root);
@@ -3349,6 +3389,9 @@ views.dashboard = {
 // Pages are re-rendered only when their content changed, and polled only when they are "live":
 // Queue and a running job; every other page refreshes on navigation, a change of its own controls or F5.
 let currentView = null, currentParams = null, timer = null, rendering = false, lastHtml = null;
+// a refresh asked while one draws (a poll, say) goes right after it: what a dialog just queued shows at once; true when
+// one of them was a `first` one
+let rerun = null;
 function isLive(view) {
   return typeof view.live === 'function' ? !!view.live() : !!view.live;
 }
@@ -3372,7 +3415,7 @@ function route() {
   schedule();
 }
 export async function refresh(first) {
-  if (rendering) return;
+  if (rendering) { rerun = rerun || !!first; return; }
   rendering = true;
   const view = currentView, params = currentParams;
   try {
@@ -3400,8 +3443,13 @@ export async function refresh(first) {
     // a failed background poll keeps the last good page; the next poll or navigation tries again
   } finally {
     rendering = false;
+    const again = rerun;
+    rerun = null;
     if (view !== currentView || params !== currentParams) refresh(true); // the page changed while this one was loading
-    else document.body.classList.remove('loading');
+    else {
+      document.body.classList.remove('loading');
+      if (again !== null) refresh(again);
+    }
   }
 }
 // header: number of queued jobs next to Queue, of active bisections next to Bisects and of problems that need a hand next to

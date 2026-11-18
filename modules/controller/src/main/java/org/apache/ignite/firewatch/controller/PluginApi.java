@@ -436,9 +436,11 @@ final class PluginApi {
         // all of a request or nothing: a step already in the queue would leave the others a request of their own
         for (Scenarios.Info sc : chosen) {
             for (PluginSchedule.Pair[] s : steps) {
-                if (db.activePluginJob(p.name, sc.name, s[0].igniteSha(), s[0].extSha(), s[1].igniteSha(),
-                    s[1].extSha()) != null)
-                    throw new IllegalArgumentException(sc.name + ": an identical job is already queued or running");
+                Job same = db.activePluginJob(p.name, sc.name, s[0].igniteSha(), s[0].extSha(), s[1].igniteSha(),
+                    s[1].extSha());
+
+                if (same != null)
+                    throw new IllegalArgumentException(same.identical(sc.name));
             }
         }
 

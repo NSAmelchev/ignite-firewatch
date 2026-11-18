@@ -92,8 +92,10 @@ public final class Comparisons {
         c.requestedBy = Who.current();
 
         for (String name : names) {
-            if (db.hasActiveJob(Job.ABBA, c.shaA, c.shaB, name))
-                throw new IllegalArgumentException(name + ": an identical job is already queued or running");
+            Job same = db.activeJobOfPair(c.shaA, c.shaB, name);
+
+            if (same != null)
+                throw new IllegalArgumentException(same.identical(name));
         }
 
         db.insertComparison(c);

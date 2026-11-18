@@ -420,8 +420,9 @@ strength of the signal, commits.
   loaded, show more. New comparison is one dialog: the modes "PR vs master" (the default: master against master + PR)
   and "Ref vs ref", each ref shown resolved to its commit once typed; the scenarios by family with the chips All,
   Put/get, Transactions, SQL H2, SQL Calcite, 1 server and 2+ servers (the groups come from the catalog, so a new
-  scenario joins them by itself); the priority and how long it takes. A ref the stand cannot resolve opens the dialog
-  again as it was. Jobs with the source `compare` stay off Dashboard, Commits, the repeats of the branch and the
+  scenario joins them by itself); the priority and how long it takes. A ref the stand cannot resolve, or a scenario
+  whose same job is queued already, leaves the dialog open as it was, with the reason and a link to the comparison that
+  holds the job. Jobs with the source `compare` stay off Dashboard, Commits, the repeats of the branch and the
   thresholds.
 - **Comparison** (`#/comparisons/N`, the link can be shared): refs A and B, the status (`searching` when everything is
   measured and bisections run; the API keeps `done`, so the notification of the end does not wait for the searches), how
@@ -542,6 +543,11 @@ deep search) shows a dialog first: what is queued, how long it takes, when it en
 the priority of its kind, 1 for a manual run, 0 for an A/A) or "ahead of the queue" (right after the running job: one
 above the highest priority waiting, at least 2, so also before the steps of bisections started ahead); the Done estimate
 follows the choice.
+
+Every dialog that sends something (these, Cancel and Delete, Clean the hosts, Close for maintenance, the settings of a
+plugin) stays open until the stand answers: its buttons wait, a refusal shows in it with what was typed kept, and only
+what the stand took closes it. A dialog that queues one job per scenario closes once any of them went in, and the
+message names those that did not.
 
 Every estimate comes from what the stand did. A run is the median of the last 15 jobs of the scenario (of the current
 version, once three ran it) from the start of their first phase, so without the builds they made; before the first run

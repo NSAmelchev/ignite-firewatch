@@ -188,4 +188,17 @@ public final class Job {
     public static String shortSha(String sha) {
         return sha == null ? null : sha.length() > 10 ? sha.substring(0, 10) : sha;
     }
+
+    /**
+     * Why a new job of a scenario is refused: this one, the same, is in the queue already. It names what holds it, so the
+     * refusal leads there: {@code "sql-x: an identical job is already queued in comparison #7 (job #1449)"}.
+     *
+     * @param scenario Scenario of the refused job.
+     * @return The refusal.
+     */
+    public String identical(String scenario) {
+        String in = comparisonId != null ? "comparison #" + comparisonId : bisectId != null ? "bisect #" + bisectId : null;
+
+        return scenario + ": an identical job is already " + status + (in == null ? " as job #" + id : " in " + in + " (job #" + id + ")");
+    }
 }
