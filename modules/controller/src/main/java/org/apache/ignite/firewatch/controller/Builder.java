@@ -38,6 +38,16 @@ public final class Builder {
     /** */
     private static final Pattern MODULE = Pattern.compile("[a-z][a-z0-9-]*");
 
+    /**
+     * What Maven says around an error, not the error: an empty line, the heading of the compiler's errors, the switches
+     * to re-run with, the articles, how to resume.
+     */
+    private static final Pattern MAVEN_ADVICE = Pattern.compile("$|COMPILATION ERROR|To see the full stack trace|"
+        + "Re-run Maven|For more information about the errors|\\[Help \\d+]|After correcting the problems|mvn <args>");
+
+    /** The reference to an article at the end of a Maven error. */
+    private static final Pattern HELP_REF = Pattern.compile("\\s*->\\s*\\[Help \\d+]\\s*$");
+
     /** {@code ${name}} of a pom: the group of the Ignite of a fork is often named so. */
     private static final Pattern PROPERTY = Pattern.compile("\\$\\{([^}]+)}");
 
@@ -920,17 +930,19 @@ public final class Builder {
             throw new CancelledException("cancelled");
     }
 
-    /** First {@code [ERROR]} line of a Maven log, else the last non-empty line. */
+    /**
+     * First {@code [ERROR]} line of a Maven log that says what failed, without the {@code -> [Help N]} it ends with;
+     * else the last non-empty line. The advice Maven adds after the error (the switches, the articles, how to resume)
+     * is not it.
+     */
     static String lastErrorLine(Path log) {
         try {
             List<String> lines = Files.readAllLines(log);
             String last = "";
 
             for (String l : lines) {
-                if (l.startsWith("[ERROR]") && !l.contains("To see the full stack trace") && !l.contains("Re-run Maven")
-                    && !l.contains("[Help") && l.length() > 8)
-
-                    return trim(l);
+                if (l.startsWith("[ERROR]") && !MAVEN_ADVICE.matcher(l.substring("[ERROR]".length()).trim()).lookingAt())
+                    return trim(HELP_REF.matcher(l).replaceFirst(""));
 
                 if (!l.isBlank())
                     last = l;

@@ -236,4 +236,29 @@ class BuilderTest {
             assertEquals(Build.OK, builder.build(sha, null, false).status, "manual jobs always rebuild");
         }
     }
+
+    /** A failed build says what failed: not the advice Maven adds after the error, nor the heading of a list. */
+    @Test void theErrorOfABuildIsTheLineThatSaysWhatFailed() throws Exception {
+        Path log = tmp.resolve("build.log");
+        Files.writeString(log, String.join("\n", "[INFO] BUILD FAILURE",
+            "[ERROR] Error resolving version for plugin 'org.apache.maven.plugins:maven-jar-plugin' from the "
+                + "repositories [local (/m2), central (https://repo.maven.apache.org/maven2)]: Plugin not found in any "
+                + "plugin repository -> [Help 1]",
+            "[ERROR] ",
+            "[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.",
+            "[ERROR] Re-run Maven using the -X switch to enable full debug logging.",
+            "[ERROR] ",
+            "[ERROR] For more information about the errors and possible solutions, please read the following articles:",
+            "[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/PluginVersionResolutionException"));
+        assertEquals("[ERROR] Error resolving version for plugin 'org.apache.maven.plugins:maven-jar-plugin' from the "
+            + "repositories [local (/m2), central (https://repo.maven.apache.org/maven2)]: Plugin not found in any "
+            + "plugin repository", Builder.lastErrorLine(log));
+
+        Files.writeString(log, String.join("\n", "[ERROR] COMPILATION ERROR : ",
+            "[ERROR] /src/A.java:[3,5] cannot find symbol", "[INFO] 1 error"));
+        assertEquals("[ERROR] /src/A.java:[3,5] cannot find symbol", Builder.lastErrorLine(log), "the error, not its list");
+
+        Files.writeString(log, "Downloading...\nkilled\n");
+        assertEquals("killed", Builder.lastErrorLine(log), "no error line: the last one");
+    }
 }

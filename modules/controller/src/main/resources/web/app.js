@@ -487,12 +487,14 @@ const bisectActions = (b) => (b.status === 'running' ? `<button class="small" da
 // one line of a bisection: where it is now, or how it ended
 const foundOf = (b) => b.state.findings.filter((f) => f.kind === 'found');
 export const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+// why a bisection stopped, its jobs linked: "step job #642 failed: …" leads to the job
+const reasonHtml = (s) => esc(s || '').replace(/\bjob #(\d+)\b/g, 'job <a href="#/jobs/$1">#$1</a>');
 function bisectNow(b) {
   const s = b.state, n = s.steps.length + (b.waiting ? 1 : 0), left = s.open.reduce((x, r) => x + r.commits, 0), found = foundOf(b);
   if (b.status === 'found') return `found <a class="mono" href="#/commits/${b.resultSha}">${fmt.sha(b.resultSha)}</a> <span class="job-subject" title="${esc(b.subjects[b.resultSha] || '')}">${esc(b.subjects[b.resultSha] || '')}</span>${found.length > 1 ? ` <span class="muted">+${found.length - 1} more</span>` : ''}`;
   if (b.status === 'running') return `${s.deep ? 'deep search, ' : ''}step ${n}${b.waiting ? ` ${jobLink(b.waiting)} ${badge(b.waiting.status)}` : ''} · ${s.open.length > 1 ? `${s.open.length} ranges, ` : ''}${plural(left, 'commit')} left
     ${found.length ? `· ${found.length} found ` : ''}${b.etaSec ? `· done ${etaStart(new Date(Date.now() + b.etaSec * 1000).toISOString())}` : ''}`;
-  return `<span class="muted">${esc(b.reason || '')}</span>`;
+  return `<span class="muted">${reasonHtml(b.reason)}</span>`;
 }
 const metricName = (b) => esc(METRIC_NAMES[b.metric] || b.metric);
 const bisectWhat = (b) => `${term(b.metric, metricName(b))} ${esc(b.direction)}${b.state.root ? ` ${fmt.pct(b.state.root.deltaPct)}` : ''}`;
@@ -503,7 +505,7 @@ function bisectResult(b) {
   const big = (x, y) => Math.abs(y.result.deltaPct) - Math.abs(x.result.deltaPct);
   const found = foundOf(b).sort(big), spread = b.state.findings.filter((f) => f.kind === 'spread').sort(big);
   const root = b.state.root ? b.state.root.deltaPct : 0, sum = found.reduce((x, f) => x + f.result.deltaPct, 0);
-  const now = b.status === 'running' ? bisectNow(b) : b.status === 'found' || b.status === 'spread' ? '' : esc(b.reason || '');
+  const now = b.status === 'running' ? bisectNow(b) : b.status === 'found' || b.status === 'spread' ? '' : reasonHtml(b.reason);
   return `${now ? `<div class="muted">${now}</div>` : ''}
     ${found.map((f) => `<div><a class="mono" href="#/commits/${esc(f.b)}">${fmt.sha(f.b)}</a> ${fmt.pct(f.result.deltaPct)} <span class="muted">${subjectHtml(b.subjects[f.b])}</span></div>`).join('')}
     ${spread.map((f) => `<div class="muted">${plural(f.commits, 'commit')} ${fmt.sha(f.a)}..${fmt.sha(f.b)} ${fmt.pct(f.result.deltaPct)}: spread over small changes</div>`).join('')}
@@ -1042,7 +1044,7 @@ views.bisect = {
       <td>${range(s.waitA, s.waitB)}</td><td>${jobLink(w)} ${badge(w.status)}</td>
       <td colspan="3" class="muted">${w.status === 'running' ? `${esc(w.stage || '')} · ${w.progress || 0}%` : 'in the queue'}</td></tr>` : '';
     const stoppedRow = !w && b.status === 'stopped' && s.waitRole ? `<tr class="pending"><td class="num">${s.steps.length + 1}</td><td>${esc(ROLE_NAMES[s.waitRole] || s.waitRole)}</td>
-      <td>${range(s.waitA, s.waitB)}</td><td colspan="4" class="error">not measured: ${esc(b.reason || '')}</td></tr>` : '';
+      <td>${range(s.waitA, s.waitB)}</td><td colspan="4" class="error">not measured: ${reasonHtml(b.reason)}</td></tr>` : '';
     return `
       <h1>Bisect #${b.id}: ${metricName(b)} ${badge(b.status)} ${b.comparisonId ? `<a class="small-link" href="#/comparisons/${b.comparisonId}">comparison #${b.comparisonId} →</a>`
         : `<a class="small-link" href="#/timeline?scenario=${encodeURIComponent(b.scenario)}&metric=${encodeURIComponent(b.metric)}&job=${b.rootJob}">open on Timeline →</a>`}</h1>
@@ -1053,7 +1055,7 @@ views.bisect = {
         ${(b.status === 'running' || b.status === 'stopped') && s.open.length ? `<dt>Searching</dt><dd>${s.open.map((r, i) => `<div>${range(r.a, r.b, r.commits)}
           <span class="muted">${r.cur ? `Δ ${fmt.pct(r.cur.deltaPct)}` : `≈ ${fmt.pct(r.est)} (inferred)`}${i === 0 ? ' · now' : ''}</span></div>`).join('')}
           ${b.stepsLeft ? `<div class="muted">≈ ${plural(b.stepsLeft, 'step')} left${b.etaSec ? `, ~${mins(b.etaSec)}` : ''}</div>` : ''}</dd>` : ''}
-        ${b.reason ? `<dt>${b.status === 'stopped' ? 'Stopped' : 'Result'}</dt><dd class="${b.status === 'stopped' ? 'error' : ''}">${esc(b.reason)}</dd>` : ''}
+        ${b.reason ? `<dt>${b.status === 'stopped' ? 'Stopped' : 'Result'}</dt><dd class="${b.status === 'stopped' ? 'error' : ''}">${reasonHtml(b.reason)}</dd>` : ''}
         <dt>Priority</dt><dd>${b.priority}${b.priority > 1 ? ' <span class="muted">(ahead of ordinary manual jobs)</span>' : ''}</dd>
         ${s.deep ? `<dt>Search</dt><dd>${term('deep', 'deep')} <span class="muted">from step ${s.deepFrom + 1}: half of the noise floor, ±${fmt.num(s.floorPct / 2, 1)} %, counts here</span></dd>` : ''}
       </dl>
