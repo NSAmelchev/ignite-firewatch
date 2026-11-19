@@ -412,8 +412,9 @@ strength of the signal, commits.
   release value on hover, and every row unfolds), the order (what needs a look first, by name, the worst Δ of a metric
   first) and the scenarios (presets from the names, such as `sql-*` for both engines or `sql-h2-*`, or one by one).
   The button names what differs from usual, and a filtered table says how many scenarios it shows. Below are the
-  failed jobs not followed by a success and Result on master: the found commits with their effect by scenario, and
-  Still open, what is still worth a look, cheap searches first, buttons on hover.
+  failed jobs not followed by a success (a line links its job and its bisect, the error is cut short and whole on
+  hover) and Result on master: the found commits with their effect by scenario, and Still open, what is still worth a
+  look, cheap searches first, buttons on hover.
 - Terms are explained on hover: status badges, metric headings, legends, ABBA, A/A, threshold, strength of the signal.
   There is one glossary (`HELP` in `app.js`), so the wording is the same on every page.
 - One format for the whole UI: a date `30 Oct 15:32` (the year only when it is not the current one), a day `30 Oct`, a

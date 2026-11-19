@@ -3386,8 +3386,12 @@ views.dashboard = {
     const branchJob = (j) => !j.plugin && j.source !== 'calibration' && j.source !== 'compare' && j.source !== 'release';
     const failed = history.filter((j) => (j.status === 'failed' || j.status === 'interrupted') && branchJob(j) && j.shaB
       && !history.some((x) => x.id > j.id && x.shaB === j.shaB && x.scenario === j.scenario && x.status === 'done'));
-    const failedLines = failed.slice(0, 5).map((j) => `<div class="att-line att-failed">${badge(j.status)} ${esc(scName(j.scenario))} <a class="mono" href="#/commits/${j.shaB}">${fmt.sha(j.shaB)}</a>
-      <span class="muted">${esc((j.error || '').slice(0, 80))}</span> ${moreRunBtn(j.id)}</div>`).join('');
+    // a line leads to its job, where the log is; the error is cut at a word, all of it on hover
+    const failedLines = failed.slice(0, 5).map((j) => {
+      const err = j.error || '', cut = err.length > 80 ? `${err.slice(0, 80).replace(/\s+\S*$/, '')}…` : err;
+      return `<div class="att-line att-failed">${jobLink(j)} ${badge(j.status)} ${esc(scName(j.scenario))} <a class="mono" href="#/commits/${j.shaB}">${fmt.sha(j.shaB)}</a>${parentTag(j)}
+        <span class="muted" title="${esc(err)}">${esc(cut)}</span> ${moreRunBtn(j.id)}</div>`;
+    }).join('');
 
     // noise status: the last A/A of every scenario must stay inside its floor on the verdict metrics
     const verdictKeys = ['throughput', 'p99Us', 'serverCpuUsPerOp'];
