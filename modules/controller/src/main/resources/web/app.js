@@ -3259,9 +3259,8 @@ function masterCard(rels, a, branch, autorun, open, showCalm, next, paused) {
   // only a scenario without a change folds: an explained one stays in sight with its ✓
   const folds = (x) => settled(x) && !unstableOf(x.job.comparison) && !linesOf(x).length && cols.every(([k]) => { const m = metric(x, k); return !m || m.deltaPct == null || !deltaClass(k, m.deltaPct, m.thresholdPct, m.verdict); });
   const whenOf = (x) => (x.job ? `${fmt.ago(x.job.finishedAt)}${x.behind ? `, ${term('behind', `${x.behind} behind`)}` : ''}` : '');
-  // most rows were measured together: the header says when, a row only when it differs
-  const times = rels.map(whenOf).filter(Boolean);
-  const usual = times.sort((x, y) => times.filter((t) => t === y).length - times.filter((t) => t === x).length)[0];
+  // the runs of the headline go one by one through the day: a row says when only once its run is a day old
+  const stale = (x) => x.job && Date.now() - new Date(x.job.finishedAt).getTime() >= 86400000;
   const cell = (x, k) => {
     const m = metric(x, k), l = linesOf(x).find((y) => y.metric === k); // the most worrying line of the metric comes first
     const shown = m && m.deltaPct != null ? m : l;
@@ -3278,7 +3277,7 @@ function masterCard(rels, a, branch, autorun, open, showCalm, next, paused) {
   const place = (x) => { const i = a.rows.findIndex((y) => y.scenario === x.scenario); return i < 0 ? a.rows.length : i; };
   const rows = [...rels].sort((x, y) => place(x) - place(y)).map((x) => {
     const j = x.job, hide = folds(x) && !showCalm;
-    const when = !j ? '<span class="muted">not measured</span>' : whenOf(x) === usual ? '' : `<span class="muted">${whenOf(x)}</span>`;
+    const when = !j ? '<span class="muted">not measured</span>' : stale(x) ? `<span class="muted">${whenOf(x)}</span>` : '';
     const act = x.active ? `${jobLink(x.active)} ${badge(x.active.status)}` : `<button class="small" data-release="${esc(x.scenario)}">Run</button>`;
     const unstable = j ? unstableOf(j.comparison) : null;
     return `<tr class="${folds(x) ? 'rel-calm' : ''}${unstable ? ' unstable' : ''}" ${hide ? 'hidden' : ''}><td><b>${esc(scName(x.scenario))}</b>${unstableMark(unstable)}</td>${cols.map(([k]) => cell(x, k)).join('')}
@@ -3294,7 +3293,7 @@ function masterCard(rels, a, branch, autorun, open, showCalm, next, paused) {
     <div class="card release">
       <div class="release-head">
         <div><span class="release-title">${esc(branch)} vs ${esc(r.tag)}</span>
-          <span class="release-sub"><span class="term" title="${esc(`since ${r.tag}${picked ? `, ${picked} of them cherry-picked into it: they do not add to Δ` : ''}. ${coverage}`)}">${r.unreleased + picked} commits</span> · ${fmtDay(r.fromDate)} – ${fmtDay(r.headDate)}${usual ? ` · measured ${usual}` : ''}${next ? ` · ${planShort(next)}` : ''}</span></div>
+          <span class="release-sub"><span class="term" title="${esc(`since ${r.tag}${picked ? `, ${picked} of them cherry-picked into it: they do not add to Δ` : ''}. ${coverage}`)}">${r.unreleased + picked} commits</span> · ${fmtDay(r.fromDate)} – ${fmtDay(r.headDate)}${next ? ` · ${planShort(next)}` : ''}</span></div>
         <div class="release-tools"><button class="small" id="release-all">Run all</button></div>
       </div>
       ${legend ? `<div class="att-legend">${legend}</div>` : ''}
