@@ -252,6 +252,14 @@ async function toggleDownloads(btn) {
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-dl]');
   if (b) { toggleDownloads(b); return; }
+  // a menu with its content on the page already: its button opens and closes it
+  const t = e.target.closest('[data-menu]');
+  if (t) {
+    const m = t.nextElementSibling, opening = m.hidden;
+    closeMenus();
+    if (opening) { m.hidden = false; t.parentElement.classList.add('open'); }
+    return;
+  }
   if (!e.target.closest('.dl-menu') || e.target.closest('a.dl-item')) closeMenus();
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenus(); });
@@ -3244,7 +3252,21 @@ function startingCard(w, stand) {
         : 'auto-run is off: runs start from Commits and Compare, or turn it on in Settings → Automation'}</div>`)}
     </div></div>`;
 }
-function masterCard(rels, a, branch, autorun, open, showCalm, next, paused) {
+// Presets of the scenario filter from the names: a first part shared by two or more (sql-*), and its second parts when each
+// of them has two or more too (sql-h2-*, sql-calcite-*)
+function scenarioSets(ids) {
+  const of = (p) => ids.filter((id) => id.startsWith(`${p}-`));
+  const sets = [];
+  for (const first of [...new Set(ids.map((id) => id.split('-')[0]))]) {
+    const members = of(first);
+    if (members.length < 2 || members.length === ids.length) continue;
+    sets.push([first, members.length]);
+    const seconds = [...new Set(members.map((id) => id.split('-').slice(0, 2).join('-')))];
+    if (seconds.length > 1 && seconds.every((x) => of(x).length >= 2)) seconds.forEach((x) => sets.push([x, of(x).length]));
+  }
+  return sets;
+}
+function masterCard(rels, a, branch, autorun, open, showCalm, next, paused, look, lookOpen) {
   // tag, unreleased commits and coverage come from the main auto-run scenario (the tag is the same for all)
   const r = rels.find((x) => x && x.tag && x.scenario === autorun[0]) || rels.find((x) => x && x.tag) || rels[0];
   if (!r || r.error) return `<div class="card error">release info unavailable: ${esc((r && r.error) || '')}</div>`;
@@ -3265,7 +3287,10 @@ function masterCard(rels, a, branch, autorun, open, showCalm, next, paused) {
     const m = metric(x, k), l = linesOf(x).find((y) => y.metric === k); // the most worrying line of the metric comes first
     const shown = m && m.deltaPct != null ? m : l;
     if (!shown) return '<td class="num muted">–<b class="att-mark"></b></td>';
-    const chip = `<span class="dlt ${deltaClass(k, shown.deltaPct, shown.thresholdPct, shown.verdict)}">${fmt.pct(shown.deltaPct)}</span>`;
+    // with values on, the value of master stands before Δ; the release side follows from the two
+    const dg = Math.min(cols.find(([c]) => c === k)[2], 1);
+    const val = look.values && m && m.meanB != null ? `<span class="rel-val" title="${esc(`${r.tag} ${fmt.num(m.meanB / (1 + m.deltaPct / 100), dg)} → ${branch} ${fmt.num(m.meanB, dg)}`)}">${fmt.num(m.meanB, dg)}</span>` : '';
+    const chip = `${val}<span class="dlt ${deltaClass(k, shown.deltaPct, shown.thresholdPct, shown.verdict)}">${fmt.pct(shown.deltaPct)}</span>`;
     const levels = `threshold ±${fmt.num(shown.thresholdPct, 1)}%${shown.verdict && shown.verdict !== 'no-change' ? ` · ${esc(shown.verdict)}` : ''}`;
     if (!l) return `<td class="num"><a class="rel-delta" href="${timeline(x, k)}" title="${levels} · open on Timeline">${chip}<b class="att-mark"></b></a></td>`;
     const id = `${x.scenario}|${k}`, [group, name] = ATT_STATES[l.status], worse = HIGHER_BETTER.has(k) ? l.deltaPct < 0 : l.deltaPct > 0;
@@ -3275,33 +3300,63 @@ function masterCard(rels, a, branch, autorun, open, showCalm, next, paused) {
   const details = (x) => cols.filter(([k]) => linesOf(x).some((l) => l.metric === k)).map(([k]) => `<tr class="att-detail" data-att-for="${esc(`${x.scenario}|${k}`)}" ${`${x.scenario}|${k}` === open ? '' : 'hidden'}>
     <td colspan="${width}">${linesOf(x).filter((l) => l.metric === k).map((l, i) => attentionLine(l, { paused, tools: i ? '' : `<a class="att-tl" href="${timeline(x, k)}" title="the runs of the metric on the map of the branch">Timeline →</a>` })).join('')}</td></tr>`).join('');
   const place = (x) => { const i = a.rows.findIndex((y) => y.scenario === x.scenario); return i < 0 ? a.rows.length : i; };
-  const rows = [...rels].sort((x, y) => place(x) - place(y)).map((x) => {
-    const j = x.job, hide = folds(x) && !showCalm;
+  const ids = rels.map((x) => x.scenario), picked = look.set ? new Set(look.set) : null;
+  const visible = rels.filter((x) => !picked || picked.has(x.scenario));
+  // by Δ of a metric the worst comes first, a scenario without it last; a tie keeps the usual order
+  const worst = (z) => { const m = metric(z, look.sort); return m && m.deltaPct != null ? (HIGHER_BETTER.has(look.sort) ? m.deltaPct : -m.deltaPct) : Infinity; };
+  const order = look.sort === 'name' ? (x, y) => scName(x.scenario).localeCompare(scName(y.scenario))
+    : cols.some(([k]) => k === look.sort) ? (x, y) => { const p = worst(x), q = worst(y); return p === q ? place(x) - place(y) : p < q ? -1 : 1; }
+    : (x, y) => place(x) - place(y);
+  const rows = [...visible].sort(order).map((x) => {
+    const j = x.job, fold = folds(x) && !look.values, hide = fold && !showCalm; // with values on every row stays in sight
     const when = !j ? '<span class="muted">not measured</span>' : stale(x) ? `<span class="muted">${whenOf(x)}</span>` : '';
     const act = x.active ? `${jobLink(x.active)} ${badge(x.active.status)}` : `<button class="small" data-release="${esc(x.scenario)}">Run</button>`;
     const unstable = j ? unstableOf(j.comparison) : null;
-    return `<tr class="${folds(x) ? 'rel-calm' : ''}${unstable ? ' unstable' : ''}" ${hide ? 'hidden' : ''}><td><b>${esc(scName(x.scenario))}</b>${unstableMark(unstable)}</td>${cols.map(([k]) => cell(x, k)).join('')}
-      <td>${j ? `<a href="#/jobs/${j.id}">${badge(j.verdict)}</a>` : ''}</td><td>${when}</td><td class="row-action">${act}</td></tr>${details(x)}`;
+    return `<tr class="${fold ? 'rel-calm' : ''}${unstable ? ' unstable' : ''}" ${hide ? 'hidden' : ''}><td><b>${esc(scName(x.scenario))}</b>${unstableMark(unstable)}</td>${cols.map(([k]) => cell(x, k)).join('')}
+      <td>${j ? `<a href="#/jobs/${j.id}">${badge(j.verdict)}</a>` : ''}</td><td class="rel-when">${when}</td><td class="row-action">${act}</td></tr>${details(x)}`;
   }).join('');
-  const calm = rels.filter(folds);
+  const calm = look.values ? [] : visible.filter(folds);
   const lines = a.rows.flatMap((x) => x.lines);
   const legend = Object.entries(ATT_GROUPS).map(([g, [mark, name]]) => [g, mark, name, lines.filter((l) => ATT_STATES[l.status][0] === g).length]).filter((k) => k[3])
     .map(([g, mark, name, n]) => `<button class="att-key" data-att-group="${g}"${hint(g)}><b>${mark}</b> ${n} ${name.toLowerCase()}</button>`).join('');
-  const cov = r.coverage || {}, picked = (r.cherryPicked || []).length;
+  const cov = r.coverage || {}, cherry = (r.cherryPicked || []).length;
   const coverage = `Not in ${r.tag}: ${r.unreleased}. On ${scName(r.scenario)} ${cov.single ?? 0} measured one by one, ${cov.segment ?? 0} inside segments, ${cov.none ?? 0} not measured.`;
+  // View ▾: values, order and scenarios of the table, kept while the page is open; the button says what differs from usual
+  const sets = scenarioSets(ids), setOf = (p) => ids.filter((id) => id.startsWith(`${p}-`));
+  const sameSet = (p) => picked && setOf(p).length === picked.size && setOf(p).every((id) => picked.has(id));
+  const sorts = [['attention', 'what needs a look first'], ['name', 'name'], ...cols.map(([k, h]) => [k, `Δ ${h}, the worst first`])];
+  const sortNow = sorts.some(([k]) => k === look.sort) ? look.sort : 'attention';
+  const pickedSet = picked && sets.find(([p]) => sameSet(p));
+  const summary = [look.values ? 'values' : '', picked ? (pickedSet ? `${pickedSet[0]}-*` : `${picked.size} of ${ids.length}`) : '',
+    sortNow === 'attention' ? '' : sortNow === 'name' ? 'by name' : `worst ${cols.find(([k]) => k === sortNow)[1]}`].filter(Boolean).join(' · ');
+  const item = (input, text) => `<label class="look-item">${input} <span>${text}</span></label>`;
+  const menu = `<span class="dl look-menu${lookOpen ? ' open' : ''}"><button type="button" class="dl-btn${summary ? ' on' : ''}" data-menu>View${summary ? `: ${esc(summary)}` : ''} ▾</button>
+    <div class="dl-menu look-pop" ${lookOpen ? '' : 'hidden'}>
+      <div class="dl-group">Cells</div>
+      ${item(`<input type="checkbox" data-look="values" ${look.values ? 'checked' : ''}>`, `values of ${esc(branch)} before Δ <span class="muted">· ${esc(r.tag)} on hover</span>`)}
+      <div class="dl-sep"></div><div class="dl-group">Order</div>
+      ${sorts.map(([k, t]) => item(`<input type="radio" name="look-sort" data-look="sort" value="${k}" ${sortNow === k ? 'checked' : ''}>`, esc(t))).join('')}
+      <div class="dl-sep"></div><div class="dl-group">Scenarios</div>
+      <div class="chips look-sets"><button type="button" class="chip ${picked ? '' : 'on'}" data-look-set="">all <span class="muted">${ids.length}</span></button>
+        ${sets.map(([p, n]) => `<button type="button" class="chip ${sameSet(p) ? 'on' : ''}" data-look-set="${esc(p)}">${esc(p)}-* <span class="muted">${n}</span></button>`).join('')}</div>
+      <div class="look-list">${ids.map((id) => item(`<input type="checkbox" data-look="scenario" value="${esc(id)}" ${!picked || picked.has(id) ? 'checked' : ''}>`, esc(scName(id)))).join('')}</div>
+    </div></span>`;
+  const partial = picked ? `<tr class="calm-row"><td colspan="${width}" class="muted">${visible.length} of ${plural(ids.length, 'scenario')} shown · <button type="button" class="link-btn" data-look-set="">show all</button></td></tr>` : '';
   return `
-    <div class="card release">
+    <div class="card release${look.values ? ' show-values' : ''}">
       <div class="release-head">
         <div><span class="release-title">${esc(branch)} vs ${esc(r.tag)}</span>
-          <span class="release-sub"><span class="term" title="${esc(`since ${r.tag}${picked ? `, ${picked} of them cherry-picked into it: they do not add to Δ` : ''}. ${coverage}`)}">${r.unreleased + picked} commits</span> · ${fmtDay(r.fromDate)} – ${fmtDay(r.headDate)}${next ? ` · ${planShort(next)}` : ''}</span></div>
-        <div class="release-tools"><button class="small" id="release-all">Run all</button></div>
+          <span class="release-sub"><span class="term" title="${esc(`since ${r.tag}${cherry ? `, ${cherry} of them cherry-picked into it: they do not add to Δ` : ''}. ${coverage}`)}">${r.unreleased + cherry} commits</span> · ${fmtDay(r.fromDate)} – ${fmtDay(r.headDate)}${next ? ` · ${planShort(next)}` : ''}</span></div>
+        <div class="release-tools">${menu}<button class="small" id="release-all">Run all</button></div>
       </div>
       ${legend ? `<div class="att-legend">${legend}</div>` : ''}
       <table class="release-table"><thead><tr><th>Scenario</th>${cols.map(metricHead).join('')}<th>Verdict</th><th></th><th></th></tr></thead>
-        <tbody>${rows}${calm.length ? calmLine('data-rel-calm', width, showCalm, calm.map((x) => scName(x.scenario))) : ''}</tbody></table>
+        <tbody>${rows}${calm.length ? calmLine('data-rel-calm', width, showCalm, calm.map((x) => scName(x.scenario))) : ''}${partial}</tbody></table>
     </div>`;
 }
 views.dashboard = {
+  // how the headline table is shown: kept while the page is open, not stored
+  look: { values: false, sort: 'attention', set: null },
   // a starting stand moves by the second, and the page follows it to the end of its first fetch
   get poll() { return this.starting ? 2000 : 10000; },
   live() { return this.starting; },
@@ -3369,7 +3424,8 @@ views.dashboard = {
     return `
       <h1>Dashboard</h1>
       ${stand}
-      ${masterCard(rels, attention, w.branch, autoScenarios, this.attOpen, this.calmOpen, this.attention.plan.find((x) => x.kind === 'master'), health.worker.paused)}
+      ${masterCard(rels, attention, w.branch, autoScenarios, this.attOpen, this.calmOpen, this.attention.plan.find((x) => x.kind === 'master'), health.worker.paused, this.look,
+        !!document.querySelector('.look-pop:not([hidden])'))}
       ${failedLines ? `<div class="card"><div class="tile-label">Failed, not run again</div>${failedLines}</div>` : ''}
       ${attentionResult(attention, health.worker.paused)}`;
   },
@@ -3384,6 +3440,26 @@ views.dashboard = {
       sentToast(q, 'release job(s) queued');
       refresh();
     };
+    // View ▾: a choice redraws the table at once, the menu stays open
+    const pop = $('.look-pop', root);
+    if (pop) pop.addEventListener('change', (e) => {
+      const t = e.target, k = t.dataset.look;
+      if (k === 'values') this.look.values = t.checked;
+      if (k === 'sort') this.look.sort = t.value;
+      if (k === 'scenario') {
+        const boxes = [...pop.querySelectorAll('input[data-look=scenario]')], on = boxes.filter((x) => x.checked).map((x) => x.value);
+        this.look.set = on.length === boxes.length ? null : on;
+      }
+      t.blur(); // a focused input holds the redraw
+      refresh();
+    });
+    root.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-look-set]');
+      if (!b) return;
+      const ids = [...root.querySelectorAll('input[data-look=scenario]')].map((x) => x.value), p = b.dataset.lookSet;
+      this.look.set = p ? ids.filter((id) => id.startsWith(`${p}-`)) : null;
+      refresh();
+    });
     const all = $('#release-all', root);
     if (all) all.addEventListener('click', () => guarded(async () => release((await api.get('/api/scenarios')).map((s) => s.name))));
     root.addEventListener('click', (e) => {

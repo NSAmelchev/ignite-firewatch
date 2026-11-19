@@ -610,6 +610,19 @@ a.dl-item:hover { background: var(--card); }
 .dl-item .dl-size { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .dl-item.off { color: var(--muted); cursor: default; }
 .dl-sep { border-top: 1px solid var(--line); margin: 6px 0; }
+/* View ▾ of the headline: values, order and scenarios of its table */
+.look-pop { left: auto; right: 0; min-width: 0; width: 480px; }
+button.dl-btn.on { color: var(--fg); border-color: var(--accent); }
+label.look-item { display: flex; align-items: baseline; gap: 8px; margin: 0; padding: 3px 12px; font-size: 13px; color: var(--fg); cursor: pointer; }
+label.look-item:hover { background: var(--card); }
+label.look-item input { margin: 0; }
+.look-sets { padding: 2px 12px 4px; margin: 0; }
+.look-list { display: grid; grid-template-columns: 1fr 1fr; padding-bottom: 4px; }
+.look-list label.look-item { font-size: 12px; padding: 2px 12px; }
+.rel-val { margin-right: 6px; color: var(--fg); font-variant-numeric: tabular-nums; }
+.card.release.show-values table.release-table th.num { width: 150px; }
+table.release-table td.rel-when { white-space: nowrap; }
+button.link-btn { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; text-decoration: underline; }
 td.files-cell { white-space: nowrap; }
 button.files-toggle { border: 0; background: transparent; padding: 0; color: var(--accent); font-size: 13px; }
 tr.files-row td { background: var(--card); padding: 6px 8px 8px; }

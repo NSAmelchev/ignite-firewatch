@@ -43,4 +43,17 @@ for (const [name, params = {}] of pages) {
     failed++;
   }
 }
+// the headline as View ▾ leaves it: values with the worst throughput first, then none of the scenarios picked
+for (const [look, expect] of [[{ values: true, sort: 'throughput', set: null }, 'show-values'], [{ values: false, sort: 'name', set: [] }, 'scenario shown']]) {
+  try {
+    views.dashboard.look = look;
+    const html = await views.dashboard.render({});
+    if (!html.includes(expect)) throw new Error(`no ${expect}`);
+    console.log(`ok   dashboard ${JSON.stringify(look)}`);
+  }
+  catch (e) {
+    console.log(`FAIL dashboard ${JSON.stringify(look)}: ${e && e.stack || e}`);
+    failed++;
+  }
+}
 process.exit(failed ? 1 : 0);

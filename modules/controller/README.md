@@ -407,9 +407,13 @@ strength of the signal, commits.
   change fold, into one light line with their number and the names in its tooltip; an explained one stays in sight with
   its ✓, and a scenario with a verdict never folds. The heading has, in a lighter grey, the number of commits since
   the release (the cherry-picks and the coverage breakdown in its tooltip), the dates and when it runs next; the runs
-  of the rows go one by one through the day, so a row says how old its run is only once it is a day old. Below are
-  the failed jobs not followed by a success and Result on master: the found commits with their effect by scenario,
-  and Still open, what is still worth a look, cheap searches first, buttons on hover.
+  of the rows go one by one through the day, so a row says how old its run is only once it is a day old. View ▾ next
+  to Run all changes the table while the page is open, nothing is stored: the values of master before each Δ (the
+  release value on hover, and every row unfolds), the order (what needs a look first, by name, the worst Δ of a metric
+  first) and the scenarios (presets from the names, such as `sql-*` for both engines or `sql-h2-*`, or one by one).
+  The button names what differs from usual, and a filtered table says how many scenarios it shows. Below are the
+  failed jobs not followed by a success and Result on master: the found commits with their effect by scenario, and
+  Still open, what is still worth a look, cheap searches first, buttons on hover.
 - Terms are explained on hover: status badges, metric headings, legends, ABBA, A/A, threshold, strength of the signal.
   There is one glossary (`HELP` in `app.js`), so the wording is the same on every page.
 - One format for the whole UI: a date `30 Oct 15:32` (the year only when it is not the current one), a day `30 Oct`, a
