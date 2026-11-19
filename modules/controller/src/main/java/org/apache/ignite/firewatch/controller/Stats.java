@@ -142,6 +142,121 @@ public final class Stats {
 
         /** */
         public String note;
+
+        /** Set when the repeats of one commit in this run differ far beyond the usual, see {@link #unstable}. */
+        public Unstable unstable;
+    }
+
+    /**
+     * How the phases of an unstable run split on ops/s: the slow ones ran {@code factor} times slower than the fast
+     * ones. Δ of such a run does not hold, whatever its verdict: a phase that is slow throughout points at a state picked
+     * at the start (a query plan, a JIT decision), not at the code under test.
+     */
+    public static final class Unstable {
+        /** Phases below the widest gap, in the order they ran. */
+        public List<String> slow = new ArrayList<>();
+
+        /** Phases above it. */
+        public List<String> fast = new ArrayList<>();
+
+        /** Mean of the fast phases over the mean of the slow ones. */
+        public double factor;
+
+        /** Spread between repeats on ops/s, percent. */
+        public double spreadPct;
+
+        /** What repeats of the scenario usually differ by on this stand, percent; null with too little history. */
+        public Double usualPct;
+    }
+
+    /** A run is unstable beyond this many usual spreads of its scenario... */
+    static final double UNSTABLE_USUAL = 4;
+
+    /** ...and never below this spread, percent: with little history this is the whole rule. */
+    static final double UNSTABLE_MIN_PCT = 15;
+
+    /** Stable runs the usual spread of a scenario is taken from, the latest ones. */
+    static final int USUAL_RUNS = 30;
+
+    /** Fewer stable runs than this give no usual spread. */
+    static final int USUAL_MIN_RUNS = 10;
+
+    /**
+     * Spread between repeats on ops/s of a single run: the larger of its two sides; null without throughput.
+     *
+     * @param c Comparison of one run.
+     * @return Spread, percent.
+     */
+    public static Double throughputSpread(Comparison c) {
+        MetricResult r = c == null ? null : c.metrics.get("throughput");
+
+        return r == null || r.spreadAPct == null && r.spreadBPct == null ? null
+            : Math.max(nz(r.spreadAPct), nz(r.spreadBPct));
+    }
+
+    /**
+     * What repeats of a scenario usually differ by: the 95th percentile of the spreads of its last {@link #USUAL_RUNS}
+     * stable runs.
+     *
+     * @param spreads Spreads of its stable runs, oldest first.
+     * @return Usual spread, percent; null with fewer than {@link #USUAL_MIN_RUNS} runs.
+     */
+    public static Double usualSpread(List<Double> spreads) {
+        if (spreads.size() < USUAL_MIN_RUNS)
+            return null;
+
+        return percentile(spreads.subList(Math.max(0, spreads.size() - USUAL_RUNS), spreads.size()), 95);
+    }
+
+    /**
+     * Whether a single run is unstable: its repeats of one commit on ops/s differ by more than {@link #UNSTABLE_USUAL}
+     * usual spreads and more than {@link #UNSTABLE_MIN_PCT}. The phases split at their widest gap.
+     *
+     * @param c Comparison of one run.
+     * @param usualPct Usual spread of the scenario, or null.
+     * @return How the phases split, or null for a stable run.
+     */
+    public static Unstable unstable(Comparison c, Double usualPct) {
+        Double spread = throughputSpread(c);
+
+        if (spread == null || c.runs > 1 || spread <= Math.max(UNSTABLE_MIN_PCT, UNSTABLE_USUAL * nz(usualPct)))
+            return null;
+
+        List<Map.Entry<String, Double>> ps = new ArrayList<>();
+
+        for (String p : c.phases) {
+            Double v = c.metrics.get("throughput").values.get(p);
+
+            if (v != null && v > 0)
+                ps.add(Map.entry(p, v));
+        }
+
+        if (ps.size() < 2)
+            return null;
+
+        ps.sort(Map.Entry.comparingByValue());
+        int cut = 1;
+
+        for (int i = 2; i < ps.size(); i++) {
+            if (ps.get(i).getValue() / ps.get(i - 1).getValue() > ps.get(cut).getValue() / ps.get(cut - 1).getValue())
+                cut = i;
+        }
+
+        Unstable u = new Unstable();
+        List<Double> slow = new ArrayList<>(), fast = new ArrayList<>();
+
+        for (int i = 0; i < ps.size(); i++) {
+            (i < cut ? slow : fast).add(ps.get(i).getValue());
+            (i < cut ? u.slow : u.fast).add(ps.get(i).getKey());
+        }
+
+        u.slow.sort(java.util.Comparator.comparingInt(c.phases::indexOf));
+        u.fast.sort(java.util.Comparator.comparingInt(c.phases::indexOf));
+        u.factor = mean(fast) / mean(slow);
+        u.spreadPct = spread;
+        u.usualPct = usualPct;
+
+        return u;
     }
 
     /**

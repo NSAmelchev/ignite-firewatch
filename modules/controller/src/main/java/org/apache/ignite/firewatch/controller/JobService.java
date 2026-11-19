@@ -2,6 +2,7 @@ package org.apache.ignite.firewatch.controller;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -527,17 +528,22 @@ public final class JobService {
      * @return Metric result, or {@code null} if the job has no such delta.
      */
     public Bisect.Result result(Job j, List<Job> candidates, String metric) {
-        JsonNode cmp = j.comparison;
-        List<Job> grp = j.comparisonId == null ? repeatsOf(j, candidates) : repeatsInComparison(j, candidates);
+        List<Job> grp = stableOf(j.comparisonId == null ? repeatsOf(j, candidates)
+            : repeatsInComparison(j, candidates));
+
+        if (grp.isEmpty())
+            grp = List.of(j);
+
+        JsonNode cmp = grp.get(grp.size() - 1).comparison;
 
         if (grp.size() > 1) {
             Stats.Comparison p = pooled(grp);
 
             if (p != null)
                 cmp = Json.MAPPER.valueToTree(p);
+            else
+                grp = List.of(grp.get(grp.size() - 1));
         }
-        else
-            grp = List.of(j);
 
         JsonNode m = cmp == null ? null : cmp.path("metrics").get(metric);
 
@@ -1102,6 +1108,112 @@ public final class JobService {
     }
 
     /** Commits of the watched branch, newest first, each with the jobs that measured it. */
+    /** Settings key: the unstable runs among the jobs finished before the rule existed are marked. */
+    static final String UNSTABLE_MARKED = "unstable.marked";
+
+    /**
+     * Whether a finished run is unstable: its repeats of one commit differ far beyond the usual, see
+     * {@link Stats#unstable}.
+     *
+     * @param j Job.
+     * @return Whether its comparison is marked unstable.
+     */
+    static boolean isUnstable(Job j) {
+        return j.comparison != null && j.comparison.hasNonNull("unstable");
+    }
+
+    /**
+     * The runs of a group whose result holds: the unstable ones are left out while a stable one remains.
+     *
+     * @param grp Runs of one pair.
+     * @return The stable runs, or the whole group if none is stable.
+     */
+    static List<Job> stableOf(List<Job> grp) {
+        List<Job> out = new ArrayList<>();
+
+        for (Job g : grp)
+            if (!isUnstable(g))
+                out.add(g);
+
+        return out.isEmpty() ? grp : out;
+    }
+
+    /** Spread between repeats on ops/s of the comparison of one run, or null. */
+    private static Double spreadOf(JsonNode cmp) {
+        JsonNode r = cmp == null ? null : cmp.path("metrics").get("throughput");
+
+        if (r == null || !r.hasNonNull("spreadAPct") && !r.hasNonNull("spreadBPct"))
+            return null;
+
+        return Math.max(r.path("spreadAPct").asDouble(), r.path("spreadBPct").asDouble());
+    }
+
+    /**
+     * What repeats of the scenario of {@code j} usually differ by on this stand: from its stable runs finished before
+     * it (of the same plugin, if any), see {@link Stats#usualSpread}.
+     *
+     * @param j Job.
+     * @return Usual spread, percent, or null with too little history.
+     */
+    Double usualSpread(Job j) {
+        List<Job> done = j.plugin == null ? db.doneJobs(j.scenario, Job.ABBA, null, 300)
+            : db.pluginJobs(j.plugin, j.scenario, null, true, j.id, 300);
+        List<Double> spreads = new ArrayList<>();
+
+        for (Job x : done) {
+            Double sp = x.id < j.id && !isUnstable(x) ? spreadOf(x.comparison) : null;
+
+            if (sp != null)
+                spreads.add(sp);
+
+            if (spreads.size() == Stats.USUAL_RUNS)
+                break;
+        }
+
+        Collections.reverse(spreads);
+
+        return Stats.usualSpread(spreads);
+    }
+
+    /**
+     * Marks the unstable runs among the jobs finished before the rule existed, once: each against the runs of its
+     * scenario before it, as {@link JobRunner} marks a run when it finishes.
+     */
+    void markUnstableOnce() {
+        if (db.setting(UNSTABLE_MARKED, null) != null)
+            return;
+
+        Map<String, List<Double>> history = new HashMap<>();
+        int marked = 0;
+
+        for (Job j : db.doneJobsOldestFirst(Job.ABBA)) {
+            if (j.comparison == null || !j.comparison.isObject())
+                continue;
+
+            List<Double> h = history.computeIfAbsent(j.plugin + "|" + j.scenario, k -> new ArrayList<>());
+
+            try {
+                Stats.Unstable u = Stats.unstable(Json.MAPPER.treeToValue(j.comparison, Stats.Comparison.class),
+                    Stats.usualSpread(h));
+
+                if (u != null) {
+                    ((com.fasterxml.jackson.databind.node.ObjectNode)j.comparison).set("unstable",
+                        Json.MAPPER.valueToTree(u));
+                    db.updateJob(j);
+                    marked++;
+                }
+                else if (spreadOf(j.comparison) != null)
+                    h.add(spreadOf(j.comparison));
+            }
+            catch (Exception e) {
+                Log.warn("cannot check job #" + j.id + " for an unstable run: " + e);
+            }
+        }
+
+        db.setSetting(UNSTABLE_MARKED, Db.now());
+        Log.info("unstable runs among the finished jobs: " + marked);
+    }
+
     /**
      * Finished non-calibration ABBA jobs measuring the same pair as {@code j} (same A, B, scenario file), oldest first.
      */
@@ -1233,6 +1345,9 @@ public final class JobService {
 
             if (j.comparison.has("runs"))
                 s.set("runs", j.comparison.get("runs"));
+
+            if (j.comparison.hasNonNull("unstable"))
+                s.set("unstable", j.comparison.get("unstable"));
 
             com.fasterxml.jackson.databind.node.ObjectNode ms = s.putObject("metrics");
             JsonNode all = j.comparison.path("metrics");
@@ -1546,7 +1661,7 @@ public final class JobService {
             if (!sha.equals(j.shaB) || sha.equals(j.shaA))
                 continue;
 
-            List<Job> grp = repeatsOf(j, all);
+            List<Job> grp = stableOf(repeatsOf(j, all));
 
             if (grp.size() < 2 || !seen.add(j.shaA + "|" + j.scenario + "|" + j.scenarioHash))
                 continue;
@@ -1672,6 +1787,9 @@ public final class JobService {
 
     /** Point of the trend: one commit of the branch with its measured values. */
     public static final class TrendPoint {
+        /** Whether the run behind the point is unstable: its Δ does not hold, see {@link Stats#unstable}. */
+        public boolean unstable;
+
         /** */
         public String sha;
 
@@ -1873,9 +1991,17 @@ public final class JobService {
         }
 
         JsonNode cmpNode = j.comparison;
-        List<Job> grp = repeatsOf(j, done);
+        List<Job> grp = stableOf(repeatsOf(j, done));
 
-        if (grp.size() > 1) {
+        if (grp.size() == 1 && grp.get(0).id != j.id) {
+            // the run is unstable and a stable repeat of it holds
+            Job s = grp.get(0);
+            cmpNode = s.comparison;
+            p.verdict = s.verdict;
+            p.jobIds.clear();
+            p.jobIds.add(s.id);
+        }
+        else if (grp.size() > 1) {
             Stats.Comparison pooled = pooled(grp);
 
             if (pooled != null) {
@@ -1888,6 +2014,8 @@ public final class JobService {
                     p.jobIds.add(g.id);
             }
         }
+
+        p.unstable = cmpNode != null && cmpNode.hasNonNull("unstable");
 
         if (cmpNode != null) {
             JsonNode metrics = cmpNode.path("metrics");
@@ -2032,7 +2160,14 @@ public final class JobService {
             }
 
             row.put("deltaPct", deltas);
+
+            if (isUnstable(c))
+                row.put("unstable", c.comparison.get("unstable"));
+
             n.calibrations.add(row);
+
+            if (isUnstable(c))
+                continue; // a broken run, not the noise of the stand
 
             try {
                 cmps.add(Json.MAPPER.treeToValue(c.comparison, Stats.Comparison.class));

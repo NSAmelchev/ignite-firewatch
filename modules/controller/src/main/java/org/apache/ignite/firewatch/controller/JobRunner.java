@@ -387,6 +387,7 @@ public final class JobRunner implements Runnable {
                 boolean own = cal.size() >= JobService.MIN_CALIBRATIONS;
                 Map<String, Double> noise = own ? Stats.noiseFloors(cal) : Stats.defaultNoiseFloors();
                 Stats.Comparison cmp = Stats.compare(data, noise, own ? "calibration" : "default", cal.size());
+                cmp.unstable = Stats.unstable(cmp, jobs.usualSpread(job));
                 job.comparison = Json.MAPPER.valueToTree(cmp);
                 job.verdict = cmp.verdict;
             }
@@ -613,8 +614,8 @@ public final class JobRunner implements Runnable {
             return out; // a plugin has no A/A of its own yet: the default floors
 
         for (Job c : jobs.calibrationsOfCurrentVersion(job.scenario)) {
-            if (c.comparison == null)
-                continue;
+            if (c.comparison == null || JobService.isUnstable(c))
+                continue; // an unstable A/A is a broken run, not the noise of the stand
 
             try {
                 out.add(Json.MAPPER.treeToValue(c.comparison, Stats.Comparison.class));
@@ -645,7 +646,7 @@ public final class JobRunner implements Runnable {
         if (job.comparison == null)
             return "";
 
-        StringBuilder sb = new StringBuilder();
+        StringBuilder sb = new StringBuilder(job.comparison.hasNonNull("unstable") ? "unstable run " : "");
 
         for (String k : Stats.VERDICT_METRICS) {
             var r = job.comparison.path("metrics").path(k);

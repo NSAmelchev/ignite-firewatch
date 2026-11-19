@@ -405,11 +405,14 @@ final class ApiDocs {
                 f("priority", INTEGER, "default 1, a manual job"), f("label", STRING, "a title")), true)
             .returns(of(Job.class, "the queued job")));
         list.add(new Op("GET /api/jobs/{id}", "getJob", "Jobs", Effect.READ,
-            "A job with its phases and its comparison").returns(of(Job.class, "the job")));
+            "A job with its phases and its comparison; comparison.unstable (slow, fast, factor, spreadPct, usualPct) "
+                + "when the repeats of one commit differ far beyond the usual of the scenario: its Δ does not hold")
+            .returns(of(Job.class, "the job")));
         list.add(new Op("POST /api/jobs/{id}/cancel", "cancelJob", "Jobs", Effect.DESTRUCTIVE,
             "Cancels a queued job, stops a running one").returns(of(Job.class, "the job")));
         list.add(new Op("POST /api/jobs/{id}/retry", "retryJob", "Jobs", Effect.QUEUE,
-            "Queues the same job again: its result is pooled with the earlier runs of the pair")
+            "Queues the same job again: its result is pooled with the earlier runs of the pair, an unstable one left "
+                + "out")
             .body(priority("default: that of the job, at least 1"), false).returns(of(Job.class, "the new job")));
         list.add(new Op("POST /api/jobs/{id}/split", "splitSegment", "Jobs", Effect.QUEUE,
             "Splits a segment of several commits")
@@ -481,7 +484,8 @@ final class ApiDocs {
                 + "takesSec), later, dueAt, byAt, startAt, waitsFor (now, idle, term, commit, queue, reopen); auto-run "
                 + "also mode and commits")));
         list.add(new Op("GET /api/noise", "getNoise", "Dashboard", Effect.READ,
-            "The noise of the stand for a scenario: its A/A runs and the floors they give")
+            "The noise of the stand for a scenario: its A/A runs and the floors they give; an unstable A/A is listed "
+                + "with unstable and left out of the floors")
             .query("scenario", STRING, "id (default: the first of auto-run)", null)
             .returns(of(JobService.Noise.class, "the noise")));
         list.add(new Op("POST /api/calibrate", "queueCalibration", "Dashboard", Effect.QUEUE,

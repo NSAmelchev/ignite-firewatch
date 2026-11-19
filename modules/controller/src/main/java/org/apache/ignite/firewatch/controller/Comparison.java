@@ -111,5 +111,8 @@ public final class Comparison {
 
         /** */
         public List<Long> jobIds = new ArrayList<>();
+
+        /** Unstable runs of the scenario left out of its result, see {@link JobService#stableOf}. */
+        public List<Long> leftOut = new ArrayList<>();
     }
 }

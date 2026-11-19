@@ -268,6 +268,7 @@ h1.with-tools .tools, h2.with-tools .tools { margin-left: auto; font-size: 13px;
 .sw.queued { border: 1.5px dashed var(--accent); }
 .sw.running { border: 1.5px solid var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .sw.band { border: 1.5px dashed var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.sw.unstable { border: 1.5px dashed var(--warn); }
 .sw.spread { border: 1.5px dashed #eda100; background: color-mix(in srgb, #eda100 14%, transparent); }
 .sw.found { width: 2px; height: 12px; border-radius: 0; background: var(--fg); }
 /* the suspect range of an active bisection, through every row, under the blocks */
@@ -390,7 +391,20 @@ h2.with-tools .tools label { display: inline-flex; align-items: center; gap: 4px
 .chart-legend i.dashed { border-top-style: dashed; }
 .chart-legend b { color: var(--fg); font-weight: 600; }
 #charts:not(.show-all) .chart-more { display: none; }
-td.phase-broken { color: var(--warn); font-weight: 600; }
+/* an unstable run: its slow phases tinted in every metric, Δ and the verdict muted; a phase off its twin only underlined */
+.unstable-notice b { display: block; margin-bottom: 2px; }
+.unstable-notice .small-text { margin-top: 4px; }
+.unstable-mark { color: var(--warn); font-weight: 600; font-size: 12px; white-space: nowrap; }
+.unstable-head { font-size: 14px; vertical-align: middle; cursor: help; }
+.unstable-note { color: var(--warn); margin: 4px 0; }
+th.phase-slow { color: var(--warn); }
+th.phase-slow, td.phase-slow, tr.verdict-metric td.phase-slow { background: color-mix(in srgb, var(--warn) 10%, transparent); }
+table.unstable .delta, tr.unstable .dlt { color: var(--muted) !important; background: none !important; font-weight: normal; }
+table.unstable .badge, tr.unstable .badge { opacity: .45; }
+.phase-off { border-bottom: 1px dotted currentColor; cursor: help; }
+th .cal-unstable { display: block; font-weight: normal; color: var(--muted); }
+td.cal-left-out s { color: var(--muted); }
+.map-block.unstable { stroke: var(--warn); stroke-width: 1.5; stroke-dasharray: 3 2; vector-effect: non-scaling-stroke; }
 
 @media (max-width: 600px) { .map-ticks span:not(:first-child):not(:last-child) { display: none; } }
 /* a bisection on its segment: blocks of ranges in the rows of their size */

@@ -393,8 +393,14 @@ public final class Comparisons {
         }
 
         if (!done.isEmpty()) {
-            Job last = done.get(done.size() - 1);
-            List<Job> same = JobService.repeatsInComparison(last, done);
+            List<Job> all = JobService.repeatsInComparison(done.get(done.size() - 1), done);
+            List<Job> same = JobService.stableOf(all);
+            Job last = same.get(same.size() - 1);
+
+            for (Job j : all)
+                if (!same.contains(j))
+                    r.leftOut.add(j.id);
+
             Stats.Comparison pooled = same.size() > 1 ? jobs.pooled(same) : null;
 
             if (pooled != null) {

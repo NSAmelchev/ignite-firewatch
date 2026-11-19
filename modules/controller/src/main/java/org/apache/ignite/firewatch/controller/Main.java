@@ -61,6 +61,7 @@ public final class Main {
             }
         }, "shutdown"));
 
+        jobs.markUnstableOnce(); // before the worker: the runs finished before the rule get their mark
         api.start();
         runner.start();
         bisector.recover(); // a step interrupted by the restart is queued again

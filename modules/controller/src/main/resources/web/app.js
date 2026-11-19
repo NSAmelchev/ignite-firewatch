@@ -94,6 +94,7 @@ const HELP = {
   ABBA: 'Four phases in the order A, B, B, A, each in fresh JVMs: slow drift of the stand cancels out.',
   'A/A': 'The same build on both sides: whatever differs is the noise of the stand.',
   floor: 'How far A/A runs drift by chance: a smaller Δ means nothing.',
+  unstable: 'Repeats of one commit differ far beyond what this scenario usually shows: the cause is outside the code, the verdict does not hold.',
   threshold: 'A Δ counts only beyond it: the larger of the noise floor and the spread between repeats.',
   CI: 'The range where the true Δ lies with 95 % confidence, from per-second samples.',
   signal: 'Δ divided by the spread of its phases: the higher, the more likely a bisect reaches a commit.',
@@ -586,7 +587,7 @@ export function deltaLine(j) {
     const r = m[k];
     return `${h} <span class="dlt ${deltaClass(k, r.deltaPct, r.thresholdPct, r.verdict)}">${fmt.pct(r.deltaPct)}</span>`;
   });
-  return parts.length ? `${parts.join(' · ')} ${j.verdict ? badge(j.verdict) : ''}` : '';
+  return parts.length ? `${parts.join(' · ')} ${j.verdict ? badge(j.verdict) : ''}${unstableMark(unstableOf(j.comparison))}` : '';
 }
 const mins = (sec) => fmt.len(sec);
 // A modal in the page: resolves true on the main button (or Enter), false on Cancel, Esc or a click outside
@@ -818,7 +819,7 @@ const scenarioOptions = (list, selected) => list.map((s) => `<option value="${es
 function verdictBadge(j) {
   if (!j.verdict) return '';
   const thr = j.comparison && j.comparison.metrics && j.comparison.metrics.throughput;
-  return `${badge(j.verdict)} ${thr && thr.deltaPct != null ? `<span class="muted mono">${fmt.pct(thr.deltaPct)}</span>` : ''}`;
+  return `${badge(j.verdict)} ${thr && thr.deltaPct != null ? `<span class="muted mono">${fmt.pct(thr.deltaPct)}</span>` : ''}${unstableMark(unstableOf(j.comparison))}`;
 }
 // Two-line job caption: the commit subject when the job measures a branch commit, otherwise the label;
 // then a short muted line "B vs parent A" / "B vs A" without repeating what the first line already says.
@@ -983,6 +984,26 @@ function brokenPhases(r) {
   return [['A1', 'A2', 'B1', 'B2', r.spreadAPct], ['B1', 'B2', 'A1', 'A2', r.spreadBPct]].filter(([, , , , spread]) => spread > BROKEN_SPREAD * r.noisePct)
     .map(([x, y, p, q]) => { const mid = middle([p, q]); return Math.abs(r.values[x] - mid) > Math.abs(r.values[y] - mid) ? x : y; });
 }
+// An unstable run: repeats of one commit far apart, beyond what the scenario usually shows on this stand (the server
+// marks it, Stats.unstable). The phases split into the slow and the fast ones; Δ of such a run does not hold
+function unstableOf(cmp) {
+  const u = cmp && cmp.unstable, thr = cmp && cmp.metrics && cmp.metrics.throughput;
+  return u ? { ...u, usual: u.usualPct, values: (thr && thr.values) || {}, thresholdPct: thr ? thr.thresholdPct : null } : null;
+}
+const andList = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+// both sides hit alike (a slow half: A1 and B1, or B2 and A2) leave Δ balanced; else Δ is skewed
+const unstableBalanced = (s) => s.slow.some((p) => p.startsWith('A')) && s.slow.some((p) => p.startsWith('B'));
+const unstableWhat = (s) => `${andList(s.slow)} ran ×${fmt.num(s.factor, 1)} slower than ${s.slow.length === 1 ? 'the other phases' : andList(s.fast)}`;
+const opsRange = (s, ps) => { const v = ps.map((p) => s.values[p]), lo = Math.min(...v), hi = Math.max(...v); return lo === hi ? fmt.num(lo) : `${fmt.num(lo)}–${fmt.num(hi)}`; };
+function unstableNotice(s) {
+  return `<div class="card notice unstable-notice" id="unstable"><b>Unstable run</b>
+    <div>${unstableWhat(s)}: ${opsRange(s, s.slow)} vs ${opsRange(s, s.fast)} ops/s.
+      ${unstableBalanced(s) ? 'Both commits hit alike, so Δ is balanced' : 'Δ is skewed'}; the verdict can't see changes under ±${fmt.num(s.thresholdPct, 1)}%.</div>
+    <div class="small-text muted">${s.usual != null ? `Repeats here usually agree within ${fmt.num(s.usual, 1)}%. ` : ''}Run again: this run is left out of the pooled result.</div></div>`;
+}
+const unstableMark = (s) => (s ? ` <span class="unstable-mark" title="Unstable run: ${esc(unstableWhat(s))}. ${unstableBalanced(s) ? 'Δ is balanced' : 'Δ is skewed'}; the verdict doesn't hold.">⚠ unstable</span>` : '');
+// unstable runs a result leaves out while a stable repeat holds
+const leftOutMark = (ids) => (ids && ids.length ? ` <span class="muted small-text" title="unstable, left out of this result: ${ids.map((i) => `#${i}`).join(', ')}">+${ids.length} unstable</span>` : '');
 views.job = {
   poll: 15000,
   live() { return this.active; },
@@ -1000,9 +1021,13 @@ views.job = {
     const phases = cmp ? cmp.phases : [];
     const metrics = cmp ? Object.entries(cmp.metrics).sort(([a], [b]) => mainRank(a) - mainRank(b)) : [];
     const more = metrics.filter(([k]) => !JOB_MAIN.includes(k)).length;
-    const broken = cmp && cmp.metrics.throughput ? brokenPhases(cmp.metrics.throughput) : [];
+    // an unstable run marks its slow phases in every metric and mutes Δ and the verdict; a lesser spread, which a deep
+    // search leaves out, only underlines the phase on ops/s
+    const uns = unstableOf(cmp), off = !uns && cmp && cmp.metrics.throughput ? brokenPhases(cmp.metrics.throughput) : [];
+    const offTip = (p) => { const r = cmp.metrics.throughput, twin = p.replace(/\d/, (d) => (d === '1' ? '2' : '1'));
+      return `${p} is ${fmt.num(Math.abs(r.values[p] / r.values[twin] - 1) * 100, 1)}% off ${twin}: above the noise floor, not an unstable run. A deep search leaves this run out.`; };
     return `
-      <h1>${jobTitle(j, false)} ${badge(j.status)} ${j.verdict ? badge(j.verdict) : ''}
+      <h1>${jobTitle(j, false)} ${badge(j.status)} ${j.verdict ? badge(j.verdict) : ''}${uns ? ` <span class="unstable-mark unstable-head"${hint('unstable')}>⚠ Unstable run</span>` : ''}
         ${j.source !== 'compare' && !j.plugin && j.shaB ? ` <a class="small-link" href="#/commits/${j.shaB}">commit page →</a>` : ''}</h1>
       <div class="muted" style="margin:-6px 0 12px">job #${j.id}${parentTag(j)}</div>
       <div class="row">
@@ -1024,19 +1049,20 @@ views.job = {
       ${log && log.text ? `<h2>Log tail <span class="muted mono">${esc(log.file || '')}</span></h2><pre class="log">${esc(log.text)}</pre>` : ''}
       ${cmp ? `
         <h2>Comparison <span class="muted">${term('floor', 'noise floor')}: ${esc(cmp.noiseSource)}${cmp.calibrations ? ` (${cmp.calibrations} calibrations)` : ''}</span></h2>
-        <table><thead><tr><th>Metric</th>${phases.map((p) => `<th class="num">${esc(p)}</th>`).join('')}<th class="num">A</th><th class="num">B</th><th class="num">Δ</th><th class="num"${hint('CI')}>95% CI</th><th class="num"${hint('threshold')}>Threshold</th><th>Verdict</th></tr></thead>
+        ${uns ? unstableNotice(uns) : ''}${noisyNote(j.runs)}
+        <table class="${uns ? 'unstable' : ''}"><thead><tr><th>Metric</th>${phases.map((p) => `<th class="num${uns && uns.slow.includes(p) ? ' phase-slow' : ''}">${esc(p)}${uns && uns.slow.includes(p) ? ' ⚠' : ''}</th>`).join('')}<th class="num">A</th><th class="num">B</th><th class="num">Δ</th><th class="num"${hint('CI')}>95% CI</th><th class="num"${hint('threshold')}>Threshold</th><th>Verdict</th></tr></thead>
         <tbody>${metrics.map(([k, r]) => `<tr class="${VERDICT_KEYS.includes(k) ? 'verdict-metric' : ''}${JOB_MAIN.includes(k) ? '' : ' metric-more'}" ${JOB_MAIN.includes(k) || this.allMetrics ? '' : 'hidden'}>
           <td>${VERDICT_KEYS.includes(k) ? `<b>${esc(r.title)}</b>` : esc(r.title)} <span class="muted">${esc(r.unit)}</span></td>
-          ${phases.map((p) => `<td class="num${k === 'throughput' && broken.includes(p) ? ' phase-broken' : ''}">${fmt.num(r.values[p], metricDigits(k))}</td>`).join('')}
+          ${phases.map((p) => (uns && uns.slow.includes(p) ? `<td class="num phase-slow">${fmt.num(r.values[p], metricDigits(k))}</td>`
+            : k === 'throughput' && off.includes(p) ? `<td class="num"><span class="phase-off" title="${esc(offTip(p))}">${fmt.num(r.values[p], metricDigits(k))}</span></td>`
+              : `<td class="num">${fmt.num(r.values[p], metricDigits(k))}</td>`)).join('')}
           <td class="num">${fmt.num(r.meanA, metricDigits(k))}</td><td class="num">${fmt.num(r.meanB, metricDigits(k))}</td>
           <td class="num">${VERDICT_KEYS.includes(k) ? deltaCell(r) : `<span class="dlt ${deltaClass(k, r.deltaPct, r.thresholdPct, r.verdict)}">${fmt.pct(r.deltaPct)}</span>`}</td>
           <td class="num muted">${r.ciLow != null ? `${fmt.pct(r.ciLow)} … ${fmt.pct(r.ciHigh)}` : '–'}</td>
           <td class="num muted">±${fmt.num(r.thresholdPct, 1)}%${r.spreadAPct > r.noisePct || r.spreadBPct > r.noisePct ? ' <span title="spread between repeats exceeds the noise floor">(spread)</span>' : ''}</td>
           <td>${VERDICT_KEYS.includes(k) ? badge(r.verdict) : ''}</td></tr>`).join('')}</tbody></table>
         ${more ? `<button class="att-more" data-metrics-more>${this.allMetrics ? 'Fewer metrics' : `${plural(more, 'more metric')}`}</button>` : ''}
-        ${broken.length ? `<div class="card notice" style="margin-top:6px">Phase ${broken.join(', ')} is far from its twin on ops/s: this run says little, a deep search leaves it out and measures the pair again.</div>` : ''}
-        <div class="muted">${esc(cmp.note || '')}</div>` : ''}
-      ${noisyNote(j.runs)}
+        <div class="muted">${esc(cmp.note || '')}</div>` : noisyNote(j.runs)}
       <h2>Per-second series <span class="muted">${j.type === 'abba' ? 'A phases blue, B phases orange, repeats dashed' : ''}</span></h2>
       ${this.active ? '<div class="muted">Shown when the job finishes: the page does not stream metrics while it runs, so as not to load the stand.</div>'
         : `<div id="charts" class="chart-grid${this.allCharts ? ' show-all' : ''}"><div class="muted">loading charts…</div></div>
@@ -1582,19 +1608,20 @@ views.noise = {
     const few = all.filter((n) => (n.calibrations || []).length < OWN_FLOORS && !active.some((j) => j.scenario === n.scenario && j.source === 'calibration'));
     this.few = few.map((n) => n.scenario);
     const rows = all.map((n) => {
-      const sc = n.scenario, floors = n.floors || {}, cals = n.calibrations || [], last = cals[0], open = this.open.has(sc);
+      const sc = n.scenario, floors = n.floors || {}, cals = n.calibrations || [], last = cals.find((c) => !c.unstable) || cals[0], open = this.open.has(sc);
       const run = active.find((j) => j.scenario === sc && j.source === 'calibration');
       const over = last ? verdictKeys.filter(([k]) => last.deltaPct[k] != null && Math.abs(last.deltaPct[k]) > floors[k]) : [];
-      const status = !last ? '<span class="muted">no A/A yet</span>' : over.length ? `<b class="bad-text" title="last A/A over the floor">check: ${over.map(([, h]) => h).join(', ')}</b>` : '';
-      const history = cals.length ? `<table class="commits runs-table"><thead><tr><th>Metric</th><th class="num">Floor</th>${cals.map((c) => `<th class="num"><a href="#/jobs/${c.jobId}" title="${esc(c.label)}">#${c.jobId}</a><div class="muted" style="font-weight:normal">${fmtDay(c.finishedAt)}</div></th>`).join('')}</tr></thead>
+      const unstableN = cals.filter((c) => c.unstable).length;
+      const status = !last ? '<span class="muted">no A/A yet</span>' : unstableN && !over.length ? `<span class="muted"${hint('unstable')}>${unstableN} unstable A/A left out</span>` : over.length ? `<b class="bad-text" title="last A/A over the floor">check: ${over.map(([, h]) => h).join(', ')}</b>` : '';
+      const history = cals.length ? `<table class="commits runs-table"><thead><tr><th>Metric</th><th class="num">Floor</th>${cals.map((c) => `<th class="num"><a href="#/jobs/${c.jobId}" title="${esc(c.label)}">#${c.jobId}</a><div class="muted" style="font-weight:normal">${fmtDay(c.finishedAt)}</div>${c.unstable ? `<span class="cal-unstable"${hint('unstable')}>unstable</span>` : ''}</th>`).join('')}</tr></thead>
         <tbody>${keys.map(([k, h, v]) => `<tr><td>${v ? `<b>${esc(h)}</b>` : esc(h)}</td><td class="num">±${fmt.num(floors[k], 1)}%</td>${cals.map((c) => {
           const d = c.deltaPct[k];
-          return `<td class="num ${d != null && Math.abs(d) > floors[k] ? 'over' : 'muted'}">${fmt.pct(d)}</td>`;
-        }).join('')}</tr>`).join('')}</tbody></table>` : '<div class="muted">no calibrations yet: defaults are used</div>';
+          return `<td class="num ${c.unstable ? 'cal-left-out muted' : d != null && Math.abs(d) > floors[k] ? 'over' : 'muted'}">${c.unstable ? `<s>${fmt.pct(d)}</s>` : fmt.pct(d)}</td>`;
+        }).join('')}</tr>`).join('')}</tbody></table>${cals.some((c) => c.unstable) ? '<div class="small-text muted">Struck out: an unstable run, left out of the floor.</div>' : ''}` : '<div class="muted">no calibrations yet: defaults are used</div>';
       return `<tr class="click-row" data-noise="${esc(sc)}"><td><span class="chev">${open ? '▾' : '▸'}</span> <b>${esc(scName(sc))}</b></td>
         ${own ? `<td>${custom(n) ? floorKeys.map(([k, h]) => `${h} ±${fmt.num(floors[k], 1)}%`).join(' · ') : '<span class="muted">default</span>'}</td>` : ''}
         ${verdictKeys.map(([k]) => `<td class="num">${last ? `<span class="${last.deltaPct[k] != null && Math.abs(last.deltaPct[k]) > floors[k] ? 'over' : 'muted'}">${fmt.pct(last.deltaPct[k])}</span>` : '–'}</td>`).join('')}
-        <td class="num">${cals.length < OWN_FLOORS ? `<span title="a scenario gets its own floors after ${OWN_FLOORS} calibrations">${cals.length} of ${OWN_FLOORS}</span>` : cals.length}</td><td class="muted">${last ? fmt.ago(last.finishedAt) : '–'}</td><td>${status}</td>
+        <td class="num">${cals.length - unstableN < OWN_FLOORS ? `<span title="a scenario gets its own floors after ${OWN_FLOORS} calibrations">${cals.length - unstableN} of ${OWN_FLOORS}</span>` : cals.length - unstableN}${unstableN ? ` <span class="muted" title="unstable, left out">(+${unstableN})</span>` : ''}</td><td class="muted">${cals.length ? fmt.ago(cals[0].finishedAt) : '–'}</td><td>${status}</td>
         <td class="row-action" style="opacity:1">${run ? `${jobLink(run)} ${badge(run.status)}` : `<button class="small" data-aa="${esc(sc)}">Run A/A</button>`}</td></tr>
         <tr class="row-detail" ${open ? '' : 'hidden'}><td colspan="${own ? 9 : 8}">${history}</td></tr>`;
     }).join('');
@@ -1723,8 +1750,9 @@ views.timeline = {
       const x = X(a), w = Math.max(1.5, X(b) - X(a) - (b - a > 1 ? 1.5 : 0.3));
       const sel = this.sel === p.jobId ? ' stroke="var(--fg)" stroke-width="2" vector-effect="non-scaling-stroke"' : '';
       const refined = p.refinedBy ? ` · refined by #${p.refinedBy}: a shorter run ends at the same commit` : '';
-      return `<rect class="map-block${p.refinedBy ? ' refined' : ''}" data-job="${p.jobId}" x="${x}" y="${laneY(it.lane)}" width="${w}" height="${LH}" rx="2" fill="${color(p)}"${sel}>
-        <title>${(p.span || 1) > 1 ? `segment of ${p.span} commits` : '1 commit'} · ${fmt.sha(p.sha)} ${esc(p.subject || '')} · Δ ${fmt.pct(p.deltaPct[metric])}${refined}</title></rect>`;
+      const unstable = p.unstable ? ' · unstable run: its Δ does not hold' : '';
+      return `<rect class="map-block${p.refinedBy ? ' refined' : ''}${p.unstable ? ' unstable' : ''}" data-job="${p.jobId}" x="${x}" y="${laneY(it.lane)}" width="${w}" height="${LH}" rx="2" fill="${color(p)}"${sel}>
+        <title>${(p.span || 1) > 1 ? `segment of ${p.span} commits` : '1 commit'} · ${fmt.sha(p.sha)} ${esc(p.subject || '')} · Δ ${fmt.pct(p.deltaPct[metric])}${refined}${unstable}</title></rect>`;
     };
     // the svg stretches with the page and text in it would too: the Δ of a wide block lies over it
     const label = (it) => {
@@ -1789,7 +1817,7 @@ views.timeline = {
       const end = r.job && bySha.get(r.job.shaB);
       const runs = points.filter((p) => p.deltaPct[metric] != null).map((p) => ({ p, a: p.baseSeq != null ? p.baseSeq : p.seq - 1, b: p.seq,
         cls: mapLevel(metric, p.deltaPct[metric], p.thresholdPct[metric], p.metricVerdict[metric]) })).sort((u, v) => (v.b - v.a) - (u.b - u.a));
-      const tip = ({ p, a, b }) => `${b - a > 1 ? `${b - a} commits` : '1 commit'} · ${fmt.sha(p.sha)} ${p.subject || ''} · Δ ${fmt.pct(p.deltaPct[metric])}`;
+      const tip = ({ p, a, b }) => `${b - a > 1 ? `${b - a} commits` : '1 commit'} · ${fmt.sha(p.sha)} ${p.subject || ''} · Δ ${fmt.pct(p.deltaPct[metric])}${p.unstable ? ' · unstable run: its Δ does not hold' : ''}`;
       // the shortest runs with a verdict: as close to a change as it is known; only the direct run says it is still there
       const moved = runs.filter((x) => x.cls === 'bad' || x.cls === 'good');
       const steps = moved.filter((x) => !moved.some((y) => y.cls === x.cls && y.a >= x.a && y.b <= x.b && y.b - y.a < x.b - x.a));
@@ -1806,7 +1834,8 @@ views.timeline = {
     }).join('');
     const legendOf = (items) => `<div class="map-legend">${items.map(([c, name, help]) => `<span><i class="sw ${c}"></i>${help ? term(help, name) : name}</span>`).join('')}</div>`;
     const legend = legendOf([['noise', 'noise', 'noise'], ['over', 'beyond the threshold', 'over'], ['bad', 'regression', 'regression'], ['good', 'improvement', 'improvement'], ['refined', 'refined by a split', 'refined'], ['none', 'not measured'],
-      ['queued', `queued (${pending.filter((x) => x.job.status === 'queued').length})`], ['running', 'running'], ['band', 'suspected by a bisect', 'band']]);
+      ['queued', `queued (${pending.filter((x) => x.job.status === 'queued').length})`], ['running', 'running'], ['band', 'suspected by a bisect', 'band'],
+      ...(pts.some((p) => p.unstable) ? [['unstable', 'unstable run', 'unstable']] : [])]);
     const levels = legendOf([['noise', 'quiet', 'noise'], ['after-bad', 'still worse than the release', 'stillWorse'], ['after-good', 'still better than the release', 'stillBetter'], ['range-bad', 'changed somewhere here', 'somewhere'],
       ['commit', 'the commit'], ['over', 'beyond the threshold', 'over'], ['none', 'not measured']]);
     return `
@@ -2246,11 +2275,12 @@ views.comparison = {
       }).join('');
       const state = j.status === 'running' ? `<div class="muted">${esc(j.stage || '')} · ${j.progress || 0}%</div>` : j.status === 'queued' ? `<div class="muted">${etaStart(j.etaStartAt)}</div>` : '';
       const status = settled ? '' : `<td>${badge(j.status)}${state}</td>`;
-      return `<tr>
-        <td class="job-cell"><a href="#/jobs/${j.id}">${esc(scName(r.scenario))}</a>${runsMark(r)}${marks.map((b) => ` <a class="bisect-mark" href="#/bisects/${b.id}" title="bisect #${b.id} of ${esc(METRIC_NAMES[b.metric] || b.metric)}: ${esc(b.status)}">${BISECT_MARKS[b.status] || ''} #${b.id}</a>`).join('')}${j.error ? `<div class="error one-line" title="${esc(j.error)}">${esc(j.error)}</div>` : ''}</td>
+      return `<tr class="${unstableOf(r.comparison) ? 'unstable' : ''}">
+        <td class="job-cell"><a href="#/jobs/${j.id}">${esc(scName(r.scenario))}</a>${runsMark(r)}${unstableMark(unstableOf(r.comparison))}${leftOutMark(r.leftOut)}${marks.map((b) => ` <a class="bisect-mark" href="#/bisects/${b.id}" title="bisect #${b.id} of ${esc(METRIC_NAMES[b.metric] || b.metric)}: ${esc(b.status)}">${BISECT_MARKS[b.status] || ''} #${b.id}</a>`).join('')}${j.error ? `<div class="error one-line" title="${esc(j.error)}">${esc(j.error)}</div>` : ''}</td>
         ${status}${cells}<td>${badge(r.verdict)}</td>
         <td class="row-action">${j.status === 'queued' || j.status === 'running' ? '' : r.comparison ? `${moreRunBtn(j.id)}${moved.length ? ` ${bisectBtn(j.id)}` : ''}` : `<button class="small" data-retry="${j.id}">Retry</button>`}</td></tr>`;
     }).join('');
+    const unstable = c.rows.filter((r) => unstableOf(r.comparison));
     const stateOf = [...new Set(searches.map((g) => g.b.status))].map((s) => `<span class="badge ${esc(s)}">${searches.filter((g) => g.b.status === s).length} ${esc(s)}</span>`).join(' ');
     const activeBisects = c.bisects.filter(bisectActive).length;
     return `
@@ -2273,6 +2303,7 @@ views.comparison = {
       </div></div>
       <table class="commits runs-table comparison-rows"><thead><tr><th>Scenario</th>${settled ? '' : '<th>Status</th>'}${cols.map(metricHead).join('')}<th>Verdict</th><th></th></tr></thead><tbody>${rows}</tbody></table>
       <button class="att-more" data-all-cols>${this.allCols ? 'Hide start and preload' : 'Show start and preload'}</button>
+      ${unstable.length ? `<div class="unstable-note">⚠ ${term('unstable', 'Unstable')}: ${unstable.map((r) => `<a href="#/jobs/${r.job.id}">${esc(scName(r.scenario))}</a>`).join(', ')}. Their Δ does not hold: run them again.</div>` : ''}
       <div class="muted">Values are B, Δ is B vs A. One more run of a scenario is pooled with its previous runs here. A Δ with a verdict starts a bisection of that metric.</div>
       ${comparisonResult(searches, c)}
       ${c.bisects.length ? `<h2>Bisects <span class="muted">which commits moved the metric between A and B</span></h2>
@@ -3226,7 +3257,7 @@ function masterCard(rels, a, branch, autorun, open, showCalm, next, paused) {
   // a run with no verdict and nothing left to do folds: a regression stays in sight even when all of it is explained
   const settled = (x) => x.job && !x.active && !MOVED.has(x.job.verdict) && linesOf(x).every((l) => l.status === 'explained');
   // only a scenario without a change folds: an explained one stays in sight with its ✓
-  const folds = (x) => settled(x) && !linesOf(x).length && cols.every(([k]) => { const m = metric(x, k); return !m || m.deltaPct == null || !deltaClass(k, m.deltaPct, m.thresholdPct, m.verdict); });
+  const folds = (x) => settled(x) && !unstableOf(x.job.comparison) && !linesOf(x).length && cols.every(([k]) => { const m = metric(x, k); return !m || m.deltaPct == null || !deltaClass(k, m.deltaPct, m.thresholdPct, m.verdict); });
   const whenOf = (x) => (x.job ? `${fmt.ago(x.job.finishedAt)}${x.behind ? `, ${term('behind', `${x.behind} behind`)}` : ''}` : '');
   // most rows were measured together: the header says when, a row only when it differs
   const times = rels.map(whenOf).filter(Boolean);
@@ -3249,7 +3280,8 @@ function masterCard(rels, a, branch, autorun, open, showCalm, next, paused) {
     const j = x.job, hide = folds(x) && !showCalm;
     const when = !j ? '<span class="muted">not measured</span>' : whenOf(x) === usual ? '' : `<span class="muted">${whenOf(x)}</span>`;
     const act = x.active ? `${jobLink(x.active)} ${badge(x.active.status)}` : `<button class="small" data-release="${esc(x.scenario)}">Run</button>`;
-    return `<tr class="${folds(x) ? 'rel-calm' : ''}" ${hide ? 'hidden' : ''}><td><b>${esc(scName(x.scenario))}</b></td>${cols.map(([k]) => cell(x, k)).join('')}
+    const unstable = j ? unstableOf(j.comparison) : null;
+    return `<tr class="${folds(x) ? 'rel-calm' : ''}${unstable ? ' unstable' : ''}" ${hide ? 'hidden' : ''}><td><b>${esc(scName(x.scenario))}</b>${unstableMark(unstable)}</td>${cols.map(([k]) => cell(x, k)).join('')}
       <td>${j ? `<a href="#/jobs/${j.id}">${badge(j.verdict)}</a>` : ''}</td><td>${when}</td><td class="row-action">${act}</td></tr>${details(x)}`;
   }).join('');
   const calm = rels.filter(folds);
@@ -3308,13 +3340,15 @@ views.dashboard = {
     // a scenario without A/A has the default floor: nothing is wrong with it yet, a new stand has only those
     const noiseIssues = [], noAa = [], calTimes = [];
     for (const x of noises.filter(Boolean)) {
-      const last = x.n.calibrations[0];
+      const last = x.n.calibrations.find((c) => !c.unstable);
       if (!last) { noAa.push(scName(x.sc)); continue; }
       calTimes.push(last.finishedAt);
       const over = verdictKeys.filter((k) => last.deltaPct[k] != null && Math.abs(last.deltaPct[k]) > (x.n.floors[k] ?? Infinity));
       if (over.length) noiseIssues.push(`${scName(x.sc)}: last A/A over the floor on ${over.join(', ')}`);
     }
     const lastCal = calTimes.sort().pop();
+    // an unstable A/A is left out of the floors: the tile tells it, the Noise tab shows which
+    const unstableAa = noises.filter(Boolean).reduce((x, y) => x + y.n.calibrations.filter((c) => c.unstable).length, 0);
     const head = commits[0];
     const drains = health.queueDrainsAt;
     const tile = (label, side, body) => `<div class="tile"><div class="tile-label"><span>${label}</span><span class="tile-side">${side}</span></div>${body}</div>`;
@@ -3328,7 +3362,8 @@ views.dashboard = {
           `<div><a href="#/queue">${health.jobs.queued || 0} waiting</a>${health.bisects ? ` · <a href="#/bisects">${plural(health.bisects, 'bisect')}</a>` : ''}</div>`)}
         ${tile('Last commit', head ? fmt.ago(head.committedAt) : '', head ? `<div title="${esc(head.subject)}"><a class="mono" href="#/commits/${head.sha}">${fmt.sha(head.sha)}</a> ${esc(head.subject)}</div>` : '<div>–</div>')}
         ${tile('<a href="#/noise">Noise</a>', lastCal ? `A/A ${fmt.ago(lastCal)}` : '', `<div>${noiseIssues.length ? `<b class="bad-text" title="${esc(noiseIssues.join('; '))}">check: ${noiseIssues.map((x) => esc(x.split(':')[0])).join(', ')}</b>`
-          : noAa.length ? `${calTimes.length ? 'ok · ' : ''}<span class="muted" title="${esc(`no A/A yet: ${noAa.join(', ')}`)}">${calTimes.length ? `${noAa.length} without A/A` : 'no A/A yet: default floors'}</span>` : 'ok'}</div>`)}
+          : noAa.length ? `${calTimes.length ? 'ok · ' : ''}<span class="muted" title="${esc(`no A/A yet: ${noAa.join(', ')}`)}">${calTimes.length ? `${noAa.length} without A/A` : 'no A/A yet: default floors'}</span>` : 'ok'}${unstableAa
+          ? ` · <a class="unstable-mark" href="#/noise"${hint('unstable')}>⚠ ${unstableAa} unstable A/A</a>` : ''}</div>`)}
         ${tile('<a href="#/settings">Auto-run</a>', '', `<div>${w.autorunEnabled ? 'on' : '<b>off</b>'}</div>`)}
       </div>`;
 

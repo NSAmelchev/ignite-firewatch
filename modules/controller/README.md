@@ -355,6 +355,17 @@ all the A phases, B of all the B phases, the CI over all the per-second series; 
 within one job (the drift of the stand between days stays out of the threshold), the noise floor stays as it was. The
 result is cached (LRU of 500 entries).
 
+**Unstable runs** (`Stats.unstable`). A run is unstable when the spread between the repeats of one commit on ops/s is
+over 4 times the usual spread of its scenario on this stand and over 15 %: the usual one is the 95th percentile of the
+last 30 stable runs of the scenario (of the same plugin, if any) before it, none with fewer than 10, then 15 % is the
+whole rule. The phases split at their widest gap into the slow and the fast ones. On the history of a stand of 1425 jobs
+it marks 2, both a bad state picked at the start (a query plan cached with a guessed row count); spread > 2.5 × noise
+would mark 53. The runner marks a run when it finishes (`comparison.unstable`: slow, fast, factor, spreadPct, usualPct),
+the jobs finished before the rule are marked once at the start (setting `unstable.marked`). The verdict stays as it
+is, but its Δ does not hold: an unstable run is left out of the pooled result of its pair while a stable one remains
+(`JobService.stableOf`: Run again replaces it), and an unstable A/A is left out of the noise floors. A deep search keeps
+its own rule (spread > 2.5 × noise floor leaves a run out).
+
 **Diagnostics without a verdict:** `serverStartMs` (time inside `Ignition.start()`, the slowest node), `preloadMs`.
 
 ## API
@@ -383,7 +394,8 @@ strength of the signal, commits.
   all of it: the steps to the first measurement and the clone of the repository with the progress of git (`watcher.fetch`
   of `/api/health`: stage, percent, size and speed); the page refreshes every 2 s and turns into the usual one by itself;
   a failed fetch shows as the error of git at that step, with Try now. On top is the strip of the stand: Worker, Queue,
-  Last commit, Noise (scenarios without A/A are neutral, "no A/A yet: default floors"), Auto-run; while bisections run,
+  Last commit, Noise (scenarios without A/A are neutral, "no A/A yet: default floors"; "⚠ N unstable A/A" when one is
+  left out of the floors), Auto-run; while bisections run,
   the Queue tile shows when they all end. Below is one matrix of master vs release: a row per scenario, those with
   something left to do on top. The colour of a Δ says how bad it is, the mark next to it what is left to do
   (`Attention`): To search (there is more to search), Searching (wait), No single commit (the search is over, there is no
@@ -479,7 +491,8 @@ strength of the signal, commits.
   ended bisections, all or the newest N (when a limit goes down, the page asks for a confirmation); the build cache up to
   N GB, the least recently used builds first.
 - **Noise**: a row per scenario: the Δ of the last A/A on ops/s, p99 and CPU/op in separate columns, how many calibrations
-  (`2 of 3` while it has no thresholds of its own), the history unfolds. One button makes up A/A where there are fewer than
+  (`2 of 3` while it has no thresholds of its own; an unstable one is counted apart, `3 (+1)`), the history unfolds: an
+  unstable A/A is struck out there, it is left out of the floor. One button makes up A/A where there are fewer than
   three, the other runs all the scenarios.
 - **Queue**: a compact block of the current job with Log and Cancel and who queued it, the queue with priorities, who
   queued every job (By: the user's own name in bold, `–` for what the stand queued by itself or what was queued before
@@ -514,7 +527,12 @@ strength of the signal, commits.
   of the build of A and B; the menu asks for its content and sizes only when it opens. The error of a failed build leads
   straight into its log. In the table of phases "N files ▸" unfolds the files of a phase with their sizes under its row.
   The ABBA table (phases, A, B, Δ, CI, threshold, verdict): the verdict metrics and alloc/op, the others on a button; only
-  the metrics that decide the verdict have one. A broken phase is marked. Overlaid per-second series: three charts, the
+  the metrics that decide the verdict have one. An unstable run says so next to the verdict and in a card above the
+  table (which phases ran how much slower, whether Δ is skewed or balanced, below what the verdict can't see); its slow
+  phases are tinted in every metric, Δ and the verdict muted. A phase only off its twin by more than 2.5 noise floors
+  (what a deep search leaves out) is underlined, with the reason in its hint. The same "⚠ unstable" marks the run in the
+  lists (Queue, the commit page, the rows of a comparison, the matrix of master vs release) and its block on Timeline;
+  a row whose unstable run is left out says "+1 unstable". Overlaid per-second series: three charts, the
   others on a button, one legend for all with the values of the chart under the cursor. Files (logs, JFR). On a remote
   stand there is also a Layout block: which JVM is on which host, what that machine is, the CPU, GC and heap of each.
 - **Plugins** (`#/plugins`, only when a plugin is on; its code is `plugins.js`, loaded only then; with one plugin the

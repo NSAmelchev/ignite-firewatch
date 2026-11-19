@@ -1061,6 +1061,26 @@ public final class Db implements AutoCloseable {
     }
 
     /**
+     * Every finished job of a type, plugins included, oldest first.
+     *
+     * @param type Job type.
+     * @return Finished jobs.
+     */
+    public synchronized List<Job> doneJobsOldestFirst(String type) {
+        try (PreparedStatement ps = c.prepareStatement(
+            "SELECT * FROM jobs WHERE status = 'done' AND type = ? ORDER BY id")) {
+            ps.setString(1, type);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                return jobsOf(rs);
+            }
+        }
+        catch (SQLException e) {
+            throw wrap(e);
+        }
+    }
+
+    /**
      * Rows of a table, for the limits on the Settings page.
      *
      * @param table Table name.
