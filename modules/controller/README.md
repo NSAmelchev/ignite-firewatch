@@ -435,7 +435,8 @@ strength of the signal, commits.
 - **Compare**: manual debugging. A list of the comparisons, newest first, a row each that says what it found: its name
   with a line of facts (#, when, who queued it, the scenarios, a PR linked to GitHub, the subject of the commit), and
   what moved, regressions first, the largest first, up to two scenarios with their metrics, then how many more moved,
-  how many stayed, how many failed, how far a running one got and when it ends, bisections included. The whole row
+  how many stayed, how many failed, how far a running one got (`3 of 16 runs`: of the runs queued since it was last
+  idle, so one more run of two scenarios reads `0 of 2 runs`) and when it ends, bisections included. The whole row
   leads to the page of the comparison (its name is a link, so a modified click opens a new tab; Enter does it from the
   keyboard); Again (the same refs and scenarios in the dialog) or Cancel on the hovered row, a filter over what is
   loaded, show more. New comparison is one dialog: the modes "PR vs master" (the default: master against master + PR)
@@ -447,7 +448,8 @@ strength of the signal, commits.
   thresholds.
 - **Comparison** (`#/comparisons/N`, the link can be shared): refs A and B, the status (`searching` when everything is
   measured and bisections run; the API keeps `done`, so the notification of the end does not wait for the searches), how
-  many scenarios are measured, the verdict counters, what runs now and when everything ends, bisections included (the
+  many scenarios are measured, the verdict counters, what runs now, a bar of the runs queued since it was last idle (the
+  first runs, or the ones queued again, the running one by its progress) and when everything ends, bisections included (the
   stand runs one job at a time, so the time of bisections adds to the jobs; on a pause there is no time), a row per
   scenario with the values of B and Δ, Run/Retry/Bisect buttons on a row, Cancel or Delete, Investigate all. The Result
   block: the found commits, each with the scenarios and metrics it moved and by how much, the biggest shift first, a Δ

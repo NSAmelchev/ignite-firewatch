@@ -74,6 +74,18 @@ public final class Comparison {
     /** */
     public int total;
 
+    /**
+     * Jobs queued since it was last idle: the first runs of its scenarios, or the ones queued again (one more run, a
+     * retry); 0 when none is active.
+     */
+    public int round;
+
+    /** Of {@code round}, the jobs that ended. */
+    public int roundDone;
+
+    /** Percent of {@code round} done, the running job by its progress; null when none is active. */
+    public Integer progress;
+
     /** */
     public int regressions;
 

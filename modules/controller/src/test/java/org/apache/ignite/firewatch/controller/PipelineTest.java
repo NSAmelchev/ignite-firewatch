@@ -631,16 +631,30 @@ class PipelineTest {
     @Test void repeatsOfAScenarioArePooledInTheComparison() throws Exception {
         Comparisons comparisons = comparisons();
         Comparison c = comparisons.create(origin.shas.get(0), origin.shas.get(1), List.of("smoke"), 2);
+        assertEquals(List.of(1, 0, 0), List.of(c.round, c.roundDone, c.progress), "the first run is the round");
         Job first = db.jobsOfComparison(c.id).get(0);
         runner.runJob(db.job(first.id));
         assertEquals(1, comparisons.get(c.id).rows.get(0).runs);
         assertEquals(Job.DONE, comparisons.get(c.id).status);
         assertEquals(1, comparisons.get(c.id).measured);
+        assertEquals(0, comparisons.get(c.id).round, "nothing is active");
+        assertNull(comparisons.get(c.id).progress);
 
         Job second = jobs.retry(first.id);
         Comparison waiting = comparisons.get(c.id);
         assertEquals(Job.RUNNING, waiting.status);
         assertEquals(1, waiting.rows.get(0).runs, "the result stays on the row while one more run waits");
+        assertEquals(1, waiting.measured);
+        assertEquals(List.of(1, 0, 0), List.of(waiting.round, waiting.roundDone, waiting.progress),
+            "one more run is a round of its own: the earlier one does not count as done");
+        Job running = db.job(second.id);
+        running.status = Job.RUNNING;
+        running.progress = 40;
+        db.updateJob(running);
+        assertEquals(40, comparisons.get(c.id).progress, "the running job counts by its progress");
+        running.status = Job.QUEUED;
+        running.progress = 0;
+        db.updateJob(running);
         runner.runJob(db.job(second.id));
         Comparison.Row row = comparisons.get(c.id).rows.get(0);
         assertEquals(2, row.runs);

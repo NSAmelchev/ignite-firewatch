@@ -211,6 +211,12 @@ final class ApiDocs {
         Map.entry("Run.extSha", "the commit of the extension of the phase (a job of a plugin)"),
         Map.entry("Run.throughput", "ops/s over the measure window"),
         Map.entry("Run.noise", "what else ran on the hosts while it measured: its numbers may be off"),
+        Map.entry("Comparison.measured", "scenarios with a result, of total"),
+        Map.entry("Comparison.round", "jobs queued since it was last idle: the first runs of its scenarios or the ones "
+            + "queued again; 0 when none is active"),
+        Map.entry("Comparison.roundDone", "of round, the jobs that ended"),
+        Map.entry("Comparison.progress", "percent of round done, the running job by its progress; null when none is "
+            + "active"),
         Map.entry("Bisect.status", "running, stopped, found, spread, inconclusive, lost or cancelled"),
         Map.entry("Build.sha", "the build key: <sha>[+modules][@plugin-<sha of the extension>]"));
 

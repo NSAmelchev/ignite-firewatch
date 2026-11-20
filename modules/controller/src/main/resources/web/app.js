@@ -2024,7 +2024,7 @@ function comparisonRow(c) {
   const failed = jobs.filter((j) => j.status === 'failed').length, quiet = c.rows.filter((r) => r.job.status === 'done' && r.verdict === 'no-change').length;
   const hit = ({ r, ms }) => `<div class="cx-hit"><span class="cx-mark ${r.verdict}">${r.verdict === 'regression' ? '▼' : '▲'}</span><span class="cx-sc">${esc(scName(r.scenario))}</span>
     ${ms.map(([k, x]) => `<span class="dlt ${deltaClass(k, x.deltaPct, x.thresholdPct, x.verdict, false)}">${esc(shortMetric(k))} ${fmt.pct(x.deltaPct)}</span>`).join(' ')}</div>`;
-  const state = going ? `${badge(c.status)} ${c.measured} of ${c.total}${c.doneAt ? ` · ends ${etaStart(c.doneAt)}` : ''}`
+  const state = going ? `${badge(c.status)} ${c.roundDone} of ${plural(c.round, 'run')}${c.doneAt ? ` · ends ${etaStart(c.doneAt)}` : ''}`
     : c.searching ? `${comparisonBadge(c)}${c.doneAt ? ` ends ${etaStart(c.doneAt)}` : ''}` : c.status === 'cancelled' ? badge('cancelled') : '';
   const bad = failed ? `<span class="badge failed">${failed} failed</span>` : '';
   const rest = !moved.length && !going && quiet ? [state, `nothing moved in ${plural(quiet, 'scenario')}`, bad]
@@ -2319,7 +2319,7 @@ views.comparison = {
           ${running ? `<dt>Now</dt><dd>${jobLink(running)} ${esc(scName(running.scenario))} <span class="muted">${esc(running.stage || '')} · ${running.progress || 0}%</span></dd>` : ''}
           ${c.doneAt ? `<dt title="its jobs and bisects, one after another">Ends</dt><dd>${etaStart(c.doneAt)}</dd>` : ''}
         </dl>
-        ${going ? `<div class="progress"><div style="width:${c.total ? Math.round(100 * c.measured / c.total) : 0}%"></div></div>` : ''}
+        ${going ? `<div class="progress" title="the runs queued now: ${c.roundDone} of ${c.round} done · ${c.progress || 0}%"><div style="width:${c.progress || 0}%"></div></div>` : ''}
         <div class="actions-inline" style="margin-top:10px">${going || activeBisects
           ? `<button class="small" data-comparison-cancel="${c.id}" data-running="${running ? 1 : 0}" data-queued="${queued}" data-bisects="${activeBisects}">Cancel</button>`
           : `<button class="small" data-comparison-delete="${c.id}">Delete</button>`}${canInvestigate(c)

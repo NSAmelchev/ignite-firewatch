@@ -370,6 +370,7 @@ public final class Comparisons {
         }
 
         c.total = c.rows.size();
+        round(c, byScenario.values());
         c.doneAt = end == null ? null : end.toString();
         c.status = running || (queued && c.measured > 0) ? Job.RUNNING : queued ? Job.QUEUED
             : failed ? Job.FAILED : cancelled ? Job.CANCELLED : Job.DONE;
@@ -378,6 +379,44 @@ public final class Comparisons {
             c.finishedAt = null;
 
         return c;
+    }
+
+    /**
+     * How far the jobs queued since the comparison was last idle got: the active ones and those that ended after the
+     * earliest active one was queued. Counting scenarios with a result would show a run queued again as done already.
+     */
+    private static void round(Comparison c, Iterable<List<Job>> byScenario) {
+        Instant since = null;
+
+        for (List<Job> list : byScenario) {
+            for (Job j : list) {
+                if (j.active() && j.createdAt != null) {
+                    Instant t = Instant.parse(j.createdAt);
+                    since = since == null || t.isBefore(since) ? t : since;
+                }
+            }
+        }
+
+        if (since == null)
+            return;
+
+        double done = 0;
+
+        for (List<Job> list : byScenario) {
+            for (Job j : list) {
+                if (j.active()) {
+                    c.round++;
+                    done += Job.RUNNING.equals(j.status) ? j.progress / 100.0 : 0;
+                }
+                else if (j.finishedAt != null && !Instant.parse(j.finishedAt).isBefore(since)) {
+                    c.round++;
+                    c.roundDone++;
+                    done++;
+                }
+            }
+        }
+
+        c.progress = (int)Math.round(100 * done / c.round);
     }
 
     /** {@code list}: every job of one scenario, oldest first. */
