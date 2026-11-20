@@ -18,7 +18,7 @@ const realFetch = globalThis.fetch;
 globalThis.fetch = (path, opts) => realFetch(new URL(path, base), opts);
 const get = async (p) => (await realFetch(new URL(p, base))).json();
 
-const { views } = await import(appUrl);
+const { views, calmLine } = await import(appUrl);
 await import(new URL('plugins.js', appUrl).href); // the section of the plugins registers its pages
 const done = (await get('/api/jobs?filter=history&limit=1'))[0], active = (await get('/api/jobs?filter=active&limit=1'))[0];
 const bisect = (await get('/api/bisects?limit=1'))[0];
@@ -44,7 +44,7 @@ for (const [name, params = {}] of pages) {
   }
 }
 // the headline as View ▾ leaves it: values with the worst throughput first, then none of the scenarios picked
-for (const [look, expect] of [[{ values: true, sort: 'throughput', set: null }, 'show-values'], [{ values: false, sort: 'name', set: [] }, 'scenario shown']]) {
+for (const [look, expect] of [[{ values: true, sort: 'throughput', set: null }, 'show-values'], [{ values: false, sort: 'name', set: [] }, 'data-show-all']]) {
   try {
     views.dashboard.look = look;
     const html = await views.dashboard.render({});
@@ -55,5 +55,15 @@ for (const [look, expect] of [[{ values: true, sort: 'throughput', set: null }, 
     console.log(`FAIL dashboard ${JSON.stringify(look)}: ${e && e.stack || e}`);
     failed++;
   }
+}
+// the line under a table, in both states of its fold: rows without a change alone, with a filter, a filter alone, nothing left out
+const text = (html) => html.replace(/<[^>]+>/g, '');
+for (const [names, out, expect] of [
+  [['a', 'b', 'c'], 0, ['All 16 scenarios shown · hide 3 without a change', '13 of 16 scenarios shown · show 3 without a change']],
+  [['a', 'b'], 8, ['8 of 16 scenarios shown · hide 2 without a change · show all', '6 of 16 scenarios shown · 8 left out by View, 2 without a change · show all']],
+  [[], 8, ['8 of 16 scenarios shown · show all']], [[], 0, []]]) {
+  const html = calmLine('data-rel-calm', 8, false, names, 16, out), got = text(html);
+  if (expect.every((x) => got.includes(x)) && (expect.length || !html)) console.log(`ok   calm line ${names.length} folded, ${out} out`);
+  else { console.log(`FAIL calm line ${names.length} folded, ${out} out: ${got}`); failed++; }
 }
 process.exit(failed ? 1 : 0);

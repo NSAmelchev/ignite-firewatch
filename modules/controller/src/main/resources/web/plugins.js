@@ -2,7 +2,7 @@
 // their last release. app.js loads this module only on a stand whose configuration names plugins.
 import {
   api, esc, fmt, badge, jobLink, toast, guarded, views, refresh, confirmLaunch, deltaClass, modal, plural, unfoldRow,
-  METRIC_COLS, metricHead, calmLine, priorityField, priorityOf, frontPriority, scenarioPicker, bindScenarioPicker,
+  METRIC_COLS, metricHead, calmLine, unfoldCalm, priorityField, priorityOf, frontPriority, scenarioPicker, bindScenarioPicker,
   familiesByWord, estimateRows, planShort,
 } from './app.js';
 
@@ -78,8 +78,8 @@ function releaseCard(p, showCalm, next) {
         <div class="muted small-text">${how}${next ? `<br>${planShort(next)}` : ''}<br>${fetched}${p.mirror.lastFetchError ? `<br><span class="error">${esc(p.mirror.lastFetchError)}</span>` : ''}</div></div>
     </div>
     <table class="release-table"><thead><tr><th>Scenario</th>${cols().map(metricHead).join('')}<th>Verdict</th><th></th><th></th></tr></thead>
-      <tbody>${p.rows.map((r) => releaseRow(p, r, usual, showCalm, width)).join('')}${quiet.length ? calmLine(`data-rel-calm="${esc(p.name)}"`, width, showCalm,
-    quiet.map((r) => r.scenario)) : ''}</tbody></table>
+      <tbody>${p.rows.map((r) => releaseRow(p, r, usual, showCalm, width)).join('')}${calmLine(`data-rel-calm="${esc(p.name)}"`, width, showCalm,
+    quiet.map((r) => r.scenario), p.rows.length)}</tbody></table>
   </div>`;
 }
 // when the schedule of a plugin runs it next (/api/schedule)
@@ -109,8 +109,7 @@ const bindCards = (root, list, open) => root.addEventListener('click', (e) => {
   if (e.target.closest('[data-rel-calm]')) {
     const show = !open.has(p.name);
     if (show) open.add(p.name); else open.delete(p.name);
-    card.querySelectorAll('tr.rel-calm').forEach((t) => { t.hidden = !show; });
-    card.querySelector('[data-rel-calm] .chev').textContent = show ? '▾' : '▸';
+    unfoldCalm(card, show);
   }
 });
 

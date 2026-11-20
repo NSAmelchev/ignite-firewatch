@@ -385,8 +385,9 @@ while the page loads, a bar runs on top and the old page is dimmed.
 
 A Δ is filled only where the metric decides the verdict of the job (ops/s, p99, CPU/op) or is the metric a bisection
 follows; other shifts get a soft background. The metric columns are the same everywhere: ops/s, p99 µs, CPU µs/op,
-alloc KB/op. Ticket and PR numbers in commit subjects lead to the tracker and to GitHub. What a table folds as calm stays
-visible as a green line with the names. Dialogs are built the same way: a title, a body with one column of labels, the
+alloc KB/op. Ticket and PR numbers in commit subjects lead to the tracker and to GitHub. A table that folds its rows
+without a change says so in a line under it, the same as a filtered one: `13 of 16 scenarios shown · show 3 without a
+change` (the names on hover), `All 16 scenarios shown · hide 3 without a change` once unfolded. Dialogs are built the same way: a title, a body with one column of labels, the
 summary and the buttons at the bottom; an irreversible action is red. Picking bisections is a table: scenario, metric, Δ,
 strength of the signal, commits.
 
@@ -404,14 +405,16 @@ strength of the signal, commits.
   strip under the row, its edge in the colour of what is left: the status and a phrase on where its search is (when a
   running one ends), the action (Bisect, Deep search, Resume) and Timeline on the right, the commits found below, one row
   each; the metric and its Δ are the cell itself. A Δ without a mark opens Timeline at once. Only scenarios without a
-  change fold, into one light line with their number and the names in its tooltip; an explained one stays in sight with
+  change fold, under the line that says how many of all are shown; an explained one stays in sight with
   its ✓, and a scenario with a verdict never folds. The heading has, in a lighter grey, the number of commits since
   the release (the cherry-picks and the coverage breakdown in its tooltip), the dates and when it runs next; the runs
   of the rows go one by one through the day, so a row says how old its run is only once it is a day old. View ▾ next
   to Run all changes the table while the page is open, nothing is stored: the values of master before each Δ (the
   release value on hover, and every row unfolds), the order (what needs a look first, by name, the worst Δ of a metric
   first) and the scenarios (presets from the names, such as `sql-*` for both engines or `sql-h2-*`, or one by one).
-  The button names what differs from usual, and a filtered table says how many scenarios it shows. Below are the
+  The button names what differs from usual. With a filter the same line under the table says what each leaves out,
+  `6 of 16 scenarios shown · 8 left out by View, 2 without a change · show all`, and show all brings back every
+  scenario. Below are the
   failed jobs not followed by a success (a line links its job and its bisect, the error is cut short and whole on
   hover) and Result on master: the found commits with their effect by scenario, and Still open, what is still worth a
   look, cheap searches first, buttons on hover.
@@ -545,7 +548,7 @@ strength of the signal, commits.
   section is its page, with several the card of each). The page of a plugin (`#/plugin?name=…`), top to bottom:
   - the card of master against the release, as the one of the dashboard: the two pairs (or why there are none), on the
     right Settings and Run all with how the plugin runs and when the extension was fetched; a row per scenario with the
-    Δ of the same four metrics and the verdict, Compare and Run on the hovered row, the rows without a change folded. A
+    Δ of the same four metrics and the verdict, Compare and Run on the hovered row, the rows without a change folded under the same line as on the dashboard. A
     pair that does not build is incompatible, the error under its row. The name of a scenario leads to it on Scenarios;
   - Comparisons: a row per request (its ends, scenarios, result, who), newest first; a click unfolds the step of each
     side per scenario, so the side that moved stands out. New comparison opens a dialog: the two pairs, the steps they

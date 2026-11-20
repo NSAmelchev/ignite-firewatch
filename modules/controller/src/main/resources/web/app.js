@@ -1321,10 +1321,26 @@ function workerTile(j) {
       <div class="progress" title="${j.progress || 0}%"><div style="width:${j.progress || 0}%"></div></div>` };
 }
 
-// A table folds what needs no eyes, and says so: a green row that names what is inside and unfolds it
-// The rows without a change, folded into one light line: how many, their names in its tooltip (they are the rows it unfolds)
-export const calmLine = (attr, cols, open, names) => `<tr class="calm-row" ${attr}><td colspan="${cols}" title="${esc(names.join(' · '))}"><span class="chev">${open ? '▾' : '▸'}</span>
-  ${names.length} without a change</td></tr>`;
+// A table folds the rows without a change and says so in one line under it, the way a filter does: how many of all
+// are in sight and the way to the rest. names: the folded rows (in the tooltip), attr: what marks the fold button,
+// out: the rows a filter leaves out, brought back together with the folded ones by "show all". The line holds both
+// states of the fold, so a click unfolds in place: [data-calm-state] tells which one is shown.
+export function calmLine(attr, cols, open, names, total, out = 0) {
+  const n = names.length, tip = esc(names.join(' · '));
+  if (!n && !out) return '';
+  const count = (shown) => (shown === total ? `All ${plural(total, 'scenario')} shown` : `${shown} of ${plural(total, 'scenario')} shown`);
+  const fold = (on) => `<button type="button" class="link-btn" ${attr} title="${tip}">${on ? 'hide' : 'show'} ${n} without a change</button>`;
+  const state = (on) => (out
+    ? [count(total - out - (on ? 0 : n)), n && !on ? `${out} left out by View, <span title="${tip}">${n} without a change</span>` : '',
+      n && on ? fold(true) : '', '<button type="button" class="link-btn" data-show-all>show all</button>']
+    : [count(total - (on ? 0 : n)), fold(on)]).filter(Boolean).join(' · ');
+  return `<tr class="calm-row"><td colspan="${cols}"><span data-calm-state="open" ${open ? '' : 'hidden'}>${state(true)}</span><span data-calm-state="folded" ${open ? 'hidden' : ''}>${state(false)}</span></td></tr>`;
+}
+// the fold of a table: its rows and which state of its line is shown
+export function unfoldCalm(root, open) {
+  root.querySelectorAll('tr.rel-calm').forEach((t) => { t.hidden = !open; });
+  root.querySelectorAll('[data-calm-state]').forEach((s) => { s.hidden = s.dataset.calmState !== (open ? 'open' : 'folded'); });
+}
 // Timeline: card of the clicked block — what it measured, the 4 metrics with phase values, and its commits
 function blockCard(j, queue) {
   const m = (j.comparison && j.comparison.metrics) || {};
@@ -3341,7 +3357,6 @@ function masterCard(rels, a, branch, autorun, open, showCalm, next, paused, look
         ${sets.map(([p, n]) => `<button type="button" class="chip ${sameSet(p) ? 'on' : ''}" data-look-set="${esc(p)}">${esc(p)}-* <span class="muted">${n}</span></button>`).join('')}</div>
       <div class="look-list">${ids.map((id) => item(`<input type="checkbox" data-look="scenario" value="${esc(id)}" ${!picked || picked.has(id) ? 'checked' : ''}>`, esc(scName(id)))).join('')}</div>
     </div></span>`;
-  const partial = picked ? `<tr class="calm-row"><td colspan="${width}" class="muted">${visible.length} of ${plural(ids.length, 'scenario')} shown · <button type="button" class="link-btn" data-look-set="">show all</button></td></tr>` : '';
   return `
     <div class="card release${look.values ? ' show-values' : ''}">
       <div class="release-head">
@@ -3351,7 +3366,7 @@ function masterCard(rels, a, branch, autorun, open, showCalm, next, paused, look
       </div>
       ${legend ? `<div class="att-legend">${legend}</div>` : ''}
       <table class="release-table"><thead><tr><th>Scenario</th>${cols.map(metricHead).join('')}<th>Verdict</th><th></th><th></th></tr></thead>
-        <tbody>${rows}${calm.length ? calmLine('data-rel-calm', width, showCalm, calm.map((x) => scName(x.scenario))) : ''}${partial}</tbody></table>
+        <tbody>${rows}${calmLine('data-rel-calm', width, showCalm, calm.map((x) => scName(x.scenario)), ids.length, ids.length - visible.length)}</tbody></table>
     </div>`;
 }
 views.dashboard = {
@@ -3458,6 +3473,8 @@ views.dashboard = {
       refresh();
     });
     root.addEventListener('click', (e) => {
+      // show all under the table: every scenario, the folded ones too
+      if (e.target.closest('[data-show-all]')) { this.look.set = null; this.calmOpen = true; refresh(); return; }
       const b = e.target.closest('[data-look-set]');
       if (!b) return;
       const ids = [...root.querySelectorAll('input[data-look=scenario]')].map((x) => x.value), p = b.dataset.lookSet;
@@ -3476,9 +3493,7 @@ views.dashboard = {
     const unfold = () => {
       root.querySelectorAll('tr.att-detail').forEach((t) => { t.hidden = t.dataset.attFor !== this.attOpen; });
       root.querySelectorAll('button[data-att]').forEach((x) => x.classList.toggle('on', x.dataset.att === this.attOpen));
-      root.querySelectorAll('tr.rel-calm').forEach((t) => { t.hidden = !this.calmOpen; });
-      const chev = $('[data-rel-calm] .chev', root);
-      if (chev) chev.textContent = this.calmOpen ? '▾' : '▸';
+      unfoldCalm(root, this.calmOpen);
     };
     root.addEventListener('click', (e) => {
       const b = e.target.closest('button[data-more]');
