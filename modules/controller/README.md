@@ -174,7 +174,16 @@ found commits the status comes from the last bisection of the metric (`running`,
 there was none, the metric is `unexplored`. A bisection follows one metric, but every step measures all of them: when a run
 of a segment moved the metric the same way as master, it is `narrowed`, the shortest such segment is shown, and the
 bisection starts from it rather than from the whole range. Bisections of comparisons cover another range and do not count
-here. A run of the branch newer than master vs release is a separate `new` line. Every metric is searched on its own: a
+here. A run of the branch newer than the master vs release run before the latest one is a separate `new` line: what came
+in since then, unless the master line of the metric already starts from that very run (a step of a search of master does
+not count). Such a run is often the check of a jump (`JumpCheck`): when a master vs release run ends, it is set against
+the previous run of its scenario against the same release on an earlier head, and a metric that moved between them beyond
+its threshold (the later level over the earlier one) queues one ABBA of the two heads, source `auto`, at the priority of
+the run, unless the pair is measured or queued already. The difference of two runs is noisier than a run of its own (on
+a real stand about 10 % of quiet pairs jump in throughput, against 3 % of direct runs), so the check decides: noise stays
+a run without a verdict, a real change becomes the `new` line, a search starts from it and a regression is notified as
+any other. With master vs release kept fresh every day, this catches what daily segments do at a fraction of the
+stand time. Every metric is searched on its own: a
 metric of a scenario may have one active bisection (of the branch or of a comparison), searches of its other metrics go on
 at once and share the steps their paths have in common, and a metric that waits for another search of it shows `after #N`
 instead of a button in the details of a cell and in Still open. Still open is a row per metric; only a running search
@@ -484,7 +493,9 @@ strength of the signal, commits.
   it runs when the stand has been idle for 2 hours, at a low priority. Twice the period old, it runs despite the queue,
   ahead of the next steps of bisections. A segment counts its age from its oldest unmeasured commit, A/A and master vs
   release per scenario. A/A short of the 3 its threshold needs are made up at once, and master vs release is skipped when
-  there are no new commits. Each has its own set of scenarios, and a new scenario joins "all" by itself. While the stand is
+  there are no new commits; a jump since its run before is checked by a run of the two heads (see What needs attention),
+  so with master vs release kept fresh every day On new commits can stay off and is for a stand that measures every
+  commit. Each has its own set of scenarios, and a new scenario joins "all" by itself. While the stand is
   closed for maintenance nothing starts; a missed start goes after it reopens.
   Application: the configuration of the application, read-only (`GET /api/config`): every key with its value and where
   it comes from (the file, the environment, a system property, the default), the repository and its branch among them,

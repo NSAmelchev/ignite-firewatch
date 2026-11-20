@@ -1830,6 +1830,92 @@ class PipelineTest {
     }
 
     /** */
+    @Test void aJumpBetweenTwoMasterRunsIsCheckedByARunOfItsOwn() throws Exception {
+        origin.tag("1.0.0");
+        List<String> c = eightCommits();
+        throughput(c, 4, 9000);
+        new JumpCheck(db, mirror, jobs);
+        Bisector bisector = new Bisector(db, mirror, jobs);
+        Attention attention = new Attention(db, mirror, jobs, scenarios, bisector);
+        release();
+        assertNull(db.nextQueued(), "the first run has nothing to compare with");
+        release();
+        assertNull(db.nextQueued(), "again on the same head: nothing came in between");
+
+        String nine = moreCommits(9, 9000).get(0);
+        Job steady = release();
+        assertNull(db.nextQueued(), "nothing moved since the run before: nothing to check");
+
+        String eleven = moreCommits(10, 10000, 11, 10000).get(1);
+        Job moved = release();
+        Job check = db.nextQueued();
+        assertNotNull(check, "+11 % since the run before");
+        assertEquals(JobService.SRC_AUTO, check.source);
+        assertEquals(nine, check.shaA, "from the head of the run before");
+        assertEquals(eleven, check.shaB);
+        assertTrue(check.label.endsWith("(2 commits)"), check.label);
+        assertEquals(moved.priority, check.priority);
+        runner.runJob(check);
+        assertEquals(Stats.IMPROVEMENT, db.job(check.id).verdict);
+
+        release();
+        assertNull(db.nextQueued(), "the pair is measured already");
+        assertEquals(steady.id, jobs.previousRelease(moved).id);
+
+        // master is where the release was, so nothing but the check says what the last two commits did
+        Attention.Line fresh = line(attention, "throughput");
+        assertEquals(Attention.NEW, fresh.status, "since the master run before the latest one");
+        assertEquals(check.id, fresh.jobId);
+        assertEquals(eleven, fresh.sha);
+        assertEquals(2, fresh.span);
+        assertEquals(Attention.NEXT_BISECT, fresh.next, "a search starts from the check");
+    }
+
+    /** */
+    @Test void aCheckTheMasterLineStartsFromIsNotListedTwice() throws Exception {
+        origin.tag("1.0.0");
+        eightCommits();
+        new JumpCheck(db, mirror, jobs);
+        Attention attention = new Attention(db, mirror, jobs, scenarios, new Bisector(db, mirror, jobs));
+        release();
+        String ten = moreCommits(9, 9000, 10, 9000).get(1);
+        release();
+        Job check = db.nextQueued();
+        assertEquals(ten, check.shaB, "-10 % since the run before");
+        runner.runJob(check);
+
+        List<Attention.Line> lines = attention.view().rows.get(0).lines.stream().filter(l -> "throughput".equals(l.metric))
+            .toList();
+        assertEquals(1, lines.size(), "the master line and the check say the same");
+        assertEquals(Attention.NARROWED, lines.get(0).status);
+        assertEquals(check.id, lines.get(0).jobId, "a search of master starts from the check");
+    }
+
+    /** A master vs release run of the head, run to its end. */
+    private Job release() throws Exception {
+        Job j = jobs.queueRelease("smoke", 1);
+        runner.runJob(db.nextQueued());
+
+        return db.job(j.id);
+    }
+
+    /** Commits on top, each with its throughput ({@code n, ops, ...}), known to the mirror and the database. */
+    private List<String> moreCommits(Object... nAndOps) throws Exception {
+        List<String> out = new ArrayList<>();
+
+        for (int k = 0; k < nAndOps.length; k += 2) {
+            String sha = origin.commit("core " + nAndOps[k], Map.of("modules/core/src/main/B" + nAndOps[k] + ".java",
+                "class B" + nAndOps[k] + " {}"));
+            env.put("FAKE_THR_OF", (env.getOrDefault("FAKE_THR_OF", "") + " " + sha + "=" + nAndOps[k + 1]).trim());
+            out.add(sha);
+        }
+
+        new Watcher(cfg, db, mirror, jobs).poll();
+
+        return out;
+    }
+
+    /** */
     @Test void aLineSaysThatItsSearchWasDeepAlready() throws Exception {
         origin.tag("1.0.0");
         List<String> c = eightCommits();

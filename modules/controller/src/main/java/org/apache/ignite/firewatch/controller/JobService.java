@@ -730,6 +730,35 @@ public final class JobService {
     }
 
     /**
+     * The run of master vs release before {@code run}: the latest finished one of its scenario against the same release
+     * on an earlier commit of the branch. A run again on the same head is not one: nothing came in between.
+     *
+     * @param run A run of master vs release.
+     * @return Job, or {@code null} if there is none.
+     */
+    public Job previousRelease(Job run) {
+        CommitInfo at = db.commit(run.shaB);
+
+        if (at == null || at.seq == null)
+            return null;
+
+        Job best = null;
+        int bestSeq = -1;
+
+        for (Job j : db.doneJobs(run.scenario, Job.ABBA, SRC_RELEASE, 200)) {
+            CommitInfo c = j.id == run.id || !run.shaA.equals(j.shaA) ? null : db.commit(j.shaB);
+
+            // newest first: the first run of a head is its latest
+            if (c != null && c.seq != null && c.seq < at.seq && c.seq > bestSeq) {
+                best = j;
+                bestSeq = c.seq;
+            }
+        }
+
+        return best;
+    }
+
+    /**
      * The last finished master vs release run of the scenario; null without one or without a release to compare with.
      *
      * @param scenario Scenario name.

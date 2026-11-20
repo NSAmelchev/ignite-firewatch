@@ -14,8 +14,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 /**
  * Needs attention on the dashboard: what the latest "master vs release" run of every scenario shows against what was
  * found on the branch. A metric is explained when the commits measured against their parents add up to its Δ, so
- * nothing else moved; otherwise it is being searched or waits for a search. A run newer than that master run is listed
- * as new.
+ * nothing else moved; otherwise it is being searched or waits for a search. A run of the branch newer than the master
+ * run before the latest one is listed as new: what came in since then ({@link JumpCheck} queues such a run).
  */
 public final class Attention {
     /** */
@@ -276,23 +276,38 @@ public final class Attention {
             }
         }
 
+        // New: the runs of the branch after the master run, and those of the commits since the master run before it (the
+        // check of a jump between the two, say). A step of a search from master is the business of that search, and a run
+        // the master line already starts from is that line.
+        Job prev = master == null ? null : jobs.previousRelease(master);
+        int since = prev == null ? upTo : seq(prev.shaB, upTo);
+
         for (JobService.TrendPoint p : points) {
-            if (p.seq != null && p.seq > upTo && p.refinedBy == null) {
-                Job run = db.job(p.jobId);
-                Long stepOf = run == null ? null : run.bisectId;
+            if (p.seq == null || p.seq <= since)
+                continue;
 
-                for (Line l : fresh(p)) {
-                    // newest first: the search started from this run or measuring it as a step, if any
-                    Bisect search = own.stream().filter(b -> l.metric.equals(b.metric)
-                        && (b.rootJob == l.jobId || Long.valueOf(b.id).equals(stepOf))
-                        && !Bisect.CANCELLED.equals(b.status)).findFirst().orElse(null);
+            Job run = db.job(p.jobId);
+            Long stepOf = run == null ? null : run.bisectId;
+            boolean after = p.seq > upTo;
 
-                    if (search != null)
-                        searched(l, search);
+            if (after ? p.refinedBy != null : stepOf != null || p.baseSeq == null || p.baseSeq < since)
+                continue;
 
-                    plan(l, search);
-                    r.lines.add(l);
-                }
+            for (Line l : fresh(p)) {
+                if (!after && r.lines.stream().anyMatch(o -> o.metric.equals(l.metric) && p.sha.equals(o.narrowSha)
+                    && p.baseSha != null && p.baseSha.equals(o.narrowBase)))
+                    continue;
+
+                // newest first: the search started from this run or measuring it as a step, if any
+                Bisect search = own.stream().filter(b -> l.metric.equals(b.metric)
+                    && (b.rootJob == l.jobId || Long.valueOf(b.id).equals(stepOf))
+                    && !Bisect.CANCELLED.equals(b.status)).findFirst().orElse(null);
+
+                if (search != null)
+                    searched(l, search);
+
+                plan(l, search);
+                r.lines.add(l);
             }
         }
 

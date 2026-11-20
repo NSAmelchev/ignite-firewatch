@@ -2487,7 +2487,7 @@ function automationTable(settings, scenarios, plan, autoMode) {
         `polls every ${poll % 3600 ? mins(poll) : `${poll / 3600} h`}`, `skips new commits while ${esc(settings['autorun.maxBacklog'] || '5')} wait`].join(' · ') },
     ...[['calibration', 'A/A', 'the noise of the stand, for the thresholds', 'aa'], ['master', 'master vs release', 'the dashboard headline', 'master']]
       .map(([p, title, what, kind]) => ({ key: p, title, what, on: keep(p), next: of(kind), names: listOf(settings[`${p}.scenarios`]).length ? listOf(settings[`${p}.scenarios`]) : all,
-        runs: keep(p) ? every(settings[`${p}.keepDays`] || '7') : '', rules: '' })),
+        runs: keep(p) ? every(settings[`${p}.keepDays`] || '7') : '', rules: p === 'master' ? JUMP_RULE : '' })),
   ];
   const name = (r) => (r.key === 'autorun' ? (r.on ? AUTORUN_MODES.find(([k]) => k === autoMode)[1] : 'Off') : r.on ? 'Keep fresh' : 'Off');
   return `<table class="commits runs-table plan-table auto-table"><thead><tr><th>Schedule</th><th>Runs</th><th>Scenarios</th><th>Next</th><th class="num">Takes</th><th></th></tr></thead>
@@ -2516,10 +2516,12 @@ function autorunFields(settings, scenarios, picked, perCommit, autoMode) {
         <span class="muted small-text">· a busy stand does not pile up a backlog; a skipped commit can be run from Commits</span></div>
     </div></form>`;
 }
+// what follows every run of master vs release, scheduled or not (JumpCheck on the server)
+const JUMP_RULE = 'a jump since the run before is checked by a run of the two heads';
 // The dialog of a recurring run, the A/A or master vs release: off, or how fresh it is kept (Freshness on the server), the scenarios
 function scheduleFields(p, settings, scenarios, picked) {
   const on = settings[`${p}.mode`] === 'keep';
-  return `<form data-auto-form>
+  return `<form data-auto-form>${p === 'master' ? `<div class="muted small-text">After every run, scheduled or not, ${JUMP_RULE}: Still open lists what it shows as new, a search starts from it.</div>` : ''}
     <div class="mode-row"><label class="mode-opt"><input type="radio" name="${p}.mode" value="off" ${on ? '' : 'checked'}><span>Off</span></label>
       <label class="mode-opt"><input type="radio" name="${p}.mode" value="keep" ${on ? 'checked' : ''}><span>Keep fresh</span></label>
       <span data-if-on>${keepField(`${p}.keepDays`, settings[`${p}.keepDays`] || '7')}</span></div>

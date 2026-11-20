@@ -34,6 +34,7 @@ public final class Main {
         JobRunner runner = new JobRunner(cfg, db, builder, scenarios, jobs, mirror);
         Watcher watcher = new Watcher(cfg, db, mirror, jobs);
         Bisector bisector = new Bisector(db, mirror, jobs);
+        new JumpCheck(db, mirror, jobs); // follows the jobs that end
         Comparisons comparisons = new Comparisons(db, mirror, jobs, scenarios, bisector);
         Notifier notifier = new Notifier(db);
         runner.notifier(notifier);
