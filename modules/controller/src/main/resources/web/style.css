@@ -235,6 +235,10 @@ a.job-title:hover { text-decoration: underline; }
 .plan-next { margin: 8px 0 4px; padding: 7px 10px; border-left: 3px solid var(--accent); border-radius: 4px; background: color-mix(in srgb, var(--accent) 6%, transparent); }
 table.plan-table td { vertical-align: top; }
 table.plan-table td:first-child, table.plan-table td:nth-child(3), table.plan-table td:last-child { white-space: nowrap; }
+/* Automation in Settings: a row per schedule; its rules wrap, a row that is off keeps only its name and Edit */
+table.auto-table td.subject { white-space: normal; }
+table.auto-table tr.auto-off td:not(:first-child):not(:last-child) { color: var(--muted); }
+table.auto-table td:last-child { width: 1%; text-align: right; }
 /* Settings: something on the stand needs a hand */
 .nav-count.bad { background: var(--bad); color: var(--bg); font-weight: 600; }
 .tile button.small { margin-top: 6px; }

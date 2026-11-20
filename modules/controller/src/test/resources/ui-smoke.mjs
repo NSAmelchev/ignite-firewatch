@@ -36,6 +36,7 @@ for (const [name, params = {}] of pages) {
     const html = await views[name].render(params);
     if (typeof html !== 'string' || !html.length) throw new Error('rendered nothing');
     if (name === 'dashboard' && !html.includes('att-cell')) throw new Error('Needs attention shows no cell');
+    if (name === 'settings' && !['autorun', 'calibration', 'master'].every((k) => html.includes(`data-auto-edit="${k}"`))) throw new Error('Automation shows no row to edit');
     console.log(`ok   ${name} (${html.length} chars)`);
   }
   catch (e) {

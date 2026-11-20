@@ -636,7 +636,7 @@ export function modal(title, body, ok = 'OK', { open, value, submit, danger, req
     const key = (e) => {
       if (busy) { if (e.key === 'Escape' || e.key === 'Enter') e.preventDefault(); return; } // the answer is on its way
       if (e.key === 'Escape' && !required) { e.preventDefault(); done(false); }
-      if (e.key === 'Enter') { e.preventDefault(); if (!w.querySelector('[data-yes]').disabled) yes(); }
+      if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') { e.preventDefault(); if (!w.querySelector('[data-yes]').disabled) yes(); } // a text area takes its new line
     };
     w.addEventListener('click', (e) => {
       if (busy) return;
@@ -2468,20 +2468,107 @@ const AUTORUN_MODES = [
   ['abba-vs-parent', 'Every commit', 'An ABBA of each commit against its parent. Exact, but a build and about 9 minutes per commit and scenario.'],
   ['single', 'Single phase', 'One phase of each commit, no baseline. A quick level for the charts: no Δ and no verdict.'],
 ];
-// A recurring run, the A/A or master vs release: off, or how fresh it is kept (Freshness on the server), and when it goes
-// next (`next`, an item of /api/schedule)
 const keepField = (name, value) => `<label class="keep-days">every <input name="${name}" type="number" min="1" value="${esc(value)}"> days</label>`;
-function scheduleForm(p, title, text, settings, scenarios, picked, next) {
-  const on = settings[`${p}.mode`] === 'keep', last = settings[`${p}.lastDate`];
-  return `<form id="schedule-${p}" class="card">
-    <h2 style="margin-top:0">${title} <span class="muted">${text} Last run: ${last ? fmtDay(last) : 'never'}.</span></h2>
+const listOf = (v) => (v || '').split(',').map((x) => x.trim()).filter(Boolean);
+// Automation: what the stand runs by itself, a row per schedule to read: how it runs, what, when next and for how long.
+// Edit opens the settings of a row in a dialog, so a poll of the page never meets a half-typed field
+function automationTable(settings, scenarios, plan, autoMode) {
+  const all = scenarios.map((x) => x.name), of = (kind) => plan.find((x) => x.kind === kind);
+  const scen = (names) => `<span title="${esc(names.map(scName).join(', '))}">${names.length === all.length ? `all ${all.length}`
+    : names.length > 2 ? `${names.length} of ${all.length}` : names.map((n) => esc(scName(n))).join(', ')}</span>`;
+  const globs = listOf((settings['autorun.pathFilter'] || '').replace(/\n/g, ','));
+  const keep = (p) => settings[`${p}.mode`] === 'keep';
+  const every = (n) => (Number(n) === 1 ? 'every day' : `every ${esc(n)} days`), poll = Number(settings['watch.pollSec']) || 3600;
+  const rows = [
+    { key: 'autorun', title: 'On new commits', what: 'the branch as it moves', on: autoMode !== 'off', next: of('autorun'), names: listOf(settings['autorun.scenario']),
+      runs: autoMode === 'off' ? 'new commits are only listed' : autoMode === 'segments' ? `kept fresh, ${every(settings['autorun.keepDays'] || '1')}`
+        : autoMode === 'single' ? 'one phase of each commit, no Δ' : 'each commit against its parent',
+      rules: autoMode === 'off' ? '' : [globs.length ? `only commits touching <span class="term" title="${esc(globs.join('\n'))}">${plural(globs.length, 'path glob')}</span>` : 'every commit',
+        `polls every ${poll % 3600 ? mins(poll) : `${poll / 3600} h`}`, `skips new commits while ${esc(settings['autorun.maxBacklog'] || '5')} wait`].join(' · ') },
+    ...[['calibration', 'A/A', 'the noise of the stand, for the thresholds', 'aa'], ['master', 'master vs release', 'the dashboard headline', 'master']]
+      .map(([p, title, what, kind]) => ({ key: p, title, what, on: keep(p), next: of(kind), names: listOf(settings[`${p}.scenarios`]).length ? listOf(settings[`${p}.scenarios`]) : all,
+        runs: keep(p) ? every(settings[`${p}.keepDays`] || '7') : '', rules: '' })),
+  ];
+  const name = (r) => (r.key === 'autorun' ? (r.on ? AUTORUN_MODES.find(([k]) => k === autoMode)[1] : 'Off') : r.on ? 'Keep fresh' : 'Off');
+  return `<table class="commits runs-table plan-table auto-table"><thead><tr><th>Schedule</th><th>Runs</th><th>Scenarios</th><th>Next</th><th class="num">Takes</th><th></th></tr></thead>
+    <tbody>${rows.map((r) => {
+      const w = r.on && r.next ? planWhen(r.next) : null;
+      return `<tr class="${r.on ? '' : 'auto-off'}"><td><b>${r.title}</b><div class="muted">${r.what}</div></td>
+        <td class="subject"><b>${name(r)}</b>${r.runs ? ` <span class="muted">· ${r.runs}</span>` : ''}${r.rules ? `<div class="muted">${r.rules}</div>` : ''}</td>
+        <td>${r.on ? scen(r.names) : '<span class="muted">–</span>'}</td>
+        <td>${w ? `${esc(w.when)}${w.why ? `<div class="muted">${planWhy(w)}</div>` : ''}` : '<span class="muted">–</span>'}</td>
+        <td class="num">${w && r.next.takesSec ? `${planTakes(r.next)}<div class="muted">${planSplit(r.next)}</div>` : ''}</td>
+        <td><button type="button" class="small" data-auto-edit="${r.key}">Edit</button></td></tr>`;
+    }).join('')}</tbody></table>`;
+}
+// The dialog of On new commits: the mode, its period for segments, the scenarios, the path filter, the poll, the backlog
+function autorunFields(settings, scenarios, picked, perCommit, autoMode) {
+  return `<form data-auto-form>
+    <div class="mode-list">${AUTORUN_MODES.map(([k, name, text]) => [k, name, k === 'abba-vs-parent' && perCommit ? `An ABBA of each commit against its parent. Exact, but a build and ~${mins(perCommit.runSec + perCommit.buildSec)} per commit and scenario on this stand.` : text])
+      .map(([k, name, text]) => `<label class="mode-opt"><input type="radio" name="autorun.mode" value="${k}" ${k === autoMode ? 'checked' : ''}><span><b>${name}</b><div class="muted">${text}</div></span></label>`).join('')}</div>
+    <div data-if-autorun ${autoMode === 'off' ? 'hidden' : ''}>
+      <div class="mode-row" data-segments ${autoMode === 'segments' ? '' : 'hidden'}><span class="mode-opt">Keep fresh</span>${keepField('autorun.keepDays', settings['autorun.keepDays'] || '1')}</div>
+      ${scenarioPicker(scenarios, picked)}
+      <label>Only commits touching (globs; empty = every commit)</label>
+      <textarea name="autorun.pathFilter" rows="3" style="width:100%">${esc(settings['autorun.pathFilter'])}</textarea>
+      <div class="form-grid"><label>Poll interval, s <input name="watch.pollSec" type="number" value="${esc(settings['watch.pollSec'])}"></label></div>
+      <div class="backlog-row">Skip new commits while <input name="autorun.maxBacklog" type="number" min="0" value="${esc(settings['autorun.maxBacklog'] ?? '')}"> auto-run jobs wait
+        <span class="muted small-text">· a busy stand does not pile up a backlog; a skipped commit can be run from Commits</span></div>
+    </div></form>`;
+}
+// The dialog of a recurring run, the A/A or master vs release: off, or how fresh it is kept (Freshness on the server), the scenarios
+function scheduleFields(p, settings, scenarios, picked) {
+  const on = settings[`${p}.mode`] === 'keep';
+  return `<form data-auto-form>
     <div class="mode-row"><label class="mode-opt"><input type="radio" name="${p}.mode" value="off" ${on ? '' : 'checked'}><span>Off</span></label>
       <label class="mode-opt"><input type="radio" name="${p}.mode" value="keep" ${on ? 'checked' : ''}><span>Keep fresh</span></label>
       <span data-if-on>${keepField(`${p}.keepDays`, settings[`${p}.keepDays`] || '7')}</span></div>
-    ${on && next ? `<div class="plan-next" data-if-on><b>Next:</b> ${planNext(next)}</div>` : ''}
-    <div data-if-on>${scenarioPicker(scenarios, picked)}</div>
-    <div class="actions"><button class="primary">Save</button></div>
-  </form>`;
+    <div data-if-on>${scenarioPicker(scenarios, picked)}</div></form>`;
+}
+// Edit of a row of Automation: its dialog, saved by Save; the scenarios start from what is saved, empty for A/A and master
+// vs release meaning all of them, so a new scenario joins by itself
+async function editAutomation(key, { settings, scenarios, perCommit, autoMode }) {
+  const all = scenarios.map((x) => x.name), auto = key === 'autorun';
+  const saved = listOf(settings[auto ? 'autorun.scenario' : `${key}.scenarios`]);
+  const picked = new Set(auto || saved.length ? saved : all);
+  const title = auto ? 'On new commits' : key === 'calibration' ? 'A/A' : 'master vs release';
+  const body = auto ? autorunFields(settings, scenarios, picked, perCommit, autoMode) : scheduleFields(key, settings, scenarios, picked);
+  const ok = await modal(title, body, 'Save', {
+    open: (w) => {
+      w.querySelector('.modal').classList.add('wide');
+      bindScenarioPicker(w, picked, { builds: 1, per: 'a run' });
+      const sync = () => {
+        if (auto) {
+          const m = $('[name="autorun.mode"]:checked', w).value;
+          $('[data-if-autorun]', w).hidden = m === 'off';
+          $('[data-segments]', w).hidden = m !== 'segments';
+        } else {
+          const off = $(`[name="${key}.mode"]:checked`, w).value === 'off';
+          w.querySelectorAll('[data-if-on]').forEach((x) => { x.hidden = off; });
+        }
+      };
+      w.addEventListener('change', sync);
+      sync();
+    },
+    value: (w) => Object.fromEntries(new FormData($('[data-auto-form]', w))),
+    submit: async (f) => {
+      let d;
+      if (auto) {
+        d = { ...f, 'autorun.scenario': all.filter((n) => picked.has(n)).join(','), 'autorun.enabled': String(f['autorun.mode'] !== 'off') };
+        if (d['autorun.mode'] === 'off') delete d['autorun.mode']; // the choice stays for the next time
+        else if (!picked.size) throw new Error('choose at least one scenario');
+      } else {
+        if (!picked.size) throw new Error('choose at least one scenario');
+        d = { [`${key}.mode`]: f[`${key}.mode`], [`${key}.keepDays`]: f[`${key}.keepDays`],
+          [`${key}.scenarios`]: picked.size === all.length ? '' : all.filter((n) => picked.has(n)).join(',') }; // all: a new scenario joins by itself
+      }
+      await api.put('/api/settings', d);
+    },
+  });
+  if (!ok) return;
+  toast(`${title} saved`);
+  lastHtml = null;
+  refresh();
 }
 // Free space of the fuller of the disks of data and cache, and how bad it is
 const freeGbOf = (s) => Math.min(s.dataFreeMb, s.cacheFreeMb) / 1024;
@@ -2922,7 +3009,6 @@ views.settings = {
     const storage = await api.get('/api/storage').catch(() => null); // a walk over the runs: the page does not poll
     const [settings, health, scenarios, builds, stand, appKept, config, plan] = await Promise.all([api.get('/api/settings'), api.get('/api/health'), api.get('/api/scenarios'),
       api.get('/api/builds?limit=20'), api.get('/api/stand'), api.get('/api/app/check').catch(() => null), api.get('/api/config'), api.get('/api/schedule').catch(() => [])]);
-    const planOf = (kind) => plan.find((x) => x.kind === kind);
     // a commit of auto-run against its parent: a build and an ABBA of each scenario, as this stand runs them
     const autoNames = (settings['autorun.scenario'] || '').split(',').map((x) => x.trim()).filter(Boolean);
     const perCommit = autoNames.length ? await api.get(`/api/estimate?${new URLSearchParams({ scenario: autoNames.join(','), jobs: 1, extraBuilds: 1 })}`).catch(() => null) : null;
@@ -2949,11 +3035,7 @@ views.settings = {
       : `${fmt.num(s.dataFreeMb / 1024, 1)} GB free for data, ${fmt.num(s.cacheFreeMb / 1024, 1)} GB for the cache`;
     const storeRow = (title, note, keep, now) => `<tr><td class="what"><b>${title}</b><span class="muted">${note}</span></td><td class="keep">${keep}</td><td class="now">${now}</td></tr>`;
     this.counts = health.counts;
-    const chosen = (settings['autorun.scenario'] || '').split(',').map((x) => x.trim()).filter(Boolean);
-    this.picked = new Set(chosen);
-    const pickedOf = (p) => { const l = (settings[`${p}.scenarios`] || '').split(',').map((x) => x.trim()).filter(Boolean); return new Set(l.length ? l : scenarios.map((x) => x.name)); }; // empty = all
-    this.aaPicked = pickedOf('calibration');
-    this.masterPicked = pickedOf('master');
+    this.auto = { settings, scenarios, perCommit, autoMode }; // what Edit of Automation opens with
     const nMode = settings['notify.mode'] || 'off';
     const nChannel = settings['notify.telegramChatId'] ? 'Telegram' : settings['notify.webhookUrl'] ? 'webhook' : 'no channel';
     return `
@@ -2976,27 +3058,11 @@ views.settings = {
         <div class="muted small-text">The ticket or the number goes at the end of its URL: IGNITE-123 leads to the ticket URL + IGNITE-123, a PR of a commit with that key to the pull request URL + the number. An empty pull request URL follows <span class="mono">repo.url</span> of the configuration.</div>
         <div class="actions"><button class="primary">Save</button></div>
       </form></section>
-      <section data-tab="automation" ${tab === 'automation' ? '' : 'hidden'}>
-        <form id="settings" class="card">
-          <h2 style="margin-top:0">On new commits <span class="muted">Measures the branch as it moves.</span></h2>
-          <div class="mode-list">${AUTORUN_MODES.map(([k, name, text]) => [k, name, k === 'abba-vs-parent' && perCommit ? `An ABBA of each commit against its parent. Exact, but a build and ~${mins(perCommit.runSec + perCommit.buildSec)} per commit and scenario on this stand.` : text])
-            .map(([k, name, text]) => `<label class="mode-opt"><input type="radio" name="autorun.mode" value="${k}" ${k === autoMode ? 'checked' : ''}><span><b>${name}</b><div class="muted">${text}</div></span></label>`).join('')}</div>
-          <div data-if-autorun ${autoMode === 'off' ? 'hidden' : ''}>
-            ${planOf('autorun') ? `<div class="plan-next"><b>Next:</b> ${planNext(planOf('autorun'))}</div>` : ''}
-            <div class="mode-row" data-segments ${autoMode === 'segments' ? '' : 'hidden'}><span class="mode-opt">Keep fresh</span>${keepField('autorun.keepDays', settings['autorun.keepDays'] || '1')}</div>
-            ${scenarioPicker(scenarios, this.picked)}
-            <label>Only commits touching (globs; empty = every commit)</label>
-            <textarea name="autorun.pathFilter" rows="2" style="width:100%">${esc(settings['autorun.pathFilter'])}</textarea>
-            <div class="form-grid"><label>Poll interval, s <input name="watch.pollSec" type="number" value="${esc(settings['watch.pollSec'])}"></label></div>
-            <div class="backlog-row">Skip new commits while ${keepInput('autorun.maxBacklog')} auto-run jobs wait
-              <span class="muted small-text">· a busy stand does not pile up a backlog; a skipped commit can be run from Commits</span></div>
-          </div>
-          <div class="actions"><button class="primary">Save</button></div>
-        </form>
-        ${scheduleForm('calibration', 'A/A', 'Measures the noise of the stand, so the thresholds follow it.', settings, scenarios, this.aaPicked, planOf('aa'))}
-        ${scheduleForm('master', 'master vs release', 'Keeps the dashboard headline fresh.', settings, scenarios, this.masterPicked, planOf('master'))}
-        <div class="muted small-text">Keep fresh: past that age a scenario goes once the stand has been idle for 2 hours, behind everything else. At twice that age, or with fewer than 3 A/A for its thresholds, it goes ahead of the queue. Nothing starts while the stand is closed for maintenance. Results of A/A are on <a href="#/noise">Noise</a>.</div>
-      </section>
+      <section data-tab="automation" ${tab === 'automation' ? '' : 'hidden'}><div class="card">
+        <h2 style="margin-top:0">Automation <span class="muted">what the stand runs by itself; Edit changes a row</span></h2>
+        ${automationTable(settings, scenarios, plan, autoMode)}
+        <div class="muted small-text" style="margin-top:8px">Keep fresh: past that age a scenario goes once the stand has been idle for 2 hours, behind everything else. At twice that age, or with fewer than 3 A/A for its thresholds, it goes ahead of the queue. Nothing starts while the stand is closed for maintenance. Results of A/A are on <a href="#/noise">Noise</a>.</div>
+      </div></section>
       <section data-tab="release" ${tab === 'release' ? '' : 'hidden'}><div class="card">
         <form id="release">
           <label>What the dashboard compares master with</label>
@@ -3101,38 +3167,11 @@ views.settings = {
       showApp();
     }));
     showApp();
-    bindScenarioPicker($('#settings', root), this.picked, { builds: 1, per: 'a run' });
-    [['calibration', this.aaPicked], ['master', this.masterPicked]].forEach(([p, picked]) => {
-      const f = $(`#schedule-${p}`, root), sync = () => {
-        const off = f.querySelector(`[name="${p}.mode"]:checked`).value === 'off';
-        f.querySelectorAll('[data-if-on]').forEach((x) => { x.hidden = off; });
-      };
-      bindScenarioPicker(f, picked, { builds: 1, per: 'a run' });
-      f.addEventListener('change', sync);
-      sync();
-      f.addEventListener('submit', (e) => {
-        e.preventDefault();
-        if (!picked.size) { toast('choose at least one scenario', true); return; }
-        const all = [...f.querySelectorAll('[data-sc]')].map((i) => i.dataset.sc), fd = new FormData(f);
-        const d = { [`${p}.mode`]: fd.get(`${p}.mode`), [`${p}.keepDays`]: fd.get(`${p}.keepDays`),
-          [`${p}.scenarios`]: picked.size === all.length ? '' : all.filter((n) => picked.has(n)).join(',') }; // all: a new scenario joins by itself
-        guarded(async () => { await api.put('/api/settings', d); toast('schedule saved'); refresh(); });
-      });
+    // Automation: Edit opens the settings of a row in a dialog, Cancel leaves them as they were
+    root.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-auto-edit]');
+      if (b) editAutomation(b.dataset.autoEdit, this.auto);
     });
-    $('#settings', root).addEventListener('submit', (e) => {
-      e.preventDefault();
-      const fd = new FormData(e.target);
-      const d = Object.fromEntries(fd);
-      d['autorun.scenario'] = [...e.target.querySelectorAll('[data-sc]')].map((i) => i.dataset.sc).filter((n) => this.picked.has(n)).join(',');
-      d['autorun.enabled'] = String(d['autorun.mode'] !== 'off');
-      if (d['autorun.mode'] === 'off') delete d['autorun.mode']; // the choice stays for the next time
-      guarded(async () => { await api.put('/api/settings', d); toast('settings saved'); refresh(); });
-    });
-    root.querySelectorAll('[name="autorun.mode"]').forEach((r) => r.addEventListener('change', () => {
-      const m = $('[name="autorun.mode"]:checked', root).value;
-      $('[data-if-autorun]', root).hidden = m === 'off';
-      $('[data-segments]', root).hidden = m !== 'segments';
-    }));
     const tickets = $('#tickets', root);
     tickets.addEventListener('click', (e) => {
       const remove = e.target.closest('[data-ticket-remove]');

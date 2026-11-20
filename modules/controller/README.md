@@ -475,9 +475,11 @@ strength of the signal, commits.
   Stand: the same fields and Check as in the wizard, plus Measure load and Clean hosts, until the first finished phase;
   after it the hosts and sizes are only shown, while the last Check report and Check again stay. Both checks say next to
   their badge when the report was made.
-  Automation: what the stand runs by itself, three cards of one kind. On new commits: off, segments, every commit or a
-  single phase, scenarios, a path filter, and how many auto-run jobs may wait before new commits are skipped
-  (`autorun.maxBacklog`). Segments, A/A and master vs release live by one rule, `Freshness`, and only its
+  Automation: what the stand runs by itself, a table to read with a row per schedule: how it runs (the mode and its
+  period; for auto-run also the path filter, the poll and the backlog), the scenarios, when it goes next and why, how long
+  it takes. Edit opens the settings of a row in a dialog, saved by Save, so a refresh of the page never meets a half-typed
+  field. On new commits: off, segments, every commit or a single phase, scenarios, a path filter, and how many auto-run
+  jobs may wait before new commits are skipped (`autorun.maxBacklog`). Segments, A/A and master vs release live by one rule, `Freshness`, and only its
   period is set: Keep fresh, every N days (1 for segments, 7 for the others). Younger than the period, nothing runs. Older,
   it runs when the stand has been idle for 2 hours, at a low priority. Twice the period old, it runs despite the queue,
   ahead of the next steps of bisections. A segment counts its age from its oldest unmeasured commit, A/A and master vs
