@@ -442,7 +442,8 @@ strength of the signal, commits.
   loaded, show more. New comparison is one dialog: the modes "PR vs master" (the default: master against master + PR)
   and "Ref vs ref", each ref shown resolved to its commit once typed; the scenarios by family with the chips All,
   Put/get, Transactions, SQL H2, SQL Calcite, 1 server and 2+ servers (the groups come from the catalog, so a new
-  scenario joins them by itself); the priority and how long it takes. A ref the stand cannot resolve, or a scenario
+  scenario joins them by itself; none is chosen at first, then the ones of the last comparison); the priority and how
+  long it takes. A ref the stand cannot resolve, or a scenario
   whose same job is queued already, leaves the dialog open as it was, with the reason and a link to the comparison that
   holds the job. Jobs with the source `compare` stay off Dashboard, Commits, the repeats of the branch and the
   thresholds.

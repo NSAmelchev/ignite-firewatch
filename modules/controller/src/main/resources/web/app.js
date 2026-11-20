@@ -2151,9 +2151,9 @@ views.compare = {
   live() { return this.active; },
   async render() {
     if (!this.limit) { this.limit = 20; this.filter = ''; }
-    const [settings, list] = await Promise.all([api.get('/api/settings'), api.get(`/api/comparisons?limit=${this.limit}`)]);
+    const list = await api.get(`/api/comparisons?limit=${this.limit}`);
     this.list = list;
-    this.picked = this.picked || new Set([settings['autorun.scenario'].split(',')[0].trim()]);
+    this.picked = this.picked || new Set(); // nothing chosen until the first comparison, then the scenarios of the last one
     this.active = list.some((c) => comparisonActive(c) || c.doneAt);
     const rows = list.map(comparisonRow).join('');
     return `<h1>Compare <span class="muted">PR vs master or any two refs, over a set of scenarios: not shown on Dashboard, Timeline or Commits</span></h1>
