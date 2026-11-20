@@ -2309,7 +2309,7 @@ views.comparison = {
     const activeBisects = c.bisects.filter(bisectActive).length;
     return `
       <h1>${esc(c.label)} ${comparisonBadge(c)}${prLink(c.refB)}</h1>
-      <div class="muted" style="margin:-6px 0 12px">comparison #${c.id} · ${plural(c.total, 'scenario')} · queued ${fmt.date(c.createdAt)}${c.finishedAt ? ` · ${c.searching ? 'measured' : 'ended'} ${fmt.date(c.finishedAt)}` : ''} · not shown on Dashboard, Timeline or Commits</div>
+      <div class="muted" style="margin:-6px 0 12px">comparison #${c.id} · ${plural(c.total, 'scenario')} · queued ${fmt.date(c.createdAt)}${c.finishedAt ? ` · ${c.searching ? 'measured' : 'ended'} ${fmt.date(c.finishedAt)}` : ''}</div>
       <div class="row"><div class="card" style="flex:1 1 520px">
         <dl class="kv">
           <dt>Baseline (A)</dt><dd>${refLine(c.refA, c.shaA, c.subjectA)} <span class="muted">${fmtDay(c.dateA)}</span></dd>
