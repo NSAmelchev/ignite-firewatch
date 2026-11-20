@@ -509,7 +509,8 @@ strength of the signal, commits.
   queued every job (By: the user's own name in bold, `–` for what the stand queued by itself or what was queued before
   the names), the expected start and duration of every job, when what waits now ends and when the bisections end (they
   add steps one at a time), Planned: what each schedule that is on (auto-run, master vs release, the A/A, a plugin)
-  queues next, when it should start and why then (its term and 2 idle hours, twice its term, a new commit, Reopen) and
+  queues next, when it should start and why then (`in idle time · no later than tomorrow ~22:36`, idle time explained on
+  hover; `overdue: ahead of the queue` at twice its term; a new commit; Reopen) and
   how long it takes; the active bisections, the history with a "without bisect steps" box and who queued and who
   cancelled each job; steps are marked "bisect #N · step k". Closed for maintenance, it says how much work waits. The name of the user is in the header, a click changes it
   (the jobs queued before keep the old one); the dialogs that queue or cancel say "as <name>".

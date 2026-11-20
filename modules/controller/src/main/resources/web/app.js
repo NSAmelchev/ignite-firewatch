@@ -123,6 +123,7 @@ const HELP = {
   noise: 'Inside the threshold: nothing to see here.',
   refined: 'A shorter run ends at the same commit and replaced this one.',
   stillWorse: 'The direct run of master against the release still shows this change.',
+  idle: '2 h without jobs: past its term a scenario waits for it, behind everything else; at twice its term it goes ahead of the queue.',
   stillBetter: 'The direct run of master against the release still shows this change.',
   somewhere: 'A run of several commits moved: the change is one of them, a bisect finds which.',
   band: 'The commits an active bisect still suspects.',
@@ -741,13 +742,16 @@ const planDay = (iso) => {
   const hm = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   return days <= 0 ? `today ~${hm}` : days === 1 ? `tomorrow ~${hm}` : d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
 };
+// why then: idle time is a term, its meaning on hover; inside a title, where nothing hovers, it is spelled out
+const IDLE = 'in idle time';
+const planWhy = (w, html = true) => (html ? esc(w.why).replace(IDLE, term('idle', IDLE)) : w.why.replace(IDLE, `${IDLE} (2 h without jobs)`));
 export function planWhen(it) {
-  const by = it.byAt ? ` · by ${planDay(it.byAt)} anyway` : '';
+  const by = it.byAt ? ` · no later than ${planDay(it.byAt)}` : '';
   const moved = it.kind === 'autorun' ? (it.mode === 'segments' ? 'on new commits' : 'on each new commit') : it.kind === 'plugin' ? 'once a master moves' : 'once master moves';
   switch (it.waitsFor) {
-    case 'now': return { when: Date.parse(it.startAt) - Date.now() < 60e3 ? 'next' : planDay(it.startAt), why: 'due now: right after the running job' };
-    case 'idle': return { when: planDay(it.startAt), why: `${Date.parse(it.startAt) - Date.parse(it.dueAt) > 60e3 ? 'after the queue and 2 idle hours' : 'due then, goes once the stand idles 2 h'}${by}` };
-    case 'term': return { when: planDay(it.startAt), why: 'twice its term: it goes whatever the queue holds' };
+    case 'now': return { when: Date.parse(it.startAt) - Date.now() < 60e3 ? 'next' : planDay(it.startAt), why: 'right after the running job' };
+    case 'idle': return { when: planDay(it.startAt), why: `${Date.parse(it.startAt) - Date.parse(it.dueAt) > 60e3 ? 'after the queue, ' : ''}${IDLE}${by}` };
+    case 'term': return { when: planDay(it.startAt), why: 'overdue: ahead of the queue' };
     case 'queue': return { when: 'in the queue', why: '' };
     case 'reopen': return { when: 'after Reopen', why: 'the stand is closed for maintenance' };
     case 'commit': return { when: moved, why: it.kind === 'autorun' ? '' : 'what it measures has not moved since its last run' };
@@ -759,7 +763,7 @@ export const planTakes = (it) => (it.takesSec ? `~${mins(it.takesSec)}` : '–')
 export const planShort = (it) => {
   const w = planWhen(it);
   const when = w.when === 'next' ? 'goes next' : it.waitsFor === 'queue' ? w.when : `next ${w.when}`;
-  return `<span class="term" title="${esc([w.why, planSplit(it)].filter(Boolean).join(' · '))}">${esc(when)}${it.takesSec ? ` · ${planTakes(it)}` : ''}</span>`;
+  return `<span class="term" title="${esc([planWhy(w, false), planSplit(it)].filter(Boolean).join(' · '))}">${esc(when)}${it.takesSec ? ` · ${planTakes(it)}` : ''}</span>`;
 };
 export const planSplit = (it) => (it.jobs ? `${it.jobs > 1 ? `${it.jobs} × ` : ''}${mins(it.runSec)}${it.builds ? ` + ${plural(it.builds, 'build')}` : ''}` : '');
 // what a schedule queues next: a few names, the rest counted
@@ -776,16 +780,16 @@ const planLink = (it) => (it.kind === 'plugin' ? `#/plugin?name=${encodeURICompo
 export const planNext = (it) => {
   if (!it) return '';
   const w = planWhen(it);
-  return `<b>${esc(w.when)}</b>${w.why ? ` <span class="muted">${esc(w.why)}</span>` : ''}${it.takesSec ? ` · ${planTakes(it)} <span class="muted">${planSplit(it)}</span>` : ''}`;
+  return `<b>${esc(w.when)}</b>${w.why ? ` <span class="muted">${planWhy(w)}</span>` : ''}${it.takesSec ? ` · ${planTakes(it)} <span class="muted">${planSplit(it)}</span>` : ''}`;
 };
 function planTable(plan) {
-  return `<h2>Planned <span class="muted">what the schedules queue next and when: past its term a scenario waits for 2 idle hours, at twice its term it goes anyway</span></h2>
+  return `<h2>Planned</h2>
     <table class="commits runs-table plan-table"><thead><tr><th>Schedule</th><th>What</th><th>Goes</th><th class="num">Takes</th></tr></thead>
     <tbody>${plan.map((it) => {
       const w = planWhen(it);
       return `<tr><td><b>${esc(it.title)}</b><div><a class="muted" href="${planLink(it)}">settings</a></div></td>
         <td class="subject">${(PLAN_WHAT[it.kind] || (() => ''))(it)}<div class="muted">${planScenarios(it)}</div></td>
-        <td>${esc(w.when)}<div class="muted">${esc(w.why)}</div></td>
+        <td>${esc(w.when)}<div class="muted">${planWhy(w)}</div></td>
         <td class="num">${planTakes(it)}<div class="muted">${planSplit(it)}</div></td></tr>`;
     }).join('')}</tbody></table>`;
 }

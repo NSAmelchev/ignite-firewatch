@@ -18,7 +18,7 @@ const realFetch = globalThis.fetch;
 globalThis.fetch = (path, opts) => realFetch(new URL(path, base), opts);
 const get = async (p) => (await realFetch(new URL(p, base))).json();
 
-const { views, calmLine } = await import(appUrl);
+const { views, calmLine, planNext, planShort } = await import(appUrl);
 await import(new URL('plugins.js', appUrl).href); // the section of the plugins registers its pages
 const done = (await get('/api/jobs?filter=history&limit=1'))[0], active = (await get('/api/jobs?filter=active&limit=1'))[0];
 const bisect = (await get('/api/bisects?limit=1'))[0];
@@ -65,5 +65,16 @@ for (const [names, out, expect] of [
   const html = calmLine('data-rel-calm', 8, false, names, 16, out), got = text(html);
   if (expect.every((x) => got.includes(x)) && (expect.length || !html)) console.log(`ok   calm line ${names.length} folded, ${out} out`);
   else { console.log(`FAIL calm line ${names.length} folded, ${out} out: ${got}`); failed++; }
+}
+// why a schedule goes then: idle time is a term with its meaning on hover, spelled out in the title of the short form
+const at = (h) => new Date(Date.now() + h * 3600e3).toISOString();
+for (const [it, expect, hover] of [
+  [{ waitsFor: 'idle', dueAt: at(1), startAt: at(1), byAt: at(25) }, 'in idle time · no later than ', '2 h without jobs'],
+  [{ waitsFor: 'idle', dueAt: at(1), startAt: at(3), byAt: at(25) }, 'after the queue, in idle time · no later than ', '2 h without jobs'],
+  [{ waitsFor: 'term', dueAt: at(-30), startAt: at(1), byAt: at(1) }, 'overdue: ahead of the queue', 'overdue']]) {
+  const html = planNext(it), short = planShort(it);
+  if (text(html).includes(expect) && (it.waitsFor !== 'idle' || html.includes('class="term" title="2 h without jobs')) && short.includes(hover))
+    console.log(`ok   plan ${it.waitsFor}: ${text(html)}`);
+  else { console.log(`FAIL plan ${it.waitsFor}: ${html} / ${short}`); failed++; }
 }
 process.exit(failed ? 1 : 0);
